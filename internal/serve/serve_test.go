@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,6 +70,9 @@ func TestIndexShowsMalformedIncompleteAndLegacyRuns(t *testing.T) {
 	writeFile(t, dir, ".jj/runs/20260425-130000-badjson/manifest.json", `{"run_id":"20260425-130000-badjson","status":"sk-proj-abcdef1234567890",`)
 	writeFile(t, dir, ".jj/runs/20260425-140000-incomplete/manifest.json", `{"run_id":"20260425-140000-incomplete","status":"success"}`)
 	writeFile(t, dir, ".jj/runs/20260425-150000-legacy/manifest.json", `{"run_id":"20260425-150000-legacy","status":"success","started_at":"2026-04-25T15:00:00Z","artifacts":{"manifest":"manifest.json"},"commit":{"ran":true,"status":"success","sha":"abc123"}}`)
+	if err := os.MkdirAll(filepath.Join(dir, ".jj/runs/20260425-160000-missing"), 0o755); err != nil {
+		t.Fatalf("mkdir missing manifest run: %v", err)
+	}
 	server := newTestServer(t, dir, "")
 
 	rec := httptest.NewRecorder()
@@ -85,6 +90,10 @@ func TestIndexShowsMalformedIncompleteAndLegacyRuns(t *testing.T) {
 		"manifest is incomplete: missing artifacts",
 		"20260425-120000-bbbbbb",
 		"20260425-150000-legacy",
+		"Legacy commit-success metadata is historical",
+		"20260425-160000-missing",
+		"manifest unavailable",
+		"artifact links unavailable because this run lacks a trusted top-level artifacts map or trusted manifest",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("dashboard missing %q:\n%s", want, body)
@@ -95,6 +104,8 @@ func TestIndexShowsMalformedIncompleteAndLegacyRuns(t *testing.T) {
 		`href="/run?id=20260425-130000-badjson"`,
 		`href="/runs/20260425-130000-badjson/manifest"`,
 		`artifact?run=20260425-130000-badjson`,
+		`href="/run?id=20260425-160000-missing"`,
+		`artifact?run=20260425-160000-missing`,
 		"commit_failed",
 	} {
 		if strings.Contains(body, leaked) {
@@ -355,6 +366,84 @@ func TestPathTraversalRejected(t *testing.T) {
 		if rec.Code < 400 {
 			t.Fatalf("expected rejection for %s, got %d", target, rec.Code)
 		}
+	}
+}
+
+func TestArtifactHTTPStackRejectsUnsafePathsWithoutLeaks(t *testing.T) {
+	dir := newTestWorkspace(t)
+	secret := "unsafe-secret-token-1234567890"
+	t.Setenv("JJ_UNSAFE_PATH_TOKEN", secret)
+	server := newTestServer(t, dir, "")
+	httpServer := httptest.NewServer(server.Handler())
+	t.Cleanup(httpServer.Close)
+
+	absLeak := filepath.Join(dir, "outside-"+secret+".md")
+	probes := []struct {
+		name  string
+		query string
+	}{
+		{name: "raw traversal", query: "run=20260425-120000-bbbbbb&path=docs/../manifest.json"},
+		{name: "encoded slash traversal", query: "run=20260425-120000-bbbbbb&path=docs%2f..%2fmanifest.json"},
+		{name: "encoded dot traversal", query: "run=20260425-120000-bbbbbb&path=docs/%2e%2e/manifest.json"},
+		{name: "hidden traversal", query: "run=20260425-120000-bbbbbb&path=.secret/../manifest.json"},
+		{name: "absolute path", query: "run=20260425-120000-bbbbbb&path=" + url.QueryEscape(absLeak)},
+		{name: "windows drive", query: "run=20260425-120000-bbbbbb&path=C:/" + secret + ".md"},
+		{name: "unc path", query: "run=20260425-120000-bbbbbb&path=//server/share/" + secret + ".md"},
+		{name: "backslash traversal", query: "run=20260425-120000-bbbbbb&path=docs%5c..%5cmanifest.json"},
+		{name: "nul byte", query: "run=20260425-120000-bbbbbb&path=docs/TASK.md%00"},
+		{name: "hidden segment", query: "run=20260425-120000-bbbbbb&path=docs/.secret"},
+		{name: "hidden artifact", query: "run=20260425-120000-bbbbbb&path=codex/.env"},
+		{name: "secret unlisted path", query: "run=20260425-120000-bbbbbb&path=docs/" + secret + ".md"},
+	}
+	for _, probe := range probes {
+		t.Run(probe.name, func(t *testing.T) {
+			resp, err := http.Get(httpServer.URL + "/artifact?" + probe.query)
+			if err != nil {
+				t.Fatalf("get probe: %v", err)
+			}
+			defer resp.Body.Close()
+			data, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("read response: %v", err)
+			}
+			body := string(data)
+			if resp.StatusCode < 400 {
+				t.Fatalf("expected rejection, got %d body=%s", resp.StatusCode, body)
+			}
+			for _, leaked := range []string{dir, filepath.ToSlash(dir), absLeak, filepath.ToSlash(absLeak), secret} {
+				if strings.Contains(body, leaked) {
+					t.Fatalf("%s response leaked %q:\n%s", probe.name, leaked, body)
+				}
+			}
+		})
+	}
+
+	resp, err := http.Get(httpServer.URL + "/artifact?run=20260425-120000-bbbbbb&path=docs/TASK.md")
+	if err != nil {
+		t.Fatalf("get valid artifact: %v", err)
+	}
+	defer resp.Body.Close()
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read valid artifact: %v", err)
+	}
+	body := string(bodyBytes)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "Do the task") {
+		t.Fatalf("valid artifact did not serve: status=%d body=%s", resp.StatusCode, body)
+	}
+
+	resp, err = http.Get(httpServer.URL + "/doc?path=docs/TASK.md")
+	if err != nil {
+		t.Fatalf("get public doc: %v", err)
+	}
+	defer resp.Body.Close()
+	bodyBytes, err = io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read public doc: %v", err)
+	}
+	body = string(bodyBytes)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "<h1>TASK</h1>") {
+		t.Fatalf("public doc did not serve: status=%d body=%s", resp.StatusCode, body)
 	}
 }
 

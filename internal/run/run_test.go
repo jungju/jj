@@ -296,6 +296,9 @@ func TestExecuteNonDryRunDoesNotCommitChanges(t *testing.T) {
 			t.Fatalf("expected %s to remain reviewable in git status, got %q", want, status)
 		}
 	}
+	if cached := strings.TrimSpace(runGitOutput(t, dir, "diff", "--cached", "--name-only")); cached != "" {
+		t.Fatalf("jj run should not stage files, got cached diff:\n%s", cached)
+	}
 }
 
 func TestExecuteDirtyWorkspacePreservedAndRecorded(t *testing.T) {
@@ -344,6 +347,9 @@ func TestExecuteDirtyWorkspacePreservedAndRecorded(t *testing.T) {
 	status := runGitOutput(t, dir, "status", "--short")
 	if !strings.Contains(status, "dirty.txt") {
 		t.Fatalf("expected dirty file to remain in status, got %q", status)
+	}
+	if cached := strings.TrimSpace(runGitOutput(t, dir, "diff", "--cached", "--name-only")); cached != "" {
+		t.Fatalf("jj run should not stage dirty files, got cached diff:\n%s", cached)
 	}
 }
 

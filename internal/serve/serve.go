@@ -100,6 +100,10 @@ type dashboardManifest struct {
 		Error                 string `json:"error"`
 		RecommendedNextAction string `json:"recommended_next_action"`
 	} `json:"evaluation"`
+	Commit struct {
+		Ran    bool   `json:"ran"`
+		Status string `json:"status"`
+	} `json:"commit"`
 	Artifacts map[string]string `json:"artifacts"`
 	Errors    []string          `json:"errors"`
 	Risks     []string          `json:"risks"`
@@ -688,7 +692,7 @@ func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !isAllowedDocPath(rel) {
-		s.renderError(w, http.StatusBadRequest, fmt.Errorf("document path is not allowed: %s", rel))
+		s.renderError(w, http.StatusBadRequest, errors.New("document path is not allowed"))
 		return
 	}
 	path, err := safeJoin(s.cwd, rel)
@@ -842,7 +846,7 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusBadRequest, err)
 		return
 	} else if !ok {
-		s.renderError(w, http.StatusBadRequest, fmt.Errorf("artifact path is not listed in manifest: %s", rel))
+		s.renderError(w, http.StatusBadRequest, errors.New("artifact path is not listed in manifest"))
 		return
 	}
 	path, err := safeJoin(runDir, rel)
@@ -889,7 +893,7 @@ func (s *Server) resolveWebRunID(raw string) (string, string, error) {
 		return "", "", err
 	}
 	if info, err := os.Stat(runDir); err == nil && info.IsDir() {
-		return "", "", fmt.Errorf("run directory already exists: %s", runDir)
+		return "", "", fmt.Errorf("run directory already exists for run id: %s", runID)
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", "", err
 	}
@@ -908,7 +912,7 @@ func (s *Server) reserveTurnRunDir(runID string) (string, error) {
 		return "", err
 	}
 	if info, err := os.Stat(runDir); err == nil && info.IsDir() {
-		return "", fmt.Errorf("run directory already exists: %s", runDir)
+		return "", fmt.Errorf("run directory already exists for run id: %s", runID)
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
@@ -1134,8 +1138,8 @@ func (s *Server) discoverRuns() ([]runLink, error) {
 		if !loaded.Valid {
 			run.Invalid = true
 			run.Status = "unavailable"
-			run.ErrorSummary = loaded.Error
-			run.Failures = []string{loaded.Error}
+			run.ErrorSummary = unavailableRunError(loaded.Error)
+			run.Failures = []string{run.ErrorSummary}
 			runs = append(runs, run)
 			continue
 		}
@@ -1164,6 +1168,14 @@ func (s *Server) discoverRuns() ([]runLink, error) {
 		if len(manifest.Risks) > 0 {
 			run.RiskSummary = secrets.Redact(manifest.Risks[0])
 			run.Risks = redactList(manifest.Risks)
+		}
+		if isHistoricalCommitSuccess(manifest) {
+			note := "Legacy commit-success metadata is historical; current jj runs do not auto-commit by default."
+			run.Risks = appendUnique(run.Risks, note)
+			if run.RiskSummary == "" {
+				run.RiskSummary = note
+			}
+			run.NextActions = appendUnique(run.NextActions, "Review working tree changes; do not infer current auto-commit behavior from this legacy manifest.")
 		}
 		if action := strings.TrimSpace(secrets.Redact(manifest.Evaluation.RecommendedNextAction)); action != "" {
 			run.NextActions = appendUnique(run.NextActions, action)
@@ -1197,6 +1209,18 @@ func (s *Server) discoverRuns() ([]runLink, error) {
 		return runs[i].ID > runs[j].ID
 	})
 	return runs, nil
+}
+
+func unavailableRunError(reason string) string {
+	reason = strings.TrimSpace(secrets.Redact(reason))
+	if reason == "" {
+		reason = "manifest unavailable"
+	}
+	return reason + "; artifact links unavailable because this run lacks a trusted top-level artifacts map or trusted manifest."
+}
+
+func isHistoricalCommitSuccess(manifest dashboardManifest) bool {
+	return manifest.Commit.Ran && strings.EqualFold(strings.TrimSpace(manifest.Commit.Status), "success")
 }
 
 func loadDashboardManifest(runID, runDir string) dashboardManifestLoad {
@@ -1414,7 +1438,7 @@ func isAllowedArtifactPath(rel string) bool {
 func cleanAllowedArtifactPath(rel string) (string, error) {
 	clean, err := cleanAllowedRelativePath(rel)
 	if err != nil {
-		return "", fmt.Errorf("artifact path is not allowed: %s", rel)
+		return "", errors.New("artifact path is not allowed")
 	}
 	return clean, nil
 }
@@ -1425,25 +1449,25 @@ func cleanAllowedRelativePath(rel string) (string, error) {
 		return "", errors.New("path is required")
 	}
 	if strings.ContainsRune(rel, 0) {
-		return "", fmt.Errorf("path contains NUL byte: %s", rel)
+		return "", errors.New("path contains NUL byte")
 	}
 	if strings.Contains(rel, `\`) {
-		return "", fmt.Errorf("backslashes are not allowed in paths: %s", rel)
+		return "", errors.New("backslashes are not allowed in paths")
 	}
 	if strings.HasPrefix(rel, "/") || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("absolute paths are not allowed: %s", rel)
+		return "", errors.New("absolute paths are not allowed")
 	}
 	if isWindowsDrivePath(rel) || strings.HasPrefix(rel, "//") {
-		return "", fmt.Errorf("absolute paths are not allowed: %s", rel)
+		return "", errors.New("absolute paths are not allowed")
 	}
 	for _, part := range strings.Split(rel, "/") {
 		if part == "" || part == "." || part == ".." || strings.HasPrefix(part, ".") {
-			return "", fmt.Errorf("path segment is not allowed: %s", rel)
+			return "", errors.New("path segment is not allowed")
 		}
 	}
 	clean := filepath.ToSlash(filepath.Clean(rel))
 	if clean != rel || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("path must be clean and stay inside the root: %s", rel)
+		return "", errors.New("path must be clean and stay inside the root")
 	}
 	return clean, nil
 }
@@ -1495,14 +1519,14 @@ func manifestArtifactPaths(runDir string) (map[string]struct{}, error) {
 
 func safeJoin(root, rel string) (string, error) {
 	if strings.Contains(rel, `\`) {
-		return "", fmt.Errorf("path escapes root: %s", rel)
+		return "", errors.New("path escapes root")
 	}
 	if filepath.IsAbs(rel) {
-		return "", fmt.Errorf("absolute paths are not allowed: %s", rel)
+		return "", errors.New("absolute paths are not allowed")
 	}
 	clean := filepath.Clean(rel)
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path escapes root: %s", rel)
+		return "", errors.New("path escapes root")
 	}
 	path := filepath.Join(root, clean)
 	absRoot, err := filepath.Abs(root)
@@ -1518,7 +1542,7 @@ func safeJoin(root, rel string) (string, error) {
 		return "", err
 	}
 	if relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path escapes root: %s", rel)
+		return "", errors.New("path escapes root")
 	}
 	if evalRoot, err := filepath.EvalSymlinks(absRoot); err == nil {
 		if evalPath, err := filepath.EvalSymlinks(absPath); err == nil {
@@ -1527,7 +1551,7 @@ func safeJoin(root, rel string) (string, error) {
 				return "", err
 			}
 			if relToEvalRoot == ".." || strings.HasPrefix(relToEvalRoot, ".."+string(filepath.Separator)) {
-				return "", fmt.Errorf("path escapes root: %s", rel)
+				return "", errors.New("path escapes root")
 			}
 		}
 	}
