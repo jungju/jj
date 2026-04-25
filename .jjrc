@@ -1,0 +1,7 @@
+{
+  "openai_api_key_env": "OPENAI_API_KEY",
+  "openai_model": "gpt-5.5",
+  "codex_model": "gpt-5.5",
+  "codex_bin": "codex",
+  "planning_agents": 3
+}

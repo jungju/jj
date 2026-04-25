@@ -1,0 +1,10 @@
+.jj/
+.jjrc.local
+jj
+*.test
+playground/workspace/.jj/
+playground/workspace/.git/
+playground/workspace/SPEC.md
+playground/workspace/TASK.md
+playground/workspace/hello
+playground/workspace/*.test
