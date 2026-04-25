@@ -106,6 +106,8 @@ func TestExecuteDryRunCreatesPlanningArtifactsOnly(t *testing.T) {
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "dry-run", "docs", "TASK.md"))
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "dry-run", "docs", "EVAL.md"))
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "dry-run", "planning", "product_spec.json"))
+	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "dry-run", "planning", "merged.json"))
+	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "dry-run", "git", "baseline.txt"))
 	assertNoFile(t, filepath.Join(dir, "SPEC.md"))
 	assertNoFile(t, filepath.Join(dir, "TASK.md"))
 	assertNoFile(t, filepath.Join(dir, "docs", "SPEC.md"))
@@ -119,6 +121,15 @@ func TestExecuteDryRunCreatesPlanningArtifactsOnly(t *testing.T) {
 	}
 	if !manifest.NoGitMode || !manifest.Config.AllowNoGit {
 		t.Fatalf("expected no-git mode to be recorded: %#v", manifest)
+	}
+	if manifest.EndedAt == "" || manifest.InputPath == "" || !manifest.RedactionApplied {
+		t.Fatalf("expected spec-compatible manifest metadata: %#v", manifest)
+	}
+	if manifest.Planner.Provider != plannerProviderInjected || manifest.Planner.Model == "" || manifest.Planner.Artifacts["planning_merged"] != "planning/merged.json" {
+		t.Fatalf("expected nested planner metadata: %#v", manifest.Planner)
+	}
+	if manifest.Git.BaselineTextPath != "git/baseline.txt" || manifest.Git.DirtyAfter != manifest.Git.DirtyBefore {
+		t.Fatalf("expected git compatibility metadata: %#v", manifest.Git)
 	}
 	if manifest.Git.BaselinePath != "git/baseline.json" || manifest.Artifacts["git_baseline"] != "git/baseline.json" {
 		t.Fatalf("expected git baseline artifact in manifest: %#v", manifest)
@@ -199,6 +210,8 @@ func TestExecuteEndToEndWithFakes(t *testing.T) {
 	assertFileExists(t, filepath.Join(dir, "docs", "EVAL.md"))
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "full", "docs", "EVAL.md"))
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "full", "codex", "events.jsonl"))
+	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "full", "codex", "exit.json"))
+	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "full", "git", "diff.stat.txt"))
 	evalData, err := os.ReadFile(filepath.Join(dir, ".jj", "runs", "full", "docs", "EVAL.md"))
 	if err != nil {
 		t.Fatalf("read eval: %v", err)
@@ -225,11 +238,20 @@ func TestExecuteEndToEndWithFakes(t *testing.T) {
 	if manifest.Git.StatusAfterPath != "git/status.after.txt" || manifest.Artifacts["git_status_after"] != "git/status.after.txt" {
 		t.Fatalf("expected git status.after artifact in manifest: %#v", manifest)
 	}
-	if manifest.Codex.EventsPath != "codex/events.jsonl" || manifest.Codex.SummaryPath != "codex/summary.md" || manifest.Codex.Summary == "" {
+	if manifest.Git.DiffStatPath != "git/diff.stat.txt" || manifest.Artifacts["git_diff_stat"] != "git/diff.stat.txt" {
+		t.Fatalf("expected git diff stat artifact in manifest: %#v", manifest.Git)
+	}
+	if manifest.Codex.EventsPath != "codex/events.jsonl" || manifest.Codex.SummaryPath != "codex/summary.md" || manifest.Codex.ExitPath != "codex/exit.json" || manifest.Codex.Status != "success" || manifest.Codex.Summary == "" {
 		t.Fatalf("expected codex evidence in manifest: %#v", manifest.Codex)
+	}
+	if manifest.Evaluation.Status != "pass" || manifest.Evaluation.Summary == "" {
+		t.Fatalf("expected evaluation summary/status in manifest: %#v", manifest.Evaluation)
 	}
 	if len(manifest.Risks) == 0 || manifest.Risks[0] != "risk" {
 		t.Fatalf("expected planning risk summary in manifest, got %#v", manifest.Risks)
+	}
+	if !manifest.Commit.Ran || manifest.Commit.Status != "success" || manifest.Commit.SHA == "" || manifest.Commit.Message != "jj: turn full" {
+		t.Fatalf("expected default non-dry-run commit, got %#v", manifest.Commit)
 	}
 }
 
@@ -273,11 +295,14 @@ func TestExecuteCommitOnSuccessCommitsChanges(t *testing.T) {
 	}
 }
 
-func TestExecuteCommitOnSuccessRejectsDirtyWorkspace(t *testing.T) {
+func TestExecuteDefaultCommitIncludesDirtyWorkspace(t *testing.T) {
 	dir := initGit(t)
 	runGit(t, dir, "config", "user.email", "jj@example.com")
 	runGit(t, dir, "config", "user.name", "jj test")
 	writePlan(t, dir, "plan.md")
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".jj/\n"), 0o644); err != nil {
+		t.Fatalf("write gitignore: %v", err)
+	}
 	runGit(t, dir, "add", "--all")
 	runGit(t, dir, "commit", "-m", "initial")
 	if err := os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
@@ -285,18 +310,105 @@ func TestExecuteCommitOnSuccessRejectsDirtyWorkspace(t *testing.T) {
 	}
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:        filepath.Join(dir, "plan.md"),
-		CWD:             dir,
-		RunID:           "dirty-commit-turn",
-		PlanningAgents:  1,
-		OpenAIModel:     "test-model",
-		Stdout:          io.Discard,
-		Planner:         &fakePlanner{},
-		CodexRunner:     &fakeCodexRunner{},
-		CommitOnSuccess: true,
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "dirty-commit-turn",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		Stdout:         io.Discard,
+		Planner:        &fakePlanner{},
+		CodexRunner:    &fakeCodexRunner{},
 	})
-	if err == nil || !strings.Contains(err.Error(), "clean git working tree") {
-		t.Fatalf("expected dirty workspace rejection, got %v", err)
+	if err != nil {
+		t.Fatalf("execute dirty workspace with default commit: %v", err)
+	}
+	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "dirty-commit-turn", "manifest.json"))
+	if !manifest.Commit.Ran || manifest.Commit.Status != "success" {
+		t.Fatalf("expected dirty workspace to be committed, got %#v", manifest.Commit)
+	}
+	show := runGitOutput(t, dir, "show", "--name-only", "--pretty=", "HEAD")
+	if !strings.Contains(show, "dirty.txt") {
+		t.Fatalf("expected dirty.txt in final commit, got %q", show)
+	}
+	status := runGitOutput(t, dir, "status", "--short")
+	if strings.TrimSpace(status) != "" {
+		t.Fatalf("expected clean git status after commit, got %q", status)
+	}
+}
+
+func TestExecuteAllowNoGitSkipsCommit(t *testing.T) {
+	dir := t.TempDir()
+	writePlan(t, dir, "plan.md")
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "nogit-commit-skip",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		AllowNoGit:     true,
+		Stdout:         io.Discard,
+		Planner:        &fakePlanner{},
+		CodexRunner:    &fakeCodexRunner{},
+	})
+	if err != nil {
+		t.Fatalf("execute no-git with skipped commit: %v", err)
+	}
+	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "nogit-commit-skip", "manifest.json"))
+	if manifest.Commit.Ran || manifest.Commit.Status != "skipped" || manifest.Commit.Error != "git unavailable" {
+		t.Fatalf("expected no-git commit skip, got %#v", manifest.Commit)
+	}
+}
+
+func TestCommitAllSkipsNoChanges(t *testing.T) {
+	dir := initGit(t)
+	runGit(t, dir, "config", "user.email", "jj@example.com")
+	runGit(t, dir, "config", "user.name", "jj test")
+	writePlan(t, dir, "plan.md")
+	runGit(t, dir, "add", "--all")
+	runGit(t, dir, "commit", "-m", "initial")
+
+	commit, err := commitAll(context.Background(), dir, "jj: turn clean", true)
+	if err != nil {
+		t.Fatalf("commit clean workspace: %v", err)
+	}
+	if commit.Ran || commit.Status != "skipped" || commit.Error != "no changes" {
+		t.Fatalf("expected no changes skip, got %#v", commit)
+	}
+}
+
+func TestExecuteCommitFailureRecordsManifest(t *testing.T) {
+	dir := t.TempDir()
+	writePlan(t, dir, "plan.md")
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "commit-failure",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		Stdout:         io.Discard,
+		Planner:        &fakePlanner{},
+		CodexRunner:    &fakeCodexRunner{},
+		GitRunner: fakeGitRunner{
+			outputs: map[string]string{
+				"rev-parse --show-toplevel": dir,
+				"rev-parse HEAD":            "abc123",
+				"branch --show-current":     "main",
+				"status --short":            "M docs/SPEC.md",
+				"diff --stat":               " docs/SPEC.md | 1 +",
+				"diff --name-status":        "M\tdocs/SPEC.md",
+				"diff --binary":             "diff --git a/docs/SPEC.md b/docs/SPEC.md",
+				"add --all":                 "",
+			},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "commit turn") {
+		t.Fatalf("expected commit failure, got %v", err)
+	}
+	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "commit-failure", "manifest.json"))
+	if manifest.Commit.Status != "failed" || manifest.Commit.Error == "" {
+		t.Fatalf("expected commit failure in manifest, got %#v", manifest.Commit)
 	}
 }
 

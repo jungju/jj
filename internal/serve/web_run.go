@@ -195,7 +195,9 @@ func (r *webRunState) setCurrentTurnStatus(status, phase, errText string) {
 			turn.FinishedAt = now
 		}
 	}
-	r.status = status
+	if !webRunDone(status) {
+		r.status = status
+	}
 	if strings.TrimSpace(phase) != "" {
 		r.phase = phase
 	}
@@ -207,6 +209,9 @@ func (r *webRunState) setCurrentTurnStatus(status, phase, errText string) {
 }
 
 func (r *webRunState) setLoopStatus(status, phase, errText, stopReason string) {
+	if webRunDone(status) {
+		r.persistLog()
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	r.mu.Lock()
 	r.status = status
@@ -223,7 +228,9 @@ func (r *webRunState) setLoopStatus(status, phase, errText, stopReason string) {
 		r.finishedAt = now
 	}
 	r.mu.Unlock()
-	r.persistLog()
+	if !webRunDone(status) {
+		r.persistLog()
+	}
 }
 
 func (r *webRunState) requestFinish() {

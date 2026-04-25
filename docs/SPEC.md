@@ -1,118 +1,187 @@
 # SPEC
 ## Overview
-`jj` is a document-first CLI for reproducible AI coding workflows. A run starts from one Markdown plan file, generates implementation-ready `docs/SPEC.md` and `docs/TASK.md`, optionally invokes Codex to implement the work, captures evidence, evaluates the result, and exposes the current state through a local dashboard.
+`jj` is a local CLI for making AI coding workflows reproducible and reviewable. Given one non-empty Markdown planning file, it generates implementation-ready `docs/SPEC.md` and `docs/TASK.md`, optionally runs Codex implementation, captures git and execution evidence, produces evaluation output, and exposes the current state through a local dashboard.
 
-All run outputs are stored under `.jj/runs/<run-id>/` so users can compare runs, audit AI-generated changes, and verify whether implementation matches the original intent.
+The product treats documents as the source of truth: implementation starts from the generated documents, and completion requires the documents, code behavior, artifacts, and evaluation evidence to agree.
 
 ## Goals
-- Generate concrete `docs/SPEC.md` and `docs/TASK.md` from a single non-empty Markdown plan.
+- Generate concrete `docs/SPEC.md` and `docs/TASK.md` from one Markdown plan.
 - Use multiple planning perspectives: product/spec, implementation/tasking, and QA/evaluation.
-- Support OpenAI planning when `OPENAI_API_KEY` is configured and Codex CLI fallback planning when it is not.
-- Connect generated documents to Codex implementation in the current workspace.
-- Capture Codex evidence, git status, git diff, evaluation output, and manifest metadata for each run.
-- Make `jj serve --cwd .` dashboard-first, showing TASK state and run progress before file browsing.
-- Keep document updates and implementation behavior aligned as the completion standard.
-- Avoid persisting or rendering secrets in config, manifests, logs, docs, events, or served HTML.
+- Run without `OPENAI_API_KEY` by falling back to Codex CLI planning.
+- Run Codex implementation in the target workspace for non-dry-run executions.
+- Store every run under `.jj/runs/<run-id>/` for audit, comparison, and debugging.
+- Capture Codex events, summaries, git status, git diff, evaluation output, and manifest metadata.
+- Provide `jj serve` as a dashboard-first local web UI showing current TASK state, recent runs, evaluation state, risks, and next actions.
+- Keep secrets out of manifests, logs, artifacts shown in the UI, and generated web pages.
+- Preserve user changes and record evidence instead of reverting or hiding workspace state.
 
 ## Non-Goals
 - `jj` is not a cloud service.
 - `jj` is not a multi-user dashboard.
-- `jj` is not a general-purpose DAG workflow engine.
-- `jj` does not replace human git review.
-- `jj` does not guarantee AI output correctness; it makes the process auditable.
-- `jj serve` does not require authentication, cloud sync, or collaborative permissions.
+- `jj` is not a general-purpose DAG or workflow engine.
+- `jj` does not replace git review; it leaves evidence that makes review easier.
+- `jj` does not guarantee AI output correctness; it makes the process inspectable.
+- `jj` does not expose arbitrary local files through the web UI.
 
 ## User Stories
-- As an individual developer, I want to turn `plan.md` into SPEC/TASK docs so I can start implementation from stable instructions.
-- As a Codex user, I want implementation, diff, and evaluation evidence saved together so I can inspect what happened after a run.
-- As a small team member, I want generated artifacts and manifest metadata so AI-assisted changes are reviewable.
-- As an experimenter, I want repeatable runs with provider and config metadata so I can compare planning and implementation outcomes.
-- As a local dashboard user, I want the first screen to show current TASK status, recent runs, evaluation state, risks, and next actions.
+- As an individual developer, I want to write `plan.md` once and get SPEC, TASK, implementation evidence, and evaluation artifacts without repeating context across tools.
+- As a small team member, I want AI-generated changes to include requirements, task instructions, diff evidence, and evaluation notes so reviewers can understand the change.
+- As an AI workflow experimenter, I want each run to be reproducible and comparable through run manifests and artifacts.
+- As a user without an OpenAI API key, I want planning to still work through Codex CLI fallback.
+- As a reviewer, I want `jj serve --cwd .` to open on current task and run status rather than a file listing.
 
 ## Functional Requirements
-- `jj run <plan.md>` must read an existing, non-empty Markdown file.
-- `--cwd` must select the target workspace without changing how a relative plan path is resolved.
-- By default, the target workspace must be inside a git repository.
-- `--allow-no-git` must permit execution outside git and record no-git mode in the manifest.
-- `--dry-run` must create planning artifacts under `.jj/runs/<run-id>/` and must not write workspace `docs/SPEC.md`, workspace `docs/TASK.md`, or invoke Codex implementation.
-- Non-dry-run must write generated SPEC/TASK docs to the workspace before invoking Codex.
-- Planner provider resolution order must be injected planner, OpenAI planner when `OPENAI_API_KEY` exists, then Codex CLI fallback planner.
-- Each run must preserve raw planning outputs from product/spec, implementation/tasking, and QA/evaluation perspectives.
-- Final merged `docs/SPEC.md` and `docs/TASK.md` must be written into the run artifact directory for all runs.
-- Non-dry-run must capture Codex events, Codex summary when available, git status, git diff, evaluation output, and manifest updates.
-- `docs/EVAL.md` must evaluate the plan, SPEC, TASK, implementation or dry-run evidence, test results, remaining risks, and next action.
-- `jj serve --cwd .` must serve a dashboard at the root path and provide navigation to README, `plan.md`, project docs, run artifacts, SPEC, TASK, EVAL, git diff, events, and manifest.
+- `jj run <plan.md>` must read an existing, non-empty Markdown plan file.
+- The positional plan path must be resolved relative to the shell invocation directory, not relative to `--cwd`.
+- `--cwd` must select the target workspace where `.jj/runs`, workspace docs, Codex execution, git capture, and serve content are rooted.
+- By default the target workspace must be a git repository.
+- `--allow-no-git` must allow non-git workspaces and record `git.available=false` in the manifest.
+- `--run-id` must select the run directory name and fail if that run already exists.
+- If `--run-id` is omitted, `jj` must generate a unique time-based run id.
+- Planner provider selection order must be: injected planner, OpenAI planner when `OPENAI_API_KEY` is present, Codex CLI fallback planner when no API key is present.
+- Planning output must be structured and persisted as raw planning artifacts.
+- Drafts must be merged into final run-local `docs/SPEC.md` and `docs/TASK.md` for every successful planning run.
+- Dry-run must not write workspace `docs/SPEC.md`, workspace `docs/TASK.md`, workspace `docs/EVAL.md`, or code files.
+- Dry-run must not invoke implementation Codex.
+- Non-dry-run must write workspace SPEC and TASK before running implementation Codex.
+- Non-dry-run must capture Codex events, Codex summary, Codex exit status, final git status, git diff, and evaluation output.
+- Failed phases must still leave any produced artifacts and a failed or partial manifest when possible.
+- `jj serve --cwd .` must serve a local dashboard at `/`.
+- The serve UI must render Markdown safely and block path traversal or access outside allowed workspace/run artifact paths.
 
 ## CLI Behavior
-- Commands: `jj run <plan.md>` and `jj serve`.
-- Run flags include `--cwd`, `--run-id`, `--planning-agents`, `--openai-model`, `--codex-model`, `--spec-doc`, `--task-doc`, `--allow-no-git`, and `--dry-run`.
-- Serve flags include `--cwd` and address or port configuration.
-- CLI config precedence should be defaults, `.jjrc`, environment variables, then CLI flags, with CLI flags taking precedence.
-- Invalid input such as missing files, empty files, directories, unreadable files, and non-Markdown inputs must return a clear non-zero error.
-- Git absence must fail unless `--allow-no-git` is provided.
-- Skipped steps must be represented explicitly in the manifest instead of omitted.
+### `jj run <plan.md>`
+Supported flags:
+- `--cwd <path>`: target workspace. Defaults to current directory.
+- `--run-id <id>`: explicit run id. Existing run directory is an error.
+- `--dry-run`: generate planning artifacts only.
+- `--allow-no-git`: permit execution outside a git repository.
+- `--planner-agents <n>` or `--planning-agents <n>`: planning perspective/fanout count. Default is 3.
+- `--openai-model <model>`: OpenAI planner model override.
+- `--codex-model <model>`: Codex fallback and implementation model override.
+- `--spec-doc <path>`: workspace spec document path. Default `docs/SPEC.md`.
+- `--task-doc <path>`: workspace task document path. Default `docs/TASK.md`.
+
+Validation failures must identify the failed phase and reason, such as missing plan, empty plan, directory input, unsupported extension, git unavailable, run id collision, planner parse failure, document write failure, Codex failure, evaluation failure, or manifest write failure.
+
+### `jj serve`
+Supported flags:
+- `--cwd <path>`: target workspace. Defaults to current directory.
+- `--addr <host:port>`: local bind address. Default must be local-only.
+
+The root route `/` must render the dashboard, not README and not a raw artifact listing.
 
 ## Pipeline Behavior
-- Create a run directory before work starts.
-- Copy the input plan to `input.md`.
-- Capture git baseline metadata when git is available.
-- Resolve and execute the planner provider according to the provider order.
-- Generate raw planning outputs and merge them into final SPEC/TASK documents.
-- In dry-run mode, stop after planning artifacts, optional evaluation where possible, and manifest finalization.
-- In non-dry-run mode, write workspace docs, invoke Codex implementation using generated docs, capture Codex evidence, capture post-run git status and diff, run evaluation, and update manifest status.
-- Run status must distinguish success, partial failure, planner failure, Codex failure, evaluation failure, and artifact/write failure where possible.
+1. Resolve the positional plan path from the invocation directory.
+2. Resolve and validate the target workspace from `--cwd`.
+3. Validate that the plan exists, is Markdown, and contains non-whitespace content.
+4. Validate git unless `--allow-no-git` is set.
+5. Create `.jj/runs/<run-id>/` and required subdirectories.
+6. Write `input.md` from the original plan.
+7. Capture git baseline metadata when available: repo root, branch, HEAD, dirty state, and status before.
+8. Select the planner provider using injected, OpenAI, then Codex CLI fallback order.
+9. Run planning perspectives and persist raw planning JSON.
+10. Merge planning drafts into final run-local `docs/SPEC.md` and `docs/TASK.md`.
+11. Write or update manifest state as phases complete.
+12. If dry-run, skip workspace doc writes, Codex implementation, git diff after implementation, and workspace evaluation. Record evaluation as skipped or not run.
+13. If non-dry-run, write workspace `docs/SPEC.md` and `docs/TASK.md` before implementation.
+14. Run Codex implementation using generated SPEC and TASK.
+15. Capture Codex artifacts, final git status, git diff, and diff stat.
+16. Generate `docs/EVAL.md` in the run artifacts and workspace for non-dry-run.
+17. Finish manifest with final status, errors, artifact paths, provider metadata, Codex result, git metadata, and evaluation result.
 
 ## Artifact Layout
-Each run directory `.jj/runs/<run-id>/` should contain:
+Each run is stored under `.jj/runs/<run-id>/`.
 
-- `input.md`: exact copied user plan.
-- `planning/`: raw planning JSON or equivalent outputs from product, implementation, and QA perspectives.
-- `docs/SPEC.md`: final merged specification.
-- `docs/TASK.md`: final merged implementation task document.
-- `docs/EVAL.md`: evaluation output when generated.
-- `codex/events.jsonl`: Codex event stream when implementation runs.
-- `codex/summary.md`: Codex execution summary when available.
-- `git/status.txt`: captured git status after execution or skipped marker.
-- `git/diff.patch`: captured git diff after execution or skipped marker.
-- `manifest.json`: machine-readable run metadata, config, paths, status, provider, git metadata, Codex result, evaluation result, timestamps, errors, skipped steps, and redacted environment summary.
+Required planning artifacts:
+- `input.md`
+- `planning/product_spec.json`
+- `planning/implementation_task.json`
+- `planning/qa_eval.json`
+- `planning/merged.json`
+- `docs/SPEC.md`
+- `docs/TASK.md`
+- `manifest.json`
+
+Required non-dry-run artifacts when available:
+- `docs/EVAL.md`
+- `codex/events.jsonl`
+- `codex/summary.md`
+- `codex/exit.json`
+- `git/baseline.txt`
+- `git/status.before.txt`
+- `git/status.after.txt`
+- `git/diff.patch`
+- `git/diff.stat.txt`
+
+`manifest.json` must use artifact paths relative to the run directory and include at least:
+- `run_id`, `status`, `started_at`, `ended_at`
+- `cwd`, `input_path`, `dry_run`, `allow_no_git`
+- `config` with effective non-secret settings
+- `planner.provider`, `planner.model`, and planning artifact paths
+- `git.available`, `git.head`, `git.branch`, `dirty_before`, `dirty_after`
+- `codex.ran`, `codex.status`, `codex.model`, `codex.exit_code`, and Codex artifact paths
+- `evaluation.status`, `evaluation.summary`, risk or failure counts when available
+- `artifacts`
+- `errors`
+- `redaction_applied`
+
+Valid manifest statuses must distinguish dry-run completion, successful implementation/evaluation, partial failure, and failed runs.
 
 ## Configuration
-- `.jjrc` may define project defaults for cwd, run id behavior, planning agent count, OpenAI model, Codex model, document names, no-git mode, dry-run behavior, Codex binary, and serve address.
-- Environment variables may provide OpenAI and Codex defaults, including API key presence and model names.
-- CLI flags must override `.jjrc` and environment-derived defaults.
-- Effective config must be recorded in the manifest with sensitive values redacted.
-- The Codex binary and models must be configurable so tests and local environments can use fakes or alternate binaries.
+Configuration sources must be merged with deterministic precedence: CLI flags, environment variables, `.jjrc`, then defaults.
+
+Configurable values include:
+- target workspace cwd
+- run id
+- planner agent count
+- OpenAI model
+- Codex binary path
+- Codex model
+- spec document path
+- task document path
+- dry-run mode
+- no-git mode
+- serve bind address
+
+Environment variables may configure OpenAI key/model and Codex binary/model. `.jjrc` may define project defaults, but secrets should not be stored there. If secret-like values are present in `.jjrc`, output and UI rendering must redact them.
 
 ## Error Handling
-- Input validation errors must fail fast with actionable messages.
-- If git metadata is required but unavailable, the run must fail unless `--allow-no-git` is set.
-- Planner, Codex, evaluation, and artifact write failures must be recorded separately in the manifest.
-- Partial artifacts must not be hidden; status and error summaries must describe what completed, failed, or was skipped.
-- Dashboard rendering must tolerate missing files, corrupt manifests, empty `.jj/runs`, and degraded runs without returning a server-wide 500.
+- Errors must include the phase that failed.
+- Validation errors should fail before running planner or Codex.
+- Git capture errors are fatal unless `--allow-no-git` applies.
+- Planner malformed JSON or unusable output must not produce a successful empty SPEC/TASK.
+- Codex failure must still capture exit status, available output, git status, manifest state, and possible evaluation information.
+- Evaluation failure must not erase implementation artifacts.
+- Manifest writing should use atomic write or temp-file-and-rename semantics.
+- Failed runs should preserve partial artifacts and write a failed or partial manifest whenever possible.
 
 ## Security and Privacy
-- Never persist or render API keys, Bearer [redacted], authorization headers, password-like values, or token/key values from `.jjrc` or environment variables.
-- Redaction must apply to manifests, logs, planner outputs, generated docs, Codex events, evaluation docs, and served HTML.
-- Render Markdown safely for local use by escaping raw HTML and applying redaction before display.
-- The dashboard must only display redacted config and artifact content.
+- Raw API keys, Bearer [redacted], Authorization headers, `sk-...` style keys, and provider secrets must never appear in manifests, logs, served HTML, generated summaries, or user-facing errors.
+- Redaction must be centralized and applied before persisting or rendering manifest values, config display, planner raw output, Codex output, event summaries, errors, and web pages.
+- The web UI must restrict file access to the configured workspace and `.jj/runs` artifacts.
+- Artifact routes must block `../`, absolute paths, hidden secret targets, and paths outside the allowed roots.
+- Markdown rendering must be safe and must not execute raw scripts.
+- The default server bind address must be local-only.
 
 ## Observability
-- `manifest.json` must provide a concise overview of run status, timestamps, cwd, plan path, dry-run flag, no-git flag, planner provider, models, git baseline, artifact paths, Codex result, evaluation result, skipped steps, and errors.
-- Git capture must include branch, commit when available, dirty state, status, and diff after implementation.
-- Codex capture must include event stream and summary when implementation runs.
-- Evaluation must identify fulfilled criteria, failed criteria, skipped steps, unresolved risks, and recommended next action.
-- The dashboard must surface current TASK status, active or latest run, recent run statuses, evaluation state, failures, risks, and next actions.
+- Every run must have a manifest that summarizes status, configuration, provider choice, git metadata, Codex result, evaluation result, artifact paths, and errors.
+- Git evidence must capture baseline and post-run state without reverting existing user changes.
+- Codex evidence must include events when available, summary, exit status, model, and duration when available.
+- Evaluation must summarize plan compliance, generated document presence, Codex result, git diff summary, test results, remaining risks, and next actions.
+- `jj serve` must surface current TASK status, active or recent runs, evaluation status, failures, risks, and next actions on the first screen.
 
 ## Acceptance Criteria
-- `jj run plan.md --dry-run` creates `.jj/runs/<run-id>/input.md`, planning outputs, run-local `docs/SPEC.md`, run-local `docs/TASK.md`, and `manifest.json` without modifying workspace docs.
-- Dry-run records implementation/Codex as skipped and does not invoke Codex.
-- `OPENAI_API_KEY` absence selects Codex CLI fallback planning instead of failing solely due to missing API key.
-- `OPENAI_API_KEY` presence selects the OpenAI planner unless an injected planner is supplied.
-- No-git workspaces fail by default and succeed only with `--allow-no-git`, with no-git mode recorded.
-- Non-dry-run writes workspace `docs/SPEC.md` and `docs/TASK.md`, runs Codex, captures Codex evidence, captures git status and diff, writes `docs/EVAL.md`, and updates the manifest.
-- `manifest.json` contains run status, config, git metadata, planner provider, Codex result, evaluation result, artifact paths, skipped steps, and redacted environment/config fields.
-- `jj serve --cwd .` opens a dashboard-first root view showing TASK state, run progress or latest run, recent statuses, evaluation result, risks, failures, and next actions.
-- The web UI links to README, plan, project docs, SPEC, TASK, EVAL, manifest, git diff, events, and run artifacts.
-- Broken run artifacts do not crash the dashboard.
-- No real API key, Bearer [redacted], authorization header, or obvious secret value appears in artifacts or served pages.
+- `jj run plan.md --dry-run` creates `.jj/runs/<run-id>/input.md`, planning JSON, run-local `docs/SPEC.md`, run-local `docs/TASK.md`, and `manifest.json`.
+- Dry-run does not create or modify workspace `docs/SPEC.md`, `docs/TASK.md`, `docs/EVAL.md`, or code files.
+- Without `OPENAI_API_KEY`, planner provider is Codex CLI fallback and is recorded in the manifest.
+- With `OPENAI_API_KEY`, OpenAI is selected unless an injected planner is present.
+- Injected planner always has highest priority for tests and internal callers.
+- Non-dry-run writes workspace SPEC/TASK before Codex implementation and then records Codex artifacts, git status/diff, `docs/EVAL.md`, and manifest evaluation result.
+- Non-git workspaces fail by default and run with `--allow-no-git` while recording git unavailable metadata.
+- `--cwd` changes the target workspace but does not change positional plan path resolution.
+- Planner, Codex, or evaluation failures leave a failed or partial manifest and available artifacts.
+- `jj serve --cwd .` renders a dashboard at `/` with TASK state, recent run status, evaluation result, failures/risks, next actions, and links to README, plan, docs, runs, manifest, Codex summary, and git diff.
+- Manifest, logs, Codex artifacts, planner artifacts, and served pages do not expose raw API keys, Bearer [redacted], or Authorization header values.
+- Artifact serving rejects path traversal and paths outside allowed roots.
 - `go test ./...`, `go vet ./...`, and `go build -o jj ./cmd/jj` pass.

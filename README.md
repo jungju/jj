@@ -139,7 +139,9 @@ planner가 비어 있거나 필수 draft/merge 필드를 빠뜨린 경우에는 
 
 대시보드의 Web Run 화면에서는 브라우저에서 `jj run`을 시작할 수 있습니다. 기본은 안전한 dry-run입니다. full-run은 `confirm full-run workspace mutation` 확인이 필요하고, 로컬 주소(`127.0.0.1` 또는 `localhost`)에서만 허용됩니다.
 
-`auto continue turns`를 켜면 Web Run이 여러 턴을 자동으로 이어갑니다. 각 턴은 이전 턴의 `docs/SPEC.md`, `docs/TASK.md`, `docs/EVAL.md`, manifest, git diff summary, Codex summary를 다음 턴의 추가 기획 컨텍스트로 사용합니다. 반복은 평가가 `PASS`가 되거나 실패하거나 `max turns`에 도달하거나 사용자가 `Finish Turn`을 눌렀을 때 멈춥니다. 자동 턴 반복은 full-run에서만 지원되며 시작 시 git workspace가 깨끗해야 합니다. 자동 반복 턴은 성공 또는 부분성공이면 마지막에 `git commit`을 생성합니다.
+모든 non-dry-run 턴은 마지막에 `git commit`을 시도합니다. 커밋 메시지 기본값은 `jj: turn <run-id>`입니다. 실행 전에 이미 있던 dirty 변경도 해당 턴의 결과와 함께 커밋됩니다. `.jj/`처럼 ignore된 경로는 강제로 추가하지 않습니다. git 저장소가 아니면서 `--allow-no-git`를 사용한 경우 commit은 실패가 아니라 `skipped`로 manifest에 기록됩니다.
+
+`auto continue turns`를 켜면 Web Run이 여러 턴을 자동으로 이어갑니다. 각 턴은 이전 턴의 `docs/SPEC.md`, `docs/TASK.md`, `docs/EVAL.md`, manifest, git diff summary, Codex summary를 다음 턴의 추가 기획 컨텍스트로 사용합니다. 반복은 평가가 `PASS`가 되거나 실패하거나 `max turns`에 도달하거나 사용자가 `Finish Turn`을 눌렀을 때 멈춥니다. `Finish Turn`은 현재 턴을 끝까지 실행하고 commit까지 시도한 뒤 다음 턴을 시작하지 않는다는 의미입니다.
 
 ## 설정
 
@@ -232,7 +234,7 @@ planning/eval.events.jsonl
 planning/eval.last-message.txt
 ```
 
-dry-run에서도 `.jj/runs/<run-id>/docs/SPEC.md`, `.jj/runs/<run-id>/docs/TASK.md`, `.jj/runs/<run-id>/docs/EVAL.md`는 생성됩니다. dry-run EVAL은 구현과 테스트가 의도적으로 건너뛰어졌음을 `SKIPPED`로 기록하고, workspace 문서는 수정하지 않습니다. non-dry-run에서는 대상 워크트리에도 `docs/SPEC.md`, `docs/TASK.md`, `docs/EVAL.md`가 생성됩니다.
+dry-run에서도 `.jj/runs/<run-id>/docs/SPEC.md`, `.jj/runs/<run-id>/docs/TASK.md`, `.jj/runs/<run-id>/docs/EVAL.md`는 생성됩니다. dry-run EVAL은 구현과 테스트가 의도적으로 건너뛰어졌음을 `SKIPPED`로 기록하고, workspace 문서는 수정하지 않으며 commit도 만들지 않습니다. non-dry-run에서는 대상 워크트리에도 `docs/SPEC.md`, `docs/TASK.md`, `docs/EVAL.md`가 생성되고 턴 종료 시 git commit이 시도됩니다.
 
 run-id를 지정하지 않으면 다음 형식으로 생성됩니다.
 

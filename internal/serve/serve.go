@@ -342,6 +342,7 @@ func (s *Server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	}
 	dryRun := formBool(r, "dry_run")
 	autoContinue := formBool(r, "auto_continue")
+	allowNoGit := formBool(r, "allow_no_git")
 	if autoContinue && dryRun {
 		s.renderError(w, http.StatusBadRequest, errors.New("auto continue turns requires full-run; disable dry-run"))
 		return
@@ -369,7 +370,7 @@ func (s *Server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			s.renderError(w, http.StatusBadRequest, errors.New("max turns must be between 1 and 50"))
 			return
 		}
-		if err := s.validateAutoTurnWorkspace(r.Context()); err != nil {
+		if err := s.validateAutoTurnWorkspace(r.Context(), allowNoGit); err != nil {
 			s.renderError(w, http.StatusBadRequest, err)
 			return
 		}
@@ -401,7 +402,7 @@ func (s *Server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		RunID:                  runID,
 		DryRun:                 dryRun,
 		DryRunExplicit:         true,
-		AllowNoGit:             formBool(r, "allow_no_git"),
+		AllowNoGit:             allowNoGit,
 		AllowNoGitExplicit:     true,
 		PlanningAgents:         planningAgents,
 		PlanningAgentsExplicit: planningAgentsExplicit,
@@ -419,7 +420,7 @@ func (s *Server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		EvalDocExplicit:        evalDoc != "",
 		EvalDocPathMode:        evalDoc != "",
 		ConfigSearchDir:        s.cwd,
-		CommitOnSuccess:        autoContinue,
+		CommitOnSuccess:        !dryRun,
 		Stdout:                 io.Discard,
 		Stderr:                 io.Discard,
 	}
@@ -475,7 +476,7 @@ func (s *Server) executeWebRunLoop(webRun *webRunState, baseCfg runpkg.Config, f
 		outcome := s.runOutcomeForRun(cfg.RunID)
 		webRun.appendLog("jj web: turn " + cfg.RunID + " completed with status " + outcome.Status)
 		webRun.setCurrentTurnStatus(outcome.Status, "completed", outcome.Error)
-		if !baseCfg.CommitOnSuccess {
+		if !webRun.autoContinue {
 			webRun.setLoopStatus(outcome.Status, "completed", outcome.Error, "single run complete")
 			return
 		}
@@ -552,6 +553,7 @@ func (s *Server) runOutcomeForRun(runID string) runOutcome {
 		Errors       []string `json:"errors"`
 		Evaluation   struct {
 			Result string `json:"result"`
+			Status string `json:"status"`
 			Error  string `json:"error"`
 		} `json:"evaluation"`
 		Commit struct {
@@ -567,6 +569,9 @@ func (s *Server) runOutcomeForRun(runID string) runOutcome {
 		outcome.Status = manifest.Status
 	}
 	outcome.EvaluationResult = manifest.Evaluation.Result
+	if outcome.EvaluationResult == "" {
+		outcome.EvaluationResult = manifest.Evaluation.Status
+	}
 	outcome.Error = manifest.ErrorSummary
 	if outcome.Error == "" && len(manifest.Errors) > 0 {
 		outcome.Error = manifest.Errors[0]
@@ -795,6 +800,10 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusBadRequest, errors.New("run and path are required"))
 		return
 	}
+	if !isAllowedArtifactPath(rel) {
+		s.renderError(w, http.StatusBadRequest, fmt.Errorf("artifact path is not allowed: %s", rel))
+		return
+	}
 	runDir, err := s.runDir(runID)
 	if err != nil {
 		s.renderError(w, http.StatusBadRequest, err)
@@ -870,16 +879,13 @@ func (s *Server) reserveTurnRunDir(runID string) (string, error) {
 	return runDir, nil
 }
 
-func (s *Server) validateAutoTurnWorkspace(ctx context.Context) error {
+func (s *Server) validateAutoTurnWorkspace(ctx context.Context, allowNoGit bool) error {
 	gitState, err := runpkg.InspectGit(ctx, s.cwd)
 	if err != nil {
 		return fmt.Errorf("inspect git state: %w", err)
 	}
-	if !gitState.Available {
+	if !gitState.Available && !allowNoGit {
 		return errors.New("auto continue turns requires a git repository")
-	}
-	if runpkg.HasNonJJDirtyStatus(gitState.InitialStatus) {
-		return errors.New("auto continue turns requires a clean git working tree")
 	}
 	return nil
 }
@@ -1093,10 +1099,15 @@ func (s *Server) discoverRuns() ([]runLink, error) {
 				Status          string `json:"status"`
 				StartedAt       string `json:"started_at"`
 				FinishedAt      string `json:"finished_at"`
+				EndedAt         string `json:"ended_at"`
 				PlannerProvider string `json:"planner_provider"`
-				DryRun          bool   `json:"dry_run"`
-				Evaluation      struct {
+				Planner         struct {
+					Provider string `json:"provider"`
+				} `json:"planner"`
+				DryRun     bool `json:"dry_run"`
+				Evaluation struct {
 					Result string `json:"result"`
+					Status string `json:"status"`
 					Error  string `json:"error"`
 				} `json:"evaluation"`
 				Errors []string `json:"errors"`
@@ -1106,9 +1117,18 @@ func (s *Server) discoverRuns() ([]runLink, error) {
 			run.Status = manifest.Status
 			run.StartedAt = manifest.StartedAt
 			run.FinishedAt = manifest.FinishedAt
+			if run.FinishedAt == "" {
+				run.FinishedAt = manifest.EndedAt
+			}
 			run.PlannerProvider = manifest.PlannerProvider
+			if run.PlannerProvider == "" {
+				run.PlannerProvider = manifest.Planner.Provider
+			}
 			run.DryRun = manifest.DryRun
 			run.Evaluation = manifest.Evaluation.Result
+			if run.Evaluation == "" {
+				run.Evaluation = manifest.Evaluation.Status
+			}
 			if run.Evaluation == "" {
 				run.Evaluation = manifest.Evaluation.Error
 			}
@@ -1253,6 +1273,12 @@ func discoverArtifacts(runDir string) ([]artifactLink, error) {
 			return err
 		}
 		if d.IsDir() {
+			if path != runDir && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") {
 			return nil
 		}
 		rel, err := filepath.Rel(runDir, path)
@@ -1311,6 +1337,22 @@ func isAllowedDocPath(rel string) bool {
 		return false
 	}
 	return isRootDoc(clean) || strings.HasPrefix(clean, "docs/") || clean == "playground/plan.md" || strings.HasPrefix(clean, "playground/")
+}
+
+func isAllowedArtifactPath(rel string) bool {
+	if strings.Contains(rel, `\`) {
+		return false
+	}
+	clean := filepath.ToSlash(filepath.Clean(rel))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(rel) {
+		return false
+	}
+	for _, part := range strings.Split(clean, "/") {
+		if part == "" || strings.HasPrefix(part, ".") {
+			return false
+		}
+	}
+	return true
 }
 
 func isRootDoc(rel string) bool {

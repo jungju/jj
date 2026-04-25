@@ -137,7 +137,7 @@ func commitAll(ctx context.Context, cwd, message string, available bool, runners
 	}
 	if !available {
 		result.Error = "git unavailable"
-		return result, errors.New("git unavailable")
+		return result, nil
 	}
 	runner := chooseGitRunner(runners...)
 	if _, err := runner.Output(ctx, cwd, "add", "--all"); err != nil {
@@ -154,10 +154,11 @@ func commitAll(ctx context.Context, cwd, message string, available bool, runners
 		return result, err
 	}
 	if strings.TrimSpace(status) == "" {
+		result.Error = "no changes"
 		return result, nil
 	}
 	result.Ran = true
-	if _, err := runner.Output(ctx, cwd, "commit", "-m", message); err != nil {
+	if _, err := runner.Output(ctx, cwd, "-c", "user.name=jj", "-c", "user.email=no-reply@local", "commit", "-m", message); err != nil {
 		result.Status = "failed"
 		result.Error = err.Error()
 		return result, err

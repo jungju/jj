@@ -54,51 +54,66 @@ type Result struct {
 }
 
 type Manifest struct {
-	SchemaVersion   string             `json:"schema_version"`
-	RunID           string             `json:"run_id"`
-	StartedAt       string             `json:"started_at"`
-	FinishedAt      string             `json:"finished_at,omitempty"`
-	DurationMS      int64              `json:"duration_ms,omitempty"`
-	Status          string             `json:"status"`
-	DryRun          bool               `json:"dry_run"`
-	AllowNoGit      bool               `json:"allow_no_git"`
-	NoGitMode       bool               `json:"no_git_mode"`
-	CWD             string             `json:"cwd"`
-	PlanPath        string             `json:"plan_path"`
-	PlannerProvider string             `json:"planner_provider"`
-	Git             ManifestGit        `json:"git"`
-	Config          ManifestConfig     `json:"config"`
-	Workspace       ManifestWorkspace  `json:"workspace"`
-	Artifacts       map[string]string  `json:"artifacts"`
-	Risks           []string           `json:"risks,omitempty"`
-	Planning        ManifestPlanning   `json:"planning"`
-	Codex           ManifestCodex      `json:"codex"`
-	Evaluation      ManifestEvaluation `json:"evaluation"`
-	Commit          ManifestCommit     `json:"commit,omitempty"`
-	RiskCount       int                `json:"risk_count"`
-	Errors          []string           `json:"errors"`
-	FailurePhase    string             `json:"failure_phase,omitempty"`
-	FailureMessage  string             `json:"failure_message,omitempty"`
-	FailedStage     string             `json:"failed_stage,omitempty"`
-	ErrorSummary    string             `json:"error_summary,omitempty"`
+	SchemaVersion    string             `json:"schema_version"`
+	RunID            string             `json:"run_id"`
+	StartedAt        string             `json:"started_at"`
+	FinishedAt       string             `json:"finished_at,omitempty"`
+	EndedAt          string             `json:"ended_at,omitempty"`
+	DurationMS       int64              `json:"duration_ms,omitempty"`
+	Status           string             `json:"status"`
+	DryRun           bool               `json:"dry_run"`
+	AllowNoGit       bool               `json:"allow_no_git"`
+	NoGitMode        bool               `json:"no_git_mode"`
+	CWD              string             `json:"cwd"`
+	PlanPath         string             `json:"plan_path"`
+	InputPath        string             `json:"input_path"`
+	PlannerProvider  string             `json:"planner_provider"`
+	Planner          ManifestPlanner    `json:"planner"`
+	Git              ManifestGit        `json:"git"`
+	Config           ManifestConfig     `json:"config"`
+	Workspace        ManifestWorkspace  `json:"workspace"`
+	Artifacts        map[string]string  `json:"artifacts"`
+	Risks            []string           `json:"risks,omitempty"`
+	Planning         ManifestPlanning   `json:"planning"`
+	Codex            ManifestCodex      `json:"codex"`
+	Evaluation       ManifestEvaluation `json:"evaluation"`
+	Commit           ManifestCommit     `json:"commit,omitempty"`
+	RiskCount        int                `json:"risk_count"`
+	Errors           []string           `json:"errors"`
+	FailurePhase     string             `json:"failure_phase,omitempty"`
+	FailureMessage   string             `json:"failure_message,omitempty"`
+	FailedStage      string             `json:"failed_stage,omitempty"`
+	ErrorSummary     string             `json:"error_summary,omitempty"`
+	RedactionApplied bool               `json:"redaction_applied"`
 }
 
 type ManifestGit struct {
+	Available        bool     `json:"available"`
 	IsRepo           bool     `json:"is_repo"`
 	Root             string   `json:"root,omitempty"`
 	Branch           string   `json:"branch,omitempty"`
 	Head             string   `json:"head,omitempty"`
 	InitialStatus    string   `json:"initial_status,omitempty"`
 	FinalStatus      string   `json:"final_status,omitempty"`
+	DirtyBefore      bool     `json:"dirty_before"`
+	DirtyAfter       bool     `json:"dirty_after"`
 	Dirty            bool     `json:"dirty"`
 	NoGit            bool     `json:"no_git"`
 	BaselinePath     string   `json:"baseline_path,omitempty"`
+	BaselineTextPath string   `json:"baseline_text_path,omitempty"`
 	StatusBeforePath string   `json:"status_before_path,omitempty"`
 	StatusAfterPath  string   `json:"status_after_path,omitempty"`
 	StatusPath       string   `json:"status_path,omitempty"`
 	DiffPath         string   `json:"diff_path,omitempty"`
+	DiffStatPath     string   `json:"diff_stat_path,omitempty"`
 	DiffSummaryPath  string   `json:"diff_summary_path,omitempty"`
 	Warnings         []string `json:"warnings,omitempty"`
+}
+
+type ManifestPlanner struct {
+	Provider  string            `json:"provider"`
+	Model     string            `json:"model,omitempty"`
+	Artifacts map[string]string `json:"artifacts,omitempty"`
 }
 
 type ManifestConfig struct {
@@ -141,10 +156,13 @@ type ManifestPlanningAgent struct {
 type ManifestCodex struct {
 	Ran         bool   `json:"ran"`
 	Skipped     bool   `json:"skipped"`
+	Status      string `json:"status,omitempty"`
+	Model       string `json:"model,omitempty"`
 	ExitCode    int    `json:"exit_code"`
 	DurationMS  int64  `json:"duration_ms"`
 	EventsPath  string `json:"events_path,omitempty"`
 	SummaryPath string `json:"summary_path,omitempty"`
+	ExitPath    string `json:"exit_path,omitempty"`
 	Summary     string `json:"summary,omitempty"`
 	Error       string `json:"error,omitempty"`
 }
@@ -154,9 +172,12 @@ type ManifestEvaluation struct {
 	Skipped               bool     `json:"skipped"`
 	Status                string   `json:"status,omitempty"`
 	Result                string   `json:"result,omitempty"`
+	Summary               string   `json:"summary,omitempty"`
 	Score                 int      `json:"score"`
 	EvalPath              string   `json:"eval_path,omitempty"`
 	Risks                 []string `json:"risks,omitempty"`
+	RiskCount             int      `json:"risk_count,omitempty"`
+	FailureCount          int      `json:"failure_count,omitempty"`
 	RecommendedNextAction string   `json:"recommended_next_action,omitempty"`
 	Error                 string   `json:"error,omitempty"`
 }
@@ -220,14 +241,6 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	if !gitState.Available && !cfg.AllowNoGit {
 		return nil, validationError(errors.New("target directory is not a git repository; use --allow-no-git to override"))
 	}
-	if cfg.CommitOnSuccess {
-		if !gitState.Available {
-			return nil, validationError(errors.New("auto commit requires a git repository"))
-		}
-		if runDirty := HasNonJJDirtyStatus(gitState.InitialStatus); runDirty {
-			return nil, validationError(errors.New("auto commit requires a clean git working tree"))
-		}
-	}
 
 	store, err := artifact.NewStore(cfg.CWD, cfg.RunID)
 	if err != nil {
@@ -252,12 +265,16 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		NoGitMode:     !gitState.Available && cfg.AllowNoGit,
 		CWD:           cfg.CWD,
 		PlanPath:      planPath,
+		InputPath:     planPath,
 		Git: ManifestGit{
+			Available:     gitState.Available,
 			IsRepo:        gitState.Available,
 			Root:          gitState.Root,
 			Branch:        gitState.Branch,
 			Head:          gitState.Head,
 			InitialStatus: gitState.InitialStatus,
+			DirtyBefore:   gitState.Dirty,
+			DirtyAfter:    gitState.Dirty,
 			Dirty:         gitState.Dirty,
 			NoGit:         !gitState.Available && cfg.AllowNoGit,
 			Warnings:      gitWarnings,
@@ -283,7 +300,8 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			TaskPath: taskRel,
 			EvalPath: evalRel,
 		},
-		Artifacts: map[string]string{},
+		Artifacts:        map[string]string{},
+		RedactionApplied: true,
 	}
 	var manifestMu sync.Mutex
 	currentStage := StatusPlanning
@@ -331,10 +349,22 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		manifest.Status = status
 		if final {
 			manifest.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			manifest.EndedAt = manifest.FinishedAt
 			manifest.DurationMS = time.Since(started).Milliseconds()
 		}
 		manifest.RiskCount = len(manifest.Risks)
 		manifest.Artifacts["manifest"] = "manifest.json"
+		if manifest.Planner.Provider == "" {
+			manifest.Planner.Provider = manifest.PlannerProvider
+		}
+		if manifest.Planner.Artifacts == nil {
+			manifest.Planner.Artifacts = map[string]string{}
+		}
+		for name, path := range manifest.Artifacts {
+			if strings.HasPrefix(name, "planning") {
+				manifest.Planner.Artifacts[name] = path
+			}
+		}
 		data, err := json.MarshalIndent(manifest, "", "  ")
 		if err != nil {
 			return
@@ -351,11 +381,13 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		manifestMu.Lock()
 		if !manifest.Codex.Ran && !manifest.Codex.Skipped {
 			manifest.Codex.Skipped = true
+			manifest.Codex.Status = "skipped"
+			manifest.Codex.Model = cfg.CodexModel
 			manifest.Codex.Error = "skipped because " + currentStage + " did not complete"
 		}
 		if !manifest.Evaluation.Ran && !manifest.Evaluation.Skipped {
 			manifest.Evaluation.Skipped = true
-			manifest.Evaluation.Status = "skipped"
+			manifest.Evaluation.Status = "not_run"
 			manifest.Evaluation.Result = "SKIPPED"
 			manifest.Evaluation.Error = "skipped because " + currentStage + " did not complete"
 		}
@@ -406,6 +438,12 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		record("git_baseline", p)
 		manifest.Git.BaselinePath = "git/baseline.json"
 	}
+	if p, err := store.WriteString("git/baseline.txt", renderGitBaseline(gitState)); err != nil {
+		return fail(StatusPartial, err)
+	} else {
+		record("git_baseline_txt", p)
+		manifest.Git.BaselineTextPath = "git/baseline.txt"
+	}
 	statusBefore := gitState.InitialStatus
 	if !gitState.Available {
 		statusBefore = "git unavailable"
@@ -424,6 +462,11 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	planner := plannerSelection.Client
 	manifest.PlannerProvider = plannerSelection.Provider
+	manifest.Planner = ManifestPlanner{
+		Provider:  plannerSelection.Provider,
+		Model:     plannerModel(plannerSelection.Provider, cfg),
+		Artifacts: map[string]string{},
+	}
 	writeManifest(StatusPlanning, false)
 
 	fmt.Fprintf(cfg.Stdout, "jj: running %d planning agents\n", cfg.PlanningAgents)
@@ -466,6 +509,11 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	} else {
 		record("planning_merge", p)
 	}
+	if p, err := store.WriteFile("planning/merged.json", redactBytes(raw)); err != nil {
+		return fail(StatusPlanningFailed, err)
+	} else {
+		record("planning_merged", p)
+	}
 	if p, err := writeRedactedJSON(store, "planning/planning.json", normalizedPlanning(plannerSelection.Provider, drafts, merged)); err != nil {
 		return fail(StatusPlanningFailed, err)
 	} else {
@@ -490,15 +538,17 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			return fail(StatusPartial, err)
 		}
 		record("eval", evalArtifact)
-		manifest.Codex = ManifestCodex{Ran: false, Skipped: true}
+		manifest.Codex = ManifestCodex{Ran: false, Skipped: true, Status: "skipped", Model: cfg.CodexModel}
 		manifest.Evaluation = ManifestEvaluation{
 			Ran:                   true,
 			Skipped:               false,
-			Status:                "skipped",
+			Status:                "not_run",
 			Result:                "SKIPPED",
+			Summary:               "Implementation and verification were skipped in dry-run mode.",
 			Score:                 0,
 			EvalPath:              "docs/EVAL.md",
 			Risks:                 redactList(manifest.Risks),
+			RiskCount:             len(manifest.Risks),
 			RecommendedNextAction: "Review generated SPEC/TASK before running implementation.",
 		}
 		fmt.Fprintf(cfg.Stdout, "jj: dry run complete\n")
@@ -549,9 +599,15 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	if err := redactFile(summaryPath); err != nil {
 		return fail(StatusImplementationFailed, err)
 	}
+	codexStatus := "success"
+	if codexErr != nil {
+		codexStatus = "failed"
+	}
 	manifest.Codex = ManifestCodex{
 		Ran:         true,
 		Skipped:     false,
+		Status:      codexStatus,
+		Model:       cfg.CodexModel,
 		ExitCode:    codexResult.ExitCode,
 		DurationMS:  codexResult.DurationMS,
 		EventsPath:  "codex/events.jsonl",
@@ -559,6 +615,12 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	record("codex_events", eventsPath)
 	record("codex_summary", summaryPath)
+	if p, err := writeRedactedJSON(store, "codex/exit.json", codexExitArtifact(codexStatus, codexResult, codexErr)); err != nil {
+		return fail(StatusImplementationFailed, err)
+	} else {
+		record("codex_exit", p)
+		manifest.Codex.ExitPath = "codex/exit.json"
+	}
 	if strings.TrimSpace(codexResult.Summary) == "" {
 		if data, readErr := os.ReadFile(summaryPath); readErr == nil {
 			codexResult.Summary = string(data)
@@ -595,6 +657,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	diff = redactGitDiff(diff)
 	manifest.Git.FinalStatus = diff.Status
+	manifest.Git.DirtyAfter = dirtyFromGitStatus(diff.Status)
 	if p, err := store.WriteString("git/diff.patch", diff.Full+"\n"); err != nil {
 		return fail(StatusImplementationFailed, err)
 	} else {
@@ -619,6 +682,12 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		record("git_diff_summary", p)
 		manifest.Git.DiffSummaryPath = "git/diff-summary.txt"
 	}
+	if p, err := store.WriteString("git/diff.stat.txt", emptyAsNone(diff.Stat)+"\n"); err != nil {
+		return fail(StatusImplementationFailed, err)
+	} else {
+		record("git_diff_stat", p)
+		manifest.Git.DiffStatPath = "git/diff.stat.txt"
+	}
 	writeManifest(StatusImplementing, false)
 	codexEvents := ""
 	if data, err := os.ReadFile(eventsPath); err == nil {
@@ -641,10 +710,14 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		manifest.Evaluation = ManifestEvaluation{
 			Ran:                   true,
 			Skipped:               false,
-			Status:                "failed",
+			Status:                "fail",
+			Result:                "FAIL",
+			Summary:               "Evaluation failed after implementation evidence was collected.",
 			Error:                 redactSecrets(evalErr.Error()),
 			EvalPath:              "docs/EVAL.md",
 			Risks:                 []string{"Evaluation failed and requires manual review."},
+			RiskCount:             1,
+			FailureCount:          1,
 			RecommendedNextAction: "Review implementation, git diff, and evaluator failure manually.",
 		}
 		evalMarkdown := renderEvaluationFailure(evalErr, codexResult.Summary, diff.Markdown())
@@ -663,11 +736,14 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	manifest.Evaluation = ManifestEvaluation{
 		Ran:                   true,
 		Skipped:               false,
-		Status:                eval.Result,
+		Status:                evaluationStatus(eval.Result),
 		Result:                eval.Result,
+		Summary:               redactSecrets(eval.Summary),
 		Score:                 eval.Score,
 		EvalPath:              "docs/EVAL.md",
 		Risks:                 redactList(eval.Risks),
+		RiskCount:             len(nonEmptyPlanningItems(eval.Risks)),
+		FailureCount:          len(nonEmptyPlanningItems(eval.Regressions)),
 		RecommendedNextAction: firstRecommendedAction(eval.RecommendedFollowups),
 	}
 	if p, err := store.WriteFile("planning/evaluation.json", redactBytes(rawEval)); err != nil {
@@ -692,6 +768,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	} else {
 		finalDiff = redactGitDiff(finalDiff)
 		manifest.Git.FinalStatus = finalDiff.Status
+		manifest.Git.DirtyAfter = dirtyFromGitStatus(finalDiff.Status)
 		if p, err := store.WriteString("git/diff.patch", finalDiff.Full+"\n"); err != nil {
 			return fail(StatusEvaluationFailed, err)
 		} else {
@@ -716,6 +793,12 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			record("git_diff_summary", p)
 			manifest.Git.DiffSummaryPath = "git/diff-summary.txt"
 		}
+		if p, err := store.WriteString("git/diff.stat.txt", emptyAsNone(finalDiff.Stat)+"\n"); err != nil {
+			return fail(StatusEvaluationFailed, err)
+		} else {
+			record("git_diff_stat", p)
+			manifest.Git.DiffStatPath = "git/diff.stat.txt"
+		}
 	}
 	status := StatusCompleted
 	if codexErr != nil {
@@ -723,7 +806,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	} else if eval.Result != "PASS" {
 		status = StatusPartial
 	}
-	if cfg.CommitOnSuccess && (status == StatusComplete || status == StatusPartialFailed) {
+	if !cfg.DryRun && (status == StatusComplete || status == StatusPartialFailed) {
 		message := strings.TrimSpace(cfg.CommitMessage)
 		if message == "" {
 			message = "jj: turn " + cfg.RunID
@@ -736,10 +819,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		if finalDiff, err := CaptureGitDiff(ctx, cfg.CWD, gitState.Available, cfg.GitRunner); err == nil {
 			finalDiff = redactGitDiff(finalDiff)
 			manifest.Git.FinalStatus = finalDiff.Status
-			if p, err := store.WriteString("git/diff.patch", finalDiff.Full+"\n"); err == nil {
-				record("git_diff", p)
-				manifest.Git.DiffPath = "git/diff.patch"
-			}
+			manifest.Git.DirtyAfter = dirtyFromGitStatus(finalDiff.Status)
 			if p, err := store.WriteString("git/status.txt", finalDiff.Status+"\n"); err == nil {
 				record("git_status", p)
 				manifest.Git.StatusPath = "git/status.txt"
@@ -748,9 +828,11 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 				record("git_status_after", p)
 				manifest.Git.StatusAfterPath = "git/status.after.txt"
 			}
-			if p, err := store.WriteString("git/diff-summary.txt", finalDiff.Markdown()); err == nil {
-				record("git_diff_summary", p)
-				manifest.Git.DiffSummaryPath = "git/diff-summary.txt"
+			if p, err := store.WriteString("git/post-commit.diff.patch", finalDiff.Full+"\n"); err == nil {
+				record("git_post_commit_diff", p)
+			}
+			if p, err := store.WriteString("git/post-commit.diff.stat.txt", emptyAsNone(finalDiff.Stat)+"\n"); err == nil {
+				record("git_post_commit_diff_stat", p)
 			}
 		}
 	}
@@ -767,6 +849,78 @@ func writeWorktreeFile(path string, data []byte) error {
 		return err
 	}
 	return artifact.AtomicWriteFile(path, data, 0o644)
+}
+
+func plannerModel(provider string, cfg Config) string {
+	switch provider {
+	case plannerProviderCodex:
+		return cfg.CodexModel
+	default:
+		return cfg.OpenAIModel
+	}
+}
+
+func renderGitBaseline(state GitState) string {
+	if !state.Available {
+		return "git unavailable\n"
+	}
+	var b strings.Builder
+	b.WriteString("repo: ")
+	b.WriteString(state.Root)
+	b.WriteByte('\n')
+	b.WriteString("branch: ")
+	b.WriteString(state.Branch)
+	b.WriteByte('\n')
+	b.WriteString("head: ")
+	b.WriteString(state.Head)
+	b.WriteByte('\n')
+	b.WriteString("dirty: ")
+	b.WriteString(fmt.Sprintf("%t", state.Dirty))
+	b.WriteString("\n\nstatus.before:\n")
+	if strings.TrimSpace(state.InitialStatus) == "" {
+		b.WriteString("(none)\n")
+	} else {
+		b.WriteString(state.InitialStatus)
+		b.WriteByte('\n')
+	}
+	return redactSecrets(b.String())
+}
+
+type codexExitRecord struct {
+	Status     string `json:"status"`
+	ExitCode   int    `json:"exit_code"`
+	DurationMS int64  `json:"duration_ms"`
+	Error      string `json:"error,omitempty"`
+}
+
+func codexExitArtifact(status string, result codex.Result, err error) codexExitRecord {
+	record := codexExitRecord{
+		Status:     status,
+		ExitCode:   result.ExitCode,
+		DurationMS: result.DurationMS,
+	}
+	if err != nil {
+		record.Error = redactSecrets(err.Error())
+	}
+	return record
+}
+
+func dirtyFromGitStatus(status string) bool {
+	status = strings.TrimSpace(status)
+	return status != "" && status != "git unavailable"
+}
+
+func evaluationStatus(result string) string {
+	switch strings.ToUpper(strings.TrimSpace(result)) {
+	case "PASS":
+		return "pass"
+	case "FAIL":
+		return "fail"
+	case "PARTIAL":
+		return "warn"
+	default:
+		return "not_run"
+	}
 }
 
 func redactFile(path string) error {

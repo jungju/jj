@@ -361,21 +361,58 @@ func TestWebRunAutoContinueValidation(t *testing.T) {
 	}
 }
 
-func TestWebRunAutoContinueRejectsDirtyWorkspace(t *testing.T) {
+func TestWebRunSingleFullRunEnablesCommit(t *testing.T) {
 	dir := newCleanGitWorkspace(t)
-	writeFile(t, dir, "dirty.txt", "dirty\n")
+	executor := &loopFakeExecutor{
+		results: []string{runpkg.StatusSuccess},
+		evals:   []string{"PASS"},
+	}
 	server := newTestServerWithExecutor(t, Config{
 		CWD:         dir,
 		Addr:        "127.0.0.1:7331",
-		RunExecutor: (&loopFakeExecutor{}).Run,
+		RunExecutor: executor.Run,
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/run/start", strings.NewReader(runStartForm("single-full", false, true, false, 0)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("start status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	status := waitForRunStatus(t, server, "single-full", runpkg.StatusComplete)
+	if len(status.Turns) != 1 {
+		t.Fatalf("expected one turn, got %#v", status)
+	}
+	call := executor.callFor("single-full")
+	if !call.CommitOnSuccess {
+		t.Fatalf("expected web full-run to enable commit, got %#v", call)
+	}
+}
+
+func TestWebRunAutoContinueAllowsDirtyWorkspace(t *testing.T) {
+	dir := newCleanGitWorkspace(t)
+	writeFile(t, dir, "dirty.txt", "dirty\n")
+	executor := &loopFakeExecutor{
+		results: []string{runpkg.StatusSuccess},
+		evals:   []string{"PASS"},
+	}
+	server := newTestServerWithExecutor(t, Config{
+		CWD:         dir,
+		Addr:        "127.0.0.1:7331",
+		RunExecutor: executor.Run,
 	})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/run/start", strings.NewReader(runStartForm("dirty-loop", false, true, true, 3)))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	server.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "clean git working tree") {
-		t.Fatalf("expected dirty workspace rejection, got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected dirty workspace to start, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	status := waitForRunStatus(t, server, "dirty-loop", "success")
+	if len(status.Turns) != 1 {
+		t.Fatalf("expected one successful turn, got %#v", status)
 	}
 }
 
@@ -509,6 +546,17 @@ func (f *loopFakeExecutor) contextFor(runID string) string {
 		}
 	}
 	return ""
+}
+
+func (f *loopFakeExecutor) callFor(runID string) runpkg.Config {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, call := range f.calls {
+		if call.RunID == runID {
+			return call
+		}
+	}
+	return runpkg.Config{}
 }
 
 func writeFakeRunFile(runDir, rel, data string) error {

@@ -2,7 +2,7 @@
 
 ## Summary
 
-The implementation substantially covers the jj run/serve workflow and the required Go verification commands pass, but strict PASS is not justified because evidence is incomplete for live OpenAI/Codex behavior and there are auditability gaps around skipped-step manifesting and untracked-file diff capture.
+Core artifact and manifest gaps were improved and the reported Go test/vet/build checks passed, but the evidence does not support a strict PASS. The implementation adds required metadata and artifacts, yet introduces or preserves behavior outside the SPEC: non-dry-run commits by default and can include pre-existing dirty workspace changes. Artifact traversal hardening is also incomplete for normalized paths containing ../.
 
 ## Result
 
@@ -14,192 +14,178 @@ PARTIAL
 
 ## Score
 
-82
+74
 
 ## Task Completion
 
-- Added cmd/jj entrypoint and CLI wiring for run and serve.
-- Expanded config resolution for .jjrc, environment variables, CLI flags, document paths, Codex binary/model, and serve address settings.
-- Implemented run artifacts, manifest metadata, planner selection, dry-run behavior, non-dry-run Codex execution, git capture, evaluation rendering, and secret redaction.
-- Reworked serve into a dashboard-first local UI with docs, runs, artifacts, readiness, risk/evaluation summaries, and web-run controls.
-- Updated README, SPEC, TASK, and added EVAL documentation.
+- Added manifest fields such as ended_at, input_path, nested planner metadata, redaction_applied, git.available, dirty_before/dirty_after, Codex status/model/exit path, and evaluation summary/counts.
+- Added planning/merged.json, git/baseline.txt, git/diff.stat.txt, and codex/exit.json artifacts.
+- Updated non-dry-run git evidence handling around post-run commit behavior.
+- Hardened served artifact discovery and request handling against hidden artifact paths.
+- Fixed web-run completion persistence/race behavior.
+- Added or updated tests for manifest/artifact contracts, default commit behavior, no-git commit skip, and web-run status handling.
 
 ## Verification Results
 
-- go test ./... passed.
-- go vet ./... passed.
-- go build -o jj ./cmd/jj passed with a non-fatal read-only Go stat-cache warning.
-- git diff --check passed.
-- Tests cover config precedence, CLI parsing, dry-run, no-git mode, planner fallback with fakes, manifest fields, redaction, dashboard rendering, path traversal, web-run continuation, and commit-on-success behavior.
-- Missing or incomplete: live Codex fallback execution, live OpenAI planner execution, dry-run skipped git artifact assertions, untracked-file diff content assertions, and explicit corrupt-manifest dashboard tests.
+- PASS: Reported go test ./..., go vet ./..., and go build -o jj ./cmd/jj all passed.
+- PARTIAL: Added assertions for new manifest fields and required artifact outputs.
+- PARTIAL: Existing tests likely cover config, input validation, planner selection, redaction, run pipeline, and serve behavior, but the provided evidence does not show all required cases.
+- GAP: No explicit evidence of manual dry-run, real Codex fallback without OPENAI_API_KEY, served HTML secret inspection, or traversal attempts beyond basic cases.
+- GAP: The updated tests now assert automatic commit behavior, but that behavior is not part of the original SPEC/TASK and weakens acceptance confidence.
 
 ## Diff Summary
 
-- Added cmd/jj entrypoint and CLI wiring for run and serve.
-- Expanded config resolution for .jjrc, environment variables, CLI flags, document paths, Codex binary/model, and serve address settings.
-- Implemented run artifacts, manifest metadata, planner selection, dry-run behavior, non-dry-run Codex execution, git capture, evaluation rendering, and secret redaction.
-- Reworked serve into a dashboard-first local UI with docs, runs, artifacts, readiness, risk/evaluation summaries, and web-run controls.
-- Updated README, SPEC, TASK, and added EVAL documentation.
+- Added manifest fields such as ended_at, input_path, nested planner metadata, redaction_applied, git.available, dirty_before/dirty_after, Codex status/model/exit path, and evaluation summary/counts.
+- Added planning/merged.json, git/baseline.txt, git/diff.stat.txt, and codex/exit.json artifacts.
+- Updated non-dry-run git evidence handling around post-run commit behavior.
+- Hardened served artifact discovery and request handling against hidden artifact paths.
+- Fixed web-run completion persistence/race behavior.
+- Added or updated tests for manifest/artifact contracts, default commit behavior, no-git commit skip, and web-run status handling.
 
 ## Missing Tests
 
-- Missing or incomplete: live Codex fallback execution, live OpenAI planner execution, dry-run skipped git artifact assertions, untracked-file diff content assertions, and explicit corrupt-manifest dashboard tests.
+- No missing tests were reported by evaluator.
 
 ## Next Actions
 
-- Add explicit skipped_steps or equivalent manifest entries for dry-run workspace writes, implementation, git diff capture, and evaluation decisions.
-- Capture untracked file contents in run evidence, for example via git diff --cached with intent-to-add or a separate untracked-files artifact.
-- Run a controlled manual Codex fallback planning run without OPENAI_API_KEY and record the resulting manifest evidence.
-- Run a controlled OpenAI planner smoke test when an API key is available, or document why live provider verification is deferred.
-- Add tests for corrupt manifests, dry-run skipped git markers, and untracked-file diff evidence.
+- Remove default non-dry-run commit behavior or gate it behind an explicit flag separate from the SPEC workflow.
+- If commits remain, never include pre-existing dirty changes by default; record them as baseline evidence instead.
+- Make artifact path validation reject any raw path containing ../, absolute path syntax, backslashes, or hidden path segments before cleaning.
+- Add regression tests for docs/../manifest.json, .secret/../manifest.json, encoded traversal, and hidden run artifacts.
+- Add end-to-end verification for no-OPENAI_API_KEY Codex fallback, redaction across all persisted/rendered surfaces, and non-dry-run evidence without committing.
 
 ## What Changed
 
-- Added cmd/jj entrypoint and CLI wiring for run and serve.
-- Expanded config resolution for .jjrc, environment variables, CLI flags, document paths, Codex binary/model, and serve address settings.
-- Implemented run artifacts, manifest metadata, planner selection, dry-run behavior, non-dry-run Codex execution, git capture, evaluation rendering, and secret redaction.
-- Reworked serve into a dashboard-first local UI with docs, runs, artifacts, readiness, risk/evaluation summaries, and web-run controls.
-- Updated README, SPEC, TASK, and added EVAL documentation.
+- Added manifest fields such as ended_at, input_path, nested planner metadata, redaction_applied, git.available, dirty_before/dirty_after, Codex status/model/exit path, and evaluation summary/counts.
+- Added planning/merged.json, git/baseline.txt, git/diff.stat.txt, and codex/exit.json artifacts.
+- Updated non-dry-run git evidence handling around post-run commit behavior.
+- Hardened served artifact discovery and request handling against hidden artifact paths.
+- Fixed web-run completion persistence/race behavior.
+- Added or updated tests for manifest/artifact contracts, default commit behavior, no-git commit skip, and web-run status handling.
 
 ## SPEC Requirement Results
 
-- FAIL: `jj run <plan.md>` must read an existing, non-empty Markdown file. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: `--cwd` must select the target workspace without changing how a relative plan path is resolved. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: By default, the target workspace must be inside a git repository. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: `--allow-no-git` must permit execution outside git and record no-git mode in the manifest. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: `--dry-run` must create planning artifacts under `.jj/runs/<run-id>/` and must not write workspace `docs/SPEC.md`, workspace `docs/TASK.md`, or invoke Codex implementation. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Non-dry-run must write generated SPEC/TASK docs to the workspace before invoking Codex. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Planner provider resolution order must be injected planner, OpenAI planner when `OPENAI_API_KEY` exists, then Codex CLI fallback planner. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Each run must preserve raw planning outputs from product/spec, implementation/tasking, and QA/evaluation perspectives. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Final merged `docs/SPEC.md` and `docs/TASK.md` must be written into the run artifact directory for all runs. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Non-dry-run must capture Codex events, Codex summary when available, git status, git diff, evaluation output, and manifest updates. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: `docs/EVAL.md` must evaluate the plan, SPEC, TASK, implementation or dry-run evidence, test results, remaining risks, and next action. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: `jj serve --cwd .` must serve a dashboard at the root path and provide navigation to README, `plan.md`, project docs, run artifacts, SPEC, TASK, EVAL, git diff, events, and manifest. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: `jj run plan.md --dry-run` creates `.jj/runs/<run-id>/input.md`, planning outputs, run-local `docs/SPEC.md`, run-local `docs/TASK.md`, and `manifest.json` without modifying workspace docs. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Dry-run records implementation/Codex as skipped and does not invoke Codex. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: `OPENAI_API_KEY` absence selects Codex CLI fallback planning instead of failing solely due to missing API key. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: `OPENAI_API_KEY` presence selects the OpenAI planner unless an injected planner is supplied. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: No-git workspaces fail by default and succeed only with `--allow-no-git`, with no-git mode recorded. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Non-dry-run writes workspace `docs/SPEC.md` and `docs/TASK.md`, runs Codex, captures Codex evidence, captures git status and diff, writes `docs/EVAL.md`, and updates the manifest. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: `manifest.json` contains run status, config, git metadata, planner provider, Codex result, evaluation result, artifact paths, skipped steps, and redacted environment/config fields. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: `jj serve --cwd .` opens a dashboard-first root view showing TASK state, run progress or latest run, recent statuses, evaluation result, risks, failures, and next actions. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: The web UI links to README, plan, project docs, SPEC, TASK, EVAL, manifest, git diff, events, and run artifacts. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Broken run artifacts do not crash the dashboard. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: No real API key, Bearer [redacted], authorization header, or obvious secret value appears in artifacts or served pages. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: `jj run <plan.md>` must read an existing, non-empty Markdown plan file. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: The positional plan path must be resolved relative to the shell invocation directory, not relative to `--cwd`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: `--cwd` must select the target workspace where `.jj/runs`, workspace docs, Codex execution, git capture, and serve content are rooted. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: By default the target workspace must be a git repository. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: `--allow-no-git` must allow non-git workspaces and record `git.available=false` in the manifest. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: `--run-id` must select the run directory name and fail if that run already exists. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: If `--run-id` is omitted, `jj` must generate a unique time-based run id. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Planner provider selection order must be: injected planner, OpenAI planner when `OPENAI_API_KEY` is present, Codex CLI fallback planner when no API key is present. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Planning output must be structured and persisted as raw planning artifacts. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Drafts must be merged into final run-local `docs/SPEC.md` and `docs/TASK.md` for every successful planning run. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Dry-run must not write workspace `docs/SPEC.md`, workspace `docs/TASK.md`, workspace `docs/EVAL.md`, or code files. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Dry-run must not invoke implementation Codex. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Non-dry-run must write workspace SPEC and TASK before running implementation Codex. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Non-dry-run must capture Codex events, Codex summary, Codex exit status, final git status, git diff, and evaluation output. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Failed phases must still leave any produced artifacts and a failed or partial manifest when possible. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: `jj serve --cwd .` must serve a local dashboard at `/`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: The serve UI must render Markdown safely and block path traversal or access outside allowed workspace/run artifact paths. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: `jj run plan.md --dry-run` creates `.jj/runs/<run-id>/input.md`, planning JSON, run-local `docs/SPEC.md`, run-local `docs/TASK.md`, and `manifest.json`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Dry-run does not create or modify workspace `docs/SPEC.md`, `docs/TASK.md`, `docs/EVAL.md`, or code files. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Without `OPENAI_API_KEY`, planner provider is Codex CLI fallback and is recorded in the manifest. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: With `OPENAI_API_KEY`, OpenAI is selected unless an injected planner is present. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Injected planner always has highest priority for tests and internal callers. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Non-dry-run writes workspace SPEC/TASK before Codex implementation and then records Codex artifacts, git status/diff, `docs/EVAL.md`, and manifest evaluation result. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Non-git workspaces fail by default and run with `--allow-no-git` while recording git unavailable metadata. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: `--cwd` changes the target workspace but does not change positional plan path resolution. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Planner, Codex, or evaluation failures leave a failed or partial manifest and available artifacts. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: `jj serve --cwd .` renders a dashboard at `/` with TASK state, recent run status, evaluation result, failures/risks, next actions, and links to README, plan, docs, runs, manifest, Codex summary, and git diff. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Manifest, logs, Codex artifacts, planner artifacts, and served pages do not expose raw API keys, Bearer [redacted], or Authorization header values. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Artifact serving rejects path traversal and paths outside allowed roots. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
 - FAIL: `go test ./...`, `go vet ./...`, and `go build -o jj ./cmd/jj` pass. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
 
 ## TASK Item Results
 
-- FAIL: Establish CLI command structure. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add or update `cmd/jj` as the executable entrypoint. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Implement `jj run <plan.md>` and `jj serve`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add run flags for `--cwd`, `--run-id`, `--planning-agents`, `--openai-model`, `--codex-model`, `--spec-doc`, `--task-doc`, `--allow-no-git`, and `--dry-run`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add serve address or port flags. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Implement config precedence: defaults, `.jjrc`, environment variables, CLI flags. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Implement workspace and config foundations. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Validate that the plan exists, is readable, is Markdown, and is non-empty. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Resolve `--cwd` as the target workspace while keeping relative plan paths based on the caller working directory. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Create `.jj/runs/<run-id>/` safely and deterministically enough for tests. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add secret redaction helpers for env/config/manifest/log/rendered output. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Implement git capture. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Detect git repository by default. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Fail outside git unless `--allow-no-git` is set. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Capture baseline commit, branch, dirty state, and status when available. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Capture post-run status and full diff for non-dry-run. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Record git metadata and no-git mode in `manifest.json`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Implement planner pipeline. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Define planner request/result types and a planner interface. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add injected planner support for tests and internal orchestration. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add OpenAI planner selection when `OPENAI_API_KEY` is present. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add Codex CLI fallback planner selection when no API key is present. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Generate or preserve product/spec, implementation/tasking, and QA/evaluation drafts. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Merge drafts into final `docs/SPEC.md` and `docs/TASK.md`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Persist raw planning outputs and final docs under the run directory. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Implement artifact and manifest writer. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Copy the input plan to `.jj/runs/<run-id>/input.md`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Write run-local `docs/SPEC.md` and `docs/TASK.md` for every successful planning run. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Represent skipped implementation, git, or evaluation steps explicitly. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Write and update `manifest.json` with run id, timestamps, cwd, plan path, dry-run flag, no-git flag, planner provider, models, artifact paths, git metadata, Codex result, evaluation result, status, skipped steps, and errors. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Redact sensitive values before writing artifacts or rendering them. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Implement dry-run behavior. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Ensure `jj run plan.md --dry-run` writes only run-scoped planning artifacts, optional evaluation where possible, and manifest data. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Ensure dry-run does not write workspace `docs/SPEC.md` or workspace `docs/TASK.md`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Ensure dry-run does not invoke Codex implementation. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Assert dry-run does not create unintended git diffs in the workspace. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Implement non-dry-run behavior. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Write generated SPEC/TASK docs to configured workspace doc paths before implementation. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Invoke Codex CLI using generated docs as the implementation prompt. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Capture Codex events and summary under the run directory. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Capture post-run git status and diff. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Run evaluation and write `docs/EVAL.md` to run artifacts and workspace docs when evaluation is possible. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Update manifest consistently on success, Codex failure, evaluation failure, and partial completion. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Implement dashboard server. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Make `jj serve --cwd .` serve a dashboard at `/`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Show current TASK state, active or latest run, recent runs, latest statuses, evaluation summary, failures/risks, and next actions. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add routes or links for README, `plan.md`, project docs, run artifacts, SPEC, TASK, EVAL, git diff, events, and manifest JSON. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Escape HTML while rendering Markdown and artifacts. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Apply redaction before displaying config, logs, manifests, generated docs, or event content. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Handle empty runs, corrupt manifests, missing artifacts, and failed runs without crashing. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Implement evaluation. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Generate `docs/EVAL.md` for non-dry-run and for dry-run where meaningful. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Evaluate original plan coverage, SPEC/TASK coverage, implementation or dry-run evidence, tests run, failed criteria, skipped steps, unresolved risks, and recommended next action. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Ensure evaluation output and manifest evaluation fields do not overstate success when Codex or tests were skipped or failed. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add or complete CLI command handling for `run` and `serve`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add config loading and precedence across defaults, `.jjrc`, env, and flags. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add secret redaction across persisted and rendered output. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add run store creation, artifact writing, and manifest schema updates. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add planner provider selection and fallback order. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add final SPEC/TASK merge behavior from product, implementation, and QA drafts. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add dry-run isolation from workspace docs and Codex execution. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add non-dry-run Codex invocation, evidence capture, git capture, and evaluation writing. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add dashboard-first server root page with artifact navigation and degraded-run handling. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Add tests covering CLI validation, provider fallback, dry-run, no-git mode, manifest consistency, redaction, evaluation, and dashboard rendering. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Unit test missing plan, empty plan, directory path, unreadable file, invalid extension, valid Markdown, and `--cwd` path handling. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Unit test config precedence, `.jjrc` loading, env var handling, and redaction helpers. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Unit test planner provider selection for injected planner, OpenAI with API key, and Codex CLI fallback without API key. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Unit test manifest required fields, artifact path consistency, skipped-step markers, status transitions, and no secret leakage. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Integration test `jj run plan.md --dry-run` in a temp git repo and assert run-local artifacts exist while workspace docs are unchanged. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Integration test no-git behavior: default failure and `--allow-no-git` success with manifest metadata. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Integration test non-dry-run orchestration using fake planner, fake implementer, and fake evaluator. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: HTTP tests for dashboard root, empty runs, successful runs, failed runs, corrupt manifest fixtures, missing files, artifact links, and redacted output. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Security regression tests that inject fake key/token/password values into env, `.jjrc`, fake planner output, fake Codex logs, and manifests, then assert raw secrets are absent everywhere. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Run `gofmt` on changed Go files. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Run `go test ./...`, `go vet ./...`, and `go build -o jj ./cmd/jj`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: The required SPEC/TASK generation, provider fallback, dry-run behavior, non-dry-run evidence capture, evaluation, manifest, and dashboard flows are implemented. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Manifest status accurately reflects completed, skipped, failed, and partial steps. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Dashboard root is task/run-status focused and tolerates missing or corrupt artifacts. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Secret redaction is applied consistently before persistence and rendering. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
-- FAIL: Tests cover the major contracts and failure modes. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Inspect the existing codebase: identify CLI framework, module layout, tests, current `jj run`, current `jj serve`, config handling, artifact code, and docs. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Add or refine typed configuration for run and serve commands, including defaults, `.jjrc`, environment variables, and CLI flags with precedence `flags > env > .jjrc > defaults`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement centralized secret redaction for API keys, Bearer [redacted], Authorization headers, `sk-...` style keys, and secret-like config values. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement workspace and plan path handling: validate `--cwd`, resolve positional plan paths from caller directory, reject missing/empty/directory/non-Markdown plans, and preserve this behavior in tests. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement git helpers for repo detection, branch, HEAD, dirty state, status before/after, diff, diff stat, and explicit no-git metadata for `--allow-no-git`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement the artifact store: safe run directory creation, run id collision detection, subdirectory creation, atomic text/JSON/Markdown writes, and relative artifact path helpers. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Define manifest structs and status transitions for dry-run success, success, partial failure, and failed runs. Ensure failed phases still write possible partial artifacts and a final manifest. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Define planner interfaces and draft structs. Support injected planner, OpenAI planner, and Codex CLI fallback planner in the required priority order. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Persist raw planning outputs for product/spec, implementation/tasking, QA/evaluation, plus merged planning output. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement draft merge into final SPEC and TASK Markdown using the required document section structure. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement the `jj run` orchestrator with explicit phases: validation, run setup, git baseline, planning, merge, run-local docs, optional workspace docs, optional Codex, git final capture, evaluation, manifest finalization. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement dry-run behavior so it writes only run-local planning artifacts and manifest, skips workspace docs, skips Codex, and records evaluation as skipped or not run. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement non-dry-run behavior so it writes workspace `docs/SPEC.md` and `docs/TASK.md` before Codex implementation, then captures Codex artifacts, git evidence, and `docs/EVAL.md` in both run artifacts and workspace. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement Codex runner behind an interface. Make binary path and model configurable. Capture events, stdout/stderr or summary, exit code, duration, and errors without leaking secrets. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement evaluation generation from plan/SPEC/TASK, Codex result, git diff summary, tests when available, risks, and next actions. Emit evaluation status `pass`, `warn`, `fail`, or `not_run`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement `jj serve --cwd .` with a local-only HTTP server, dashboard route at `/`, safe Markdown rendering, redaction before rendering, and artifact routes constrained to allowed paths. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Build dashboard view models for current TASK status, active/recent runs, evaluation status, failures/risks, next actions, and links to README, plan, docs, run manifests, Codex summaries, and git diffs. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Add graceful serve behavior for missing docs, no runs, failed runs, malformed manifests, and redacted secret-like content. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Add CLI flags for `jj run`: `--cwd`, `--run-id`, `--dry-run`, `--allow-no-git`, `--planner-agents` or compatible `--planning-agents`, `--openai-model`, `--codex-model`, `--spec-doc`, and `--task-doc`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Add CLI flags for `jj serve`: `--cwd` and `--addr`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement non-empty Markdown plan validation. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement correct `--cwd` versus plan path resolution semantics. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement git-required-by-default behavior and `--allow-no-git` fallback metadata. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement run artifact layout under `.jj/runs/<run-id>/`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement manifest generation with config, git metadata, planner provider/model, Codex result, evaluation result, errors, redaction marker, and relative artifact paths. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement planner provider selection and persistence of planning JSON. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement final SPEC/TASK merge and write run-local docs for all successful planning runs. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Ensure dry-run never writes workspace docs or invokes Codex. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Ensure non-dry-run writes workspace docs before invoking Codex. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Capture Codex events, summary, exit status, and errors. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Capture git status before/after, diff patch, and diff stat. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Generate `docs/EVAL.md` with compliance, test result, diff summary, risks, and next actions. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement dashboard-first root page for `jj serve`. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Implement safe Markdown rendering, secret redaction, and path traversal protection for served artifacts. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Unit test input validation for missing, empty, directory, non-Markdown, and valid Markdown plans. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Unit test `--cwd` with relative plan paths to prove the plan path is resolved from invocation directory. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Unit test config precedence: CLI flags, env vars, `.jjrc`, defaults. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Unit test secret redaction for OpenAI keys, Bearer [redacted], Authorization headers, and secret-like `.jjrc` values. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Unit test planner provider selection: injected first, OpenAI when key exists, Codex fallback when no key exists. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Unit test manifest serialization, status fields, and relative artifact paths. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Unit test run id collision handling. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Unit test malformed planner output so it fails without writing successful empty SPEC/TASK. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Integration test dry-run with fake planner: run artifacts are created, workspace docs/code are untouched, Codex runner is not called. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Integration test non-dry-run in a temporary git repo with fake planner and fake Codex runner: workspace docs, Codex artifacts, git status/diff, EVAL, and manifest are created. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Integration test no-git workspace: fail without `--allow-no-git`, succeed with it and record git unavailable. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Integration test dirty git workspace: record `dirty_before` and preserve existing changes in evidence. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Failure-path tests for planner failure, Codex failure, and evaluation failure: manifest status and partial artifacts remain. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: HTTP handler tests for dashboard with no docs, successful run, failed run, missing evaluation, and malformed manifest. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: HTTP security tests rejecting `../`, absolute paths, and hidden secret file access. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Markdown rendering tests that raw script content is escaped or removed. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Security regression test injecting fake secrets through env, `.jjrc`, plan, planner output, Codex output, and errors; assert artifacts and HTTP responses do not contain raw secrets. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Required SPEC and TASK documents are generated with the expected sections. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: `jj run plan.md --dry-run` creates only run-local planning artifacts and manifest. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Dry-run side effects on workspace docs/code are covered by tests. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Provider fallback works without `OPENAI_API_KEY` and is recorded in manifest. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Injected planner is available for deterministic tests. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Non-dry-run records workspace docs, Codex artifacts, git evidence, evaluation output, and final manifest. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Failure paths leave actionable errors, partial artifacts when available, and a failed or partial manifest. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: `jj serve --cwd .` root is dashboard-first and not a README or file listing. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Dashboard and artifact serving redact secrets and block traversal. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
+- FAIL: Automated tests cover config, path resolution, provider selection, artifact layout, manifest, redaction, run pipeline, and dashboard behavior. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
 - FAIL: `go test ./...`, `go vet ./...`, and `go build -o jj ./cmd/jj` pass. Evidence: docs/SPEC.md, docs/TASK.md, planning/evaluation.json, git/diff-summary.txt, codex/summary.md.
 
 ## Requirements Coverage
 
-- Covered: jj run reads non-empty Markdown plans and keeps relative plan resolution separate from --cwd.
-- Covered: git is required by default and --allow-no-git is supported with manifest metadata.
-- Covered: dry-run creates run-local SPEC/TASK/EVAL artifacts and skips workspace SPEC/TASK writes and implementation Codex.
-- Covered: injected, OpenAI-key, and Codex fallback planner selection are implemented and tested with fakes/scripted runners.
-- Covered: non-dry-run writes workspace docs, invokes a Codex runner, captures events/summary/status/diff, evaluates, and updates manifest in fake-backed tests.
-- Covered: jj serve root is dashboard-first and links docs, runs, artifacts, manifests, and evaluations with redaction.
-- Partial: manifest uses per-component skipped booleans but lacks a clear skipped_steps field and does not create dry-run git diff/status skipped-marker artifacts required by the spec layout.
-- Partial: git diff capture uses git diff, which omits untracked file contents; this weakens audit evidence when Codex creates new files.
-- Partial: real OpenAI and real Codex CLI integrations were not exercised live; only fake/scripted coverage is evidenced.
+- PARTIAL: Dry-run planning artifacts, run-local SPEC/TASK, manifest updates, and skipped Codex/evaluation state appear covered.
+- PARTIAL: Non-dry-run writes docs, captures Codex artifacts, git status/diff/stat, EVAL, and manifest fields, but final git state is affected by automatic commit behavior not specified in the plan.
+- PARTIAL: Manifest compatibility improved substantially, including relative artifact paths and required nested metadata.
+- PARTIAL: Dashboard-first serve behavior appears pre-existing and was refined, but full dashboard requirement coverage was not proven by the provided diff.
+- PARTIAL: Secret redaction is used in touched paths, but complete proof across env, .jjrc, planner output, Codex output, manifests, errors, and served HTML is incomplete.
+- FAIL: Non-dry-run default commit and inclusion of pre-existing dirty changes conflicts with the document-first evidence workflow and the requirement to preserve unrelated user changes without hiding workspace state.
+- PARTIAL: Artifact path validation blocks obvious outside traversal after cleaning, but does not reject all inputs containing ../, such as docs/../manifest.json.
 
 ## Test Coverage
 
-- go test ./... passed.
-- go vet ./... passed.
-- go build -o jj ./cmd/jj passed with a non-fatal read-only Go stat-cache warning.
-- git diff --check passed.
-- Tests cover config precedence, CLI parsing, dry-run, no-git mode, planner fallback with fakes, manifest fields, redaction, dashboard rendering, path traversal, web-run continuation, and commit-on-success behavior.
-- Missing or incomplete: live Codex fallback execution, live OpenAI planner execution, dry-run skipped git artifact assertions, untracked-file diff content assertions, and explicit corrupt-manifest dashboard tests.
+- PASS: Reported go test ./..., go vet ./..., and go build -o jj ./cmd/jj all passed.
+- PARTIAL: Added assertions for new manifest fields and required artifact outputs.
+- PARTIAL: Existing tests likely cover config, input validation, planner selection, redaction, run pipeline, and serve behavior, but the provided evidence does not show all required cases.
+- GAP: No explicit evidence of manual dry-run, real Codex fallback without OPENAI_API_KEY, served HTML secret inspection, or traversal attempts beyond basic cases.
+- GAP: The updated tests now assert automatic commit behavior, but that behavior is not part of the original SPEC/TASK and weakens acceptance confidence.
 
 ## Risks
 
-- Untracked implementation files are present and must be included when committing or packaging the work.
-- Non-dry-run audit artifacts may miss contents of newly created untracked files because git diff does not include them.
-- Manifest skipped-step reporting is not fully explicit for every skipped phase/artifact.
-- Live provider behavior may differ from fake/scripted tests, especially Codex CLI JSON output and OpenAI structured responses.
-- Web-run mutation controls add broader behavior than the original plan and should be reviewed carefully for local-only safety and UX expectations.
+- Automatic commits may unexpectedly mutate git history and include unrelated pre-existing user changes.
+- Post-commit status.after and dirty_after can describe a clean tree while diff artifacts describe implementation changes before commit, making evidence harder to interpret.
+- Path validation accepts normalized paths that originally contained ../, leaving a security/spec compliance gap.
+- Full redaction coverage is not proven from the supplied evidence.
+- Several changed files were described as pre-existing unrelated modifications, so authorship and regression boundaries are unclear.
 
 ## Unknowns
 
@@ -207,16 +193,17 @@ PARTIAL
 
 ## Regressions
 
-- No automated test regression was observed.
-- Potential auditability regression: new-file changes can appear only as ?? in git status without content in git/diff.patch.
+- Non-dry-run now attempts a git commit by default, even though the original plan did not require or authorize commits.
+- Dirty workspace rejection for auto-continue was removed, and dirty files can be committed with the turn result.
+- Commit behavior can hide the post-run dirty workspace state that the SPEC expected to be captured as evidence.
 
 ## Recommended Follow-ups
 
-- Add explicit skipped_steps or equivalent manifest entries for dry-run workspace writes, implementation, git diff capture, and evaluation decisions.
-- Capture untracked file contents in run evidence, for example via git diff --cached with intent-to-add or a separate untracked-files artifact.
-- Run a controlled manual Codex fallback planning run without OPENAI_API_KEY and record the resulting manifest evidence.
-- Run a controlled OpenAI planner smoke test when an API key is available, or document why live provider verification is deferred.
-- Add tests for corrupt manifests, dry-run skipped git markers, and untracked-file diff evidence.
+- Remove default non-dry-run commit behavior or gate it behind an explicit flag separate from the SPEC workflow.
+- If commits remain, never include pre-existing dirty changes by default; record them as baseline evidence instead.
+- Make artifact path validation reject any raw path containing ../, absolute path syntax, backslashes, or hidden path segments before cleaning.
+- Add regression tests for docs/../manifest.json, .secret/../manifest.json, encoded traversal, and hidden run artifacts.
+- Add end-to-end verification for no-OPENAI_API_KEY Codex fallback, redaction across all persisted/rendered surfaces, and non-dry-run evidence without committing.
 
 ## Secret Redaction Check
 
