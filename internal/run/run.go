@@ -300,6 +300,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			TaskPath: taskRel,
 			EvalPath: evalRel,
 		},
+		Commit:           ManifestCommit{Ran: false, Status: "skipped"},
 		Artifacts:        map[string]string{},
 		RedactionApplied: true,
 	}
@@ -650,43 +651,50 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	writeManifest(StatusImplementing, false)
 
+	recordGitDiff := func(diff GitDiff) error {
+		manifest.Git.FinalStatus = diff.Status
+		manifest.Git.DirtyAfter = dirtyFromGitStatus(diff.Status)
+		if p, err := store.WriteString("git/diff.patch", diff.Full+"\n"); err != nil {
+			return err
+		} else {
+			record("git_diff", p)
+			manifest.Git.DiffPath = "git/diff.patch"
+		}
+		if p, err := store.WriteString("git/status.txt", diff.Status+"\n"); err != nil {
+			return err
+		} else {
+			record("git_status", p)
+			manifest.Git.StatusPath = "git/status.txt"
+		}
+		if p, err := store.WriteString("git/status.after.txt", diff.Status+"\n"); err != nil {
+			return err
+		} else {
+			record("git_status_after", p)
+			manifest.Git.StatusAfterPath = "git/status.after.txt"
+		}
+		if p, err := store.WriteString("git/diff-summary.txt", diff.Markdown()); err != nil {
+			return err
+		} else {
+			record("git_diff_summary", p)
+			manifest.Git.DiffSummaryPath = "git/diff-summary.txt"
+		}
+		if p, err := store.WriteString("git/diff.stat.txt", emptyAsNone(diff.Stat)+"\n"); err != nil {
+			return err
+		} else {
+			record("git_diff_stat", p)
+			manifest.Git.DiffStatPath = "git/diff.stat.txt"
+		}
+		return nil
+	}
+
 	fmt.Fprintln(cfg.Stdout, "jj: capturing git diff")
 	diff, err := CaptureGitDiff(ctx, cfg.CWD, gitState.Available, cfg.GitRunner)
 	if err != nil {
 		return fail(StatusImplementationFailed, fmt.Errorf("capture git diff: %w", err))
 	}
 	diff = redactGitDiff(diff)
-	manifest.Git.FinalStatus = diff.Status
-	manifest.Git.DirtyAfter = dirtyFromGitStatus(diff.Status)
-	if p, err := store.WriteString("git/diff.patch", diff.Full+"\n"); err != nil {
+	if err := recordGitDiff(diff); err != nil {
 		return fail(StatusImplementationFailed, err)
-	} else {
-		record("git_diff", p)
-		manifest.Git.DiffPath = "git/diff.patch"
-	}
-	if p, err := store.WriteString("git/status.txt", diff.Status+"\n"); err != nil {
-		return fail(StatusImplementationFailed, err)
-	} else {
-		record("git_status", p)
-		manifest.Git.StatusPath = "git/status.txt"
-	}
-	if p, err := store.WriteString("git/status.after.txt", diff.Status+"\n"); err != nil {
-		return fail(StatusImplementationFailed, err)
-	} else {
-		record("git_status_after", p)
-		manifest.Git.StatusAfterPath = "git/status.after.txt"
-	}
-	if p, err := store.WriteString("git/diff-summary.txt", diff.Markdown()); err != nil {
-		return fail(StatusImplementationFailed, err)
-	} else {
-		record("git_diff_summary", p)
-		manifest.Git.DiffSummaryPath = "git/diff-summary.txt"
-	}
-	if p, err := store.WriteString("git/diff.stat.txt", emptyAsNone(diff.Stat)+"\n"); err != nil {
-		return fail(StatusImplementationFailed, err)
-	} else {
-		record("git_diff_stat", p)
-		manifest.Git.DiffStatPath = "git/diff.stat.txt"
 	}
 	writeManifest(StatusImplementing, false)
 	codexEvents := ""
@@ -729,6 +737,11 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			manifest.Workspace.EvalWritten = true
 			recordRel("eval_worktree", evalRel)
 		}
+		if finalDiff, diffErr := CaptureGitDiff(ctx, cfg.CWD, gitState.Available, cfg.GitRunner); diffErr != nil {
+			addError(fmt.Errorf("capture final git diff after evaluation failure: %w", diffErr))
+		} else if recordErr := recordGitDiff(redactGitDiff(finalDiff)); recordErr != nil {
+			addError(fmt.Errorf("write final git diff after evaluation failure: %w", recordErr))
+		}
 		return fail(StatusEvaluationFailed, evalErr)
 	}
 	ai.NormalizeEvaluation(&eval)
@@ -767,37 +780,8 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		return fail(StatusEvaluationFailed, fmt.Errorf("capture final git diff: %w", err))
 	} else {
 		finalDiff = redactGitDiff(finalDiff)
-		manifest.Git.FinalStatus = finalDiff.Status
-		manifest.Git.DirtyAfter = dirtyFromGitStatus(finalDiff.Status)
-		if p, err := store.WriteString("git/diff.patch", finalDiff.Full+"\n"); err != nil {
+		if err := recordGitDiff(finalDiff); err != nil {
 			return fail(StatusEvaluationFailed, err)
-		} else {
-			record("git_diff", p)
-			manifest.Git.DiffPath = "git/diff.patch"
-		}
-		if p, err := store.WriteString("git/status.txt", finalDiff.Status+"\n"); err != nil {
-			return fail(StatusEvaluationFailed, err)
-		} else {
-			record("git_status", p)
-			manifest.Git.StatusPath = "git/status.txt"
-		}
-		if p, err := store.WriteString("git/status.after.txt", finalDiff.Status+"\n"); err != nil {
-			return fail(StatusEvaluationFailed, err)
-		} else {
-			record("git_status_after", p)
-			manifest.Git.StatusAfterPath = "git/status.after.txt"
-		}
-		if p, err := store.WriteString("git/diff-summary.txt", finalDiff.Markdown()); err != nil {
-			return fail(StatusEvaluationFailed, err)
-		} else {
-			record("git_diff_summary", p)
-			manifest.Git.DiffSummaryPath = "git/diff-summary.txt"
-		}
-		if p, err := store.WriteString("git/diff.stat.txt", emptyAsNone(finalDiff.Stat)+"\n"); err != nil {
-			return fail(StatusEvaluationFailed, err)
-		} else {
-			record("git_diff_stat", p)
-			manifest.Git.DiffStatPath = "git/diff.stat.txt"
 		}
 	}
 	status := StatusCompleted
@@ -805,36 +789,6 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		status = StatusImplementationFailed
 	} else if eval.Result != "PASS" {
 		status = StatusPartial
-	}
-	if !cfg.DryRun && (status == StatusComplete || status == StatusPartialFailed) {
-		message := strings.TrimSpace(cfg.CommitMessage)
-		if message == "" {
-			message = "jj: turn " + cfg.RunID
-		}
-		commit, commitErr := commitAll(ctx, cfg.CWD, message, gitState.Available, cfg.GitRunner)
-		manifest.Commit = commit
-		if commitErr != nil {
-			return fail(StatusFailed, fmt.Errorf("commit turn: %w", commitErr))
-		}
-		if finalDiff, err := CaptureGitDiff(ctx, cfg.CWD, gitState.Available, cfg.GitRunner); err == nil {
-			finalDiff = redactGitDiff(finalDiff)
-			manifest.Git.FinalStatus = finalDiff.Status
-			manifest.Git.DirtyAfter = dirtyFromGitStatus(finalDiff.Status)
-			if p, err := store.WriteString("git/status.txt", finalDiff.Status+"\n"); err == nil {
-				record("git_status", p)
-				manifest.Git.StatusPath = "git/status.txt"
-			}
-			if p, err := store.WriteString("git/status.after.txt", finalDiff.Status+"\n"); err == nil {
-				record("git_status_after", p)
-				manifest.Git.StatusAfterPath = "git/status.after.txt"
-			}
-			if p, err := store.WriteString("git/post-commit.diff.patch", finalDiff.Full+"\n"); err == nil {
-				record("git_post_commit_diff", p)
-			}
-			if p, err := store.WriteString("git/post-commit.diff.stat.txt", emptyAsNone(finalDiff.Stat)+"\n"); err == nil {
-				record("git_post_commit_diff_stat", p)
-			}
-		}
 	}
 	writeManifest(status, true)
 	fmt.Fprintf(cfg.Stdout, "jj: done\nrun_id=%s\nrun_dir=%s\nprovider=%s\nspec=%s\ntask=%s\neval=%s\nimplementation=ran\nstatus=%s\ncodex_exit_code=%d\nreview=jj serve --cwd %s\n", cfg.RunID, store.RunDir, plannerSelection.Provider, specRel, taskRel, evalRel, status, manifest.Codex.ExitCode, cfg.CWD)

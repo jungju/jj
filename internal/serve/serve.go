@@ -420,7 +420,6 @@ func (s *Server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		EvalDocExplicit:        evalDoc != "",
 		EvalDocPathMode:        evalDoc != "",
 		ConfigSearchDir:        s.cwd,
-		CommitOnSuccess:        !dryRun,
 		Stdout:                 io.Discard,
 		Stderr:                 io.Discard,
 	}
@@ -442,7 +441,6 @@ func (s *Server) executeWebRunLoop(webRun *webRunState, baseCfg runpkg.Config, f
 		}
 		cfg := baseCfg
 		cfg.RunID = turnRunID(baseCfg.RunID, turn)
-		cfg.CommitMessage = "jj: turn " + cfg.RunID
 		cfg.AdditionalPlanContext = nextContext
 		runDir := firstRunDir
 		if turn > 1 {
@@ -795,18 +793,26 @@ func (s *Server) handleRunManifest(w http.ResponseWriter, runID string) {
 
 func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
 	runID := r.URL.Query().Get("run")
-	rel := r.URL.Query().Get("path")
-	if strings.TrimSpace(runID) == "" || strings.TrimSpace(rel) == "" {
+	rawRel := r.URL.Query().Get("path")
+	if strings.TrimSpace(runID) == "" || strings.TrimSpace(rawRel) == "" {
 		s.renderError(w, http.StatusBadRequest, errors.New("run and path are required"))
 		return
 	}
-	if !isAllowedArtifactPath(rel) {
-		s.renderError(w, http.StatusBadRequest, fmt.Errorf("artifact path is not allowed: %s", rel))
+	rel, err := cleanAllowedArtifactPath(rawRel)
+	if err != nil {
+		s.renderError(w, http.StatusBadRequest, err)
 		return
 	}
 	runDir, err := s.runDir(runID)
 	if err != nil {
 		s.renderError(w, http.StatusBadRequest, err)
+		return
+	}
+	if ok, err := isManifestListedArtifact(runDir, rel); err != nil {
+		s.renderError(w, http.StatusBadRequest, err)
+		return
+	} else if !ok {
+		s.renderError(w, http.StatusBadRequest, fmt.Errorf("artifact path is not listed in manifest: %s", rel))
 		return
 	}
 	path, err := safeJoin(runDir, rel)
@@ -1268,28 +1274,20 @@ func appendUnique(items []string, add ...string) []string {
 
 func discoverArtifacts(runDir string) ([]artifactLink, error) {
 	var artifacts []artifactLink
-	err := filepath.WalkDir(runDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if path != runDir && strings.HasPrefix(d.Name(), ".") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if strings.HasPrefix(d.Name(), ".") {
-			return nil
-		}
-		rel, err := filepath.Rel(runDir, path)
-		if err != nil {
-			return err
-		}
-		artifacts = append(artifacts, artifactLink{Path: filepath.ToSlash(rel)})
-		return nil
-	})
+	allowed, err := manifestArtifactPaths(runDir)
 	if err != nil {
 		return nil, err
+	}
+	for rel := range allowed {
+		path, err := safeJoin(runDir, rel)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		artifacts = append(artifacts, artifactLink{Path: rel})
 	}
 	sort.SliceStable(artifacts, func(i, j int) bool {
 		return artifactRank(artifacts[i].Path) < artifactRank(artifacts[j].Path) ||
@@ -1329,30 +1327,61 @@ func isAllowedDocDir(root, path string) bool {
 }
 
 func isAllowedDocPath(rel string) bool {
-	if strings.Contains(rel, `\`) {
-		return false
-	}
-	clean := filepath.ToSlash(filepath.Clean(rel))
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+	clean, err := cleanAllowedRelativePath(rel)
+	if err != nil {
 		return false
 	}
 	return isRootDoc(clean) || strings.HasPrefix(clean, "docs/") || clean == "playground/plan.md" || strings.HasPrefix(clean, "playground/")
 }
 
 func isAllowedArtifactPath(rel string) bool {
+	_, err := cleanAllowedArtifactPath(rel)
+	return err == nil
+}
+
+func cleanAllowedArtifactPath(rel string) (string, error) {
+	clean, err := cleanAllowedRelativePath(rel)
+	if err != nil {
+		return "", fmt.Errorf("artifact path is not allowed: %s", rel)
+	}
+	return clean, nil
+}
+
+func cleanAllowedRelativePath(rel string) (string, error) {
+	rel = strings.TrimSpace(rel)
+	if rel == "" {
+		return "", errors.New("path is required")
+	}
+	if strings.ContainsRune(rel, 0) {
+		return "", fmt.Errorf("path contains NUL byte: %s", rel)
+	}
 	if strings.Contains(rel, `\`) {
-		return false
+		return "", fmt.Errorf("backslashes are not allowed in paths: %s", rel)
 	}
-	clean := filepath.ToSlash(filepath.Clean(rel))
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(rel) {
-		return false
+	if strings.HasPrefix(rel, "/") || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("absolute paths are not allowed: %s", rel)
 	}
-	for _, part := range strings.Split(clean, "/") {
-		if part == "" || strings.HasPrefix(part, ".") {
-			return false
+	if isWindowsDrivePath(rel) || strings.HasPrefix(rel, "//") {
+		return "", fmt.Errorf("absolute paths are not allowed: %s", rel)
+	}
+	for _, part := range strings.Split(rel, "/") {
+		if part == "" || part == "." || part == ".." || strings.HasPrefix(part, ".") {
+			return "", fmt.Errorf("path segment is not allowed: %s", rel)
 		}
 	}
-	return true
+	clean := filepath.ToSlash(filepath.Clean(rel))
+	if clean != rel || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("path must be clean and stay inside the root: %s", rel)
+	}
+	return clean, nil
+}
+
+func isWindowsDrivePath(rel string) bool {
+	if len(rel) < 2 || rel[1] != ':' {
+		return false
+	}
+	c := rel[0]
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 func isRootDoc(rel string) bool {
@@ -1362,6 +1391,74 @@ func isRootDoc(rel string) bool {
 	default:
 		return false
 	}
+}
+
+func isManifestListedArtifact(runDir, rel string) (bool, error) {
+	artifacts, err := manifestArtifactPaths(runDir)
+	if err != nil {
+		return false, err
+	}
+	_, ok := artifacts[rel]
+	return ok, nil
+}
+
+func manifestArtifactPaths(runDir string) (map[string]struct{}, error) {
+	data, err := os.ReadFile(filepath.Join(runDir, "manifest.json"))
+	if err != nil {
+		return nil, fmt.Errorf("read manifest: %w", err)
+	}
+	var manifest struct {
+		Artifacts map[string]string `json:"artifacts"`
+		Planner   struct {
+			Artifacts map[string]string `json:"artifacts"`
+		} `json:"planner"`
+		Git struct {
+			BaselinePath     string `json:"baseline_path"`
+			BaselineTextPath string `json:"baseline_text_path"`
+			StatusBeforePath string `json:"status_before_path"`
+			StatusAfterPath  string `json:"status_after_path"`
+			StatusPath       string `json:"status_path"`
+			DiffPath         string `json:"diff_path"`
+			DiffStatPath     string `json:"diff_stat_path"`
+			DiffSummaryPath  string `json:"diff_summary_path"`
+		} `json:"git"`
+		Codex struct {
+			EventsPath  string `json:"events_path"`
+			SummaryPath string `json:"summary_path"`
+			ExitPath    string `json:"exit_path"`
+		} `json:"codex"`
+		Evaluation struct {
+			EvalPath string `json:"eval_path"`
+		} `json:"evaluation"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, fmt.Errorf("decode manifest: %w", err)
+	}
+	artifacts := map[string]struct{}{}
+	add := func(raw string) {
+		if clean, err := cleanAllowedArtifactPath(raw); err == nil {
+			artifacts[clean] = struct{}{}
+		}
+	}
+	for _, path := range manifest.Artifacts {
+		add(path)
+	}
+	for _, path := range manifest.Planner.Artifacts {
+		add(path)
+	}
+	add(manifest.Git.BaselinePath)
+	add(manifest.Git.BaselineTextPath)
+	add(manifest.Git.StatusBeforePath)
+	add(manifest.Git.StatusAfterPath)
+	add(manifest.Git.StatusPath)
+	add(manifest.Git.DiffPath)
+	add(manifest.Git.DiffStatPath)
+	add(manifest.Git.DiffSummaryPath)
+	add(manifest.Codex.EventsPath)
+	add(manifest.Codex.SummaryPath)
+	add(manifest.Codex.ExitPath)
+	add(manifest.Evaluation.EvalPath)
+	return artifacts, nil
 }
 
 func safeJoin(root, rel string) (string, error) {

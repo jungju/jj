@@ -2,18 +2,19 @@
 ## Overview
 `jj` is a local CLI for making AI coding workflows reproducible and reviewable. Given one non-empty Markdown planning file, it generates implementation-ready `docs/SPEC.md` and `docs/TASK.md`, optionally runs Codex implementation, captures git and execution evidence, produces evaluation output, and exposes the current state through a local dashboard.
 
-The product treats documents as the source of truth: implementation starts from the generated documents, and completion requires the documents, code behavior, artifacts, and evaluation evidence to agree.
+The product is document-first: implementation starts from generated documents, and completion requires documents, code behavior, artifacts, and evaluation evidence to agree. Git integration is observational by default. `jj` records baseline, status, and diff evidence, but does not create commits or mutate git history during the default workflow.
 
 ## Goals
 - Generate concrete `docs/SPEC.md` and `docs/TASK.md` from one Markdown plan.
-- Use multiple planning perspectives: product/spec, implementation/tasking, and QA/evaluation.
+- Use product/spec, implementation/tasking, and QA/evaluation planning perspectives.
 - Run without `OPENAI_API_KEY` by falling back to Codex CLI planning.
 - Run Codex implementation in the target workspace for non-dry-run executions.
 - Store every run under `.jj/runs/<run-id>/` for audit, comparison, and debugging.
 - Capture Codex events, summaries, git status, git diff, evaluation output, and manifest metadata.
+- Leave non-dry-run changes uncommitted for human review.
 - Provide `jj serve` as a dashboard-first local web UI showing current TASK state, recent runs, evaluation state, risks, and next actions.
 - Keep secrets out of manifests, logs, artifacts shown in the UI, and generated web pages.
-- Preserve user changes and record evidence instead of reverting or hiding workspace state.
+- Preserve user changes and record evidence instead of reverting, staging, committing, or hiding workspace state.
 
 ## Non-Goals
 - `jj` is not a cloud service.
@@ -22,6 +23,8 @@ The product treats documents as the source of truth: implementation starts from 
 - `jj` does not replace git review; it leaves evidence that makes review easier.
 - `jj` does not guarantee AI output correctness; it makes the process inspectable.
 - `jj` does not expose arbitrary local files through the web UI.
+- `jj run` does not create git commits by default.
+- Adding an explicit commit feature is out of scope for this iteration.
 
 ## User Stories
 - As an individual developer, I want to write `plan.md` once and get SPEC, TASK, implementation evidence, and evaluation artifacts without repeating context across tools.
@@ -29,6 +32,7 @@ The product treats documents as the source of truth: implementation starts from 
 - As an AI workflow experimenter, I want each run to be reproducible and comparable through run manifests and artifacts.
 - As a user without an OpenAI API key, I want planning to still work through Codex CLI fallback.
 - As a reviewer, I want `jj serve --cwd .` to open on current task and run status rather than a file listing.
+- As a git user, I want `jj` to leave reviewable changes in the working tree instead of committing them automatically.
 
 ## Functional Requirements
 - `jj run <plan.md>` must read an existing, non-empty Markdown plan file.
@@ -44,7 +48,9 @@ The product treats documents as the source of truth: implementation starts from 
 - Dry-run must not write workspace `docs/SPEC.md`, workspace `docs/TASK.md`, workspace `docs/EVAL.md`, or code files.
 - Dry-run must not invoke implementation Codex.
 - Non-dry-run must write workspace SPEC and TASK before running implementation Codex.
-- Non-dry-run must capture Codex events, Codex summary, Codex exit status, final git status, git diff, and evaluation output.
+- Non-dry-run must capture Codex events, Codex summary, Codex exit status, final git status, git diff patch, git diff stat, and evaluation output.
+- Non-dry-run must not run `git add`, `git commit`, `git reset`, `git checkout`, or any other git history-mutating command.
+- Pre-existing dirty workspace state must be preserved and recorded as baseline evidence.
 - Failed phases must still leave any produced artifacts and a failed or partial manifest when possible.
 - `jj serve --cwd .` must serve a local dashboard at `/`.
 - The serve UI must render Markdown safely and block path traversal or access outside allowed workspace/run artifact paths.
@@ -62,6 +68,8 @@ Supported flags:
 - `--spec-doc <path>`: workspace spec document path. Default `docs/SPEC.md`.
 - `--task-doc <path>`: workspace task document path. Default `docs/TASK.md`.
 
+For non-dry-run executions, `jj run` writes workspace docs, runs Codex, captures evidence, generates evaluation output, and leaves resulting changes uncommitted for review. Any manifest commit section must be absent or explicitly record `ran:false` or `status:skipped`; it must not report a successful automatic commit.
+
 Validation failures must identify the failed phase and reason, such as missing plan, empty plan, directory input, unsupported extension, git unavailable, run id collision, planner parse failure, document write failure, Codex failure, evaluation failure, or manifest write failure.
 
 ### `jj serve`
@@ -69,7 +77,7 @@ Supported flags:
 - `--cwd <path>`: target workspace. Defaults to current directory.
 - `--addr <host:port>`: local bind address. Default must be local-only.
 
-The root route `/` must render the dashboard, not README and not a raw artifact listing.
+The root route `/` must render the dashboard, not README and not a raw artifact listing. Artifact routes must validate the raw decoded request path before cleaning, joining, or normalization.
 
 ## Pipeline Behavior
 1. Resolve the positional plan path from the invocation directory.
@@ -86,9 +94,10 @@ The root route `/` must render the dashboard, not README and not a raw artifact 
 12. If dry-run, skip workspace doc writes, Codex implementation, git diff after implementation, and workspace evaluation. Record evaluation as skipped or not run.
 13. If non-dry-run, write workspace `docs/SPEC.md` and `docs/TASK.md` before implementation.
 14. Run Codex implementation using generated SPEC and TASK.
-15. Capture Codex artifacts, final git status, git diff, and diff stat.
-16. Generate `docs/EVAL.md` in the run artifacts and workspace for non-dry-run.
-17. Finish manifest with final status, errors, artifact paths, provider metadata, Codex result, git metadata, and evaluation result.
+15. Generate `docs/EVAL.md` in the run artifacts and workspace for non-dry-run.
+16. Capture final git status, git diff patch, and git diff stat after docs, Codex, and evaluation have completed or failed as far as possible.
+17. Do not stage, commit, reset, checkout, stash, clean, or otherwise mutate git history.
+18. Finish manifest with final status, errors, artifact paths, provider metadata, Codex result, git metadata, and evaluation result.
 
 ## Artifact Layout
 Each run is stored under `.jj/runs/<run-id>/`.
@@ -126,7 +135,7 @@ Required non-dry-run artifacts when available:
 - `errors`
 - `redaction_applied`
 
-Valid manifest statuses must distinguish dry-run completion, successful implementation/evaluation, partial failure, and failed runs.
+If commit metadata exists for backward compatibility, it must report `ran:false` or `status:skipped` in the default workflow. Valid manifest statuses must distinguish dry-run completion, successful implementation/evaluation, partial failure, and failed runs.
 
 ## Configuration
 Configuration sources must be merged with deterministic precedence: CLI flags, environment variables, `.jjrc`, then defaults.
@@ -155,21 +164,26 @@ Environment variables may configure OpenAI key/model and Codex binary/model. `.j
 - Evaluation failure must not erase implementation artifacts.
 - Manifest writing should use atomic write or temp-file-and-rename semantics.
 - Failed runs should preserve partial artifacts and write a failed or partial manifest whenever possible.
+- Lack of a commit must not be treated as an error because no commit is attempted by default.
 
 ## Security and Privacy
 - Raw API keys, Bearer [redacted], Authorization headers, `sk-...` style keys, and provider secrets must never appear in manifests, logs, served HTML, generated summaries, or user-facing errors.
 - Redaction must be centralized and applied before persisting or rendering manifest values, config display, planner raw output, Codex output, event summaries, errors, and web pages.
 - The web UI must restrict file access to the configured workspace and `.jj/runs` artifacts.
-- Artifact routes must block `../`, absolute paths, hidden secret targets, and paths outside the allowed roots.
+- Artifact routes must reject raw decoded paths containing `..` segments before path cleanup.
+- Artifact routes must reject encoded traversal that decodes to `..`, absolute Unix paths, Windows drive or UNC-style paths, backslashes, NUL bytes, empty paths, and hidden path segments such as `.secret`.
+- Artifact routes must serve only manifest-listed run artifacts or explicit public workspace document allowlist entries.
+- After raw validation, path resolution must still verify the final resolved path remains inside the allowed root.
 - Markdown rendering must be safe and must not execute raw scripts.
 - The default server bind address must be local-only.
 
 ## Observability
 - Every run must have a manifest that summarizes status, configuration, provider choice, git metadata, Codex result, evaluation result, artifact paths, and errors.
-- Git evidence must capture baseline and post-run state without reverting existing user changes.
+- Git evidence must capture baseline and post-run state without reverting, staging, committing, or modifying user changes.
 - Codex evidence must include events when available, summary, exit status, model, and duration when available.
 - Evaluation must summarize plan compliance, generated document presence, Codex result, git diff summary, test results, remaining risks, and next actions.
 - `jj serve` must surface current TASK status, active or recent runs, evaluation status, failures, risks, and next actions on the first screen.
+- If a run leaves uncommitted changes, the dashboard may surface that as review state, not as a failure by itself.
 
 ## Acceptance Criteria
 - `jj run plan.md --dry-run` creates `.jj/runs/<run-id>/input.md`, planning JSON, run-local `docs/SPEC.md`, run-local `docs/TASK.md`, and `manifest.json`.
@@ -178,10 +192,14 @@ Environment variables may configure OpenAI key/model and Codex binary/model. `.j
 - With `OPENAI_API_KEY`, OpenAI is selected unless an injected planner is present.
 - Injected planner always has highest priority for tests and internal callers.
 - Non-dry-run writes workspace SPEC/TASK before Codex implementation and then records Codex artifacts, git status/diff, `docs/EVAL.md`, and manifest evaluation result.
+- Non-dry-run does not create a git commit and does not run staging or history-mutating git commands.
+- A normal non-dry-run in a git repo leaves `git rev-parse HEAD` unchanged.
+- Pre-existing dirty changes are preserved and recorded as baseline evidence.
 - Non-git workspaces fail by default and run with `--allow-no-git` while recording git unavailable metadata.
 - `--cwd` changes the target workspace but does not change positional plan path resolution.
 - Planner, Codex, or evaluation failures leave a failed or partial manifest and available artifacts.
 - `jj serve --cwd .` renders a dashboard at `/` with TASK state, recent run status, evaluation result, failures/risks, next actions, and links to README, plan, docs, runs, manifest, Codex summary, and git diff.
 - Manifest, logs, Codex artifacts, planner artifacts, and served pages do not expose raw API keys, Bearer [redacted], or Authorization header values.
-- Artifact serving rejects path traversal and paths outside allowed roots.
+- Artifact serving rejects raw or encoded traversal, absolute paths, backslashes, Windows drive paths, NUL bytes, hidden segments, and paths outside allowed roots.
+- Artifact serving still serves valid manifest-listed artifacts.
 - `go test ./...`, `go vet ./...`, and `go build -o jj ./cmd/jj` pass.

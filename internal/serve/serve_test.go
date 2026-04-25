@@ -183,6 +183,19 @@ func TestArtifactShowsRunFile(t *testing.T) {
 	}
 }
 
+func TestArtifactRejectsUnlistedRunFile(t *testing.T) {
+	dir := newTestWorkspace(t)
+	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/docs/UNLISTED.md", "# Hidden\n")
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/artifact?run=20260425-120000-bbbbbb&path=docs/UNLISTED.md", nil)
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code < 400 {
+		t.Fatalf("expected unlisted artifact rejection, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestRunShowsDocsArtifactsFirst(t *testing.T) {
 	dir := newTestWorkspace(t)
 	server := newTestServer(t, dir, "")
@@ -210,6 +223,17 @@ func TestPathTraversalRejected(t *testing.T) {
 	for _, target := range []string{
 		"/doc?path=../README.md",
 		"/artifact?run=20260425-120000-bbbbbb&path=../manifest.json",
+		"/artifact?run=20260425-120000-bbbbbb&path=docs/../manifest.json",
+		"/artifact?run=20260425-120000-bbbbbb&path=docs%2f..%2fmanifest.json",
+		"/artifact?run=20260425-120000-bbbbbb&path=%2e%2e",
+		"/artifact?run=20260425-120000-bbbbbb&path=.secret/../manifest.json",
+		"/artifact?run=20260425-120000-bbbbbb&path=/etc/passwd",
+		"/artifact?run=20260425-120000-bbbbbb&path=C:/secret.txt",
+		"/artifact?run=20260425-120000-bbbbbb&path=docs%5c..%5cmanifest.json",
+		"/artifact?run=20260425-120000-bbbbbb&path=docs/TASK.md%00",
+		"/artifact?run=20260425-120000-bbbbbb&path=docs/.secret",
+		"/artifact?run=20260425-120000-bbbbbb&path=.secret/file.md",
+		"/artifact?run=20260425-120000-bbbbbb&path=",
 		"/run?id=../bad",
 	} {
 		rec := httptest.NewRecorder()
@@ -361,7 +385,7 @@ func TestWebRunAutoContinueValidation(t *testing.T) {
 	}
 }
 
-func TestWebRunSingleFullRunEnablesCommit(t *testing.T) {
+func TestWebRunSingleFullRunDoesNotEnableCommit(t *testing.T) {
 	dir := newCleanGitWorkspace(t)
 	executor := &loopFakeExecutor{
 		results: []string{runpkg.StatusSuccess},
@@ -385,8 +409,8 @@ func TestWebRunSingleFullRunEnablesCommit(t *testing.T) {
 		t.Fatalf("expected one turn, got %#v", status)
 	}
 	call := executor.callFor("single-full")
-	if !call.CommitOnSuccess {
-		t.Fatalf("expected web full-run to enable commit, got %#v", call)
+	if call.CommitOnSuccess || call.CommitMessage != "" {
+		t.Fatalf("expected web full-run to leave commit disabled, got %#v", call)
 	}
 }
 
@@ -530,7 +554,7 @@ func (f *loopFakeExecutor) Run(ctx context.Context, cfg runpkg.Config) (*runpkg.
 	if err := writeFakeRunFile(runDir, "codex/summary.md", "Changed files: fake.go\n"); err != nil {
 		return nil, err
 	}
-	manifest := fmt.Sprintf(`{"run_id":%q,"status":%q,"started_at":"2026-04-25T00:00:00Z","finished_at":"2026-04-25T00:00:01Z","evaluation":{"ran":true,"result":%q,"score":80},"commit":{"ran":true,"status":"success","sha":"abc","message":"jj: turn %s"}}`, cfg.RunID, status, eval, cfg.RunID)
+	manifest := fmt.Sprintf(`{"run_id":%q,"status":%q,"started_at":"2026-04-25T00:00:00Z","finished_at":"2026-04-25T00:00:01Z","artifacts":{"manifest":"manifest.json","spec":"docs/SPEC.md","task":"docs/TASK.md","eval":"docs/EVAL.md","git_diff_summary":"git/diff-summary.txt","codex_summary":"codex/summary.md"},"evaluation":{"ran":true,"result":%q,"score":80},"commit":{"ran":false,"status":"skipped"}}`, cfg.RunID, status, eval)
 	if err := writeFakeRunFile(runDir, "manifest.json", manifest); err != nil {
 		return nil, err
 	}
@@ -617,8 +641,8 @@ func newTestWorkspace(t *testing.T) string {
 	writeFile(t, dir, "docs/guide.md", "# Guide\n")
 	writeFile(t, dir, "playground/plan.md", "# Plan\n")
 	writeFile(t, dir, ".git/ignored.md", "# ignored\n")
-	writeFile(t, dir, ".jj/runs/20260425-110000-aaaaaa/manifest.json", `{"run_id":"20260425-110000-aaaaaa","status":"success","started_at":"2026-04-25T11:00:00Z"}`)
-	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/manifest.json", `{"run_id":"20260425-120000-bbbbbb","status":"failed","started_at":"2026-04-25T12:00:00Z","risks":["review required"]}`)
+	writeFile(t, dir, ".jj/runs/20260425-110000-aaaaaa/manifest.json", `{"run_id":"20260425-110000-aaaaaa","status":"success","started_at":"2026-04-25T11:00:00Z","artifacts":{"manifest":"manifest.json"}}`)
+	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/manifest.json", `{"run_id":"20260425-120000-bbbbbb","status":"failed","started_at":"2026-04-25T12:00:00Z","artifacts":{"manifest":"manifest.json","spec":"docs/SPEC.md","task":"docs/TASK.md","eval":"docs/EVAL.md"},"risks":["review required"]}`)
 	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/docs/SPEC.md", "# SPEC\n\nDo the spec.\n")
 	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/docs/TASK.md", "# TASK\n\nDo the task.\n")
 	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/docs/EVAL.md", "# EVAL\n\nPASS.\n")
