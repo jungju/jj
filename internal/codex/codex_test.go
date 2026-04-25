@@ -18,7 +18,7 @@ func TestBuildArgs(t *testing.T) {
 		"--json",
 		"--output-last-message", "/tmp/run/codex-summary.md",
 		"--sandbox", "workspace-write",
-		"--ask-for-approval", "never",
+		"--full-auto",
 		"--model", "gpt-5.4-mini",
 		"--skip-git-repo-check",
 		"-",

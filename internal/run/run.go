@@ -69,6 +69,9 @@ type ManifestConfig struct {
 	CodexModel     string `json:"codex_model,omitempty"`
 	CodexBin       string `json:"codex_bin,omitempty"`
 	ConfigFile     string `json:"config_file,omitempty"`
+	SpecDoc        string `json:"spec_doc"`
+	TaskDoc        string `json:"task_doc"`
+	EvalDoc        string `json:"eval_doc"`
 }
 
 type ManifestPlanning struct {
@@ -175,6 +178,9 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			CodexModel:     cfg.CodexModel,
 			CodexBin:       cfg.CodexBin,
 			ConfigFile:     cfg.ConfigFile,
+			SpecDoc:        cfg.SpecDoc,
+			TaskDoc:        cfg.TaskDoc,
+			EvalDoc:        cfg.EvalDoc,
 		},
 		Artifacts: map[string]string{},
 	}
@@ -183,6 +189,11 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		manifestMu.Lock()
 		defer manifestMu.Unlock()
 		manifest.Artifacts[name] = relArtifactPath(store, path)
+	}
+	recordRel := func(name, rel string) {
+		manifestMu.Lock()
+		defer manifestMu.Unlock()
+		manifest.Artifacts[name] = filepath.ToSlash(rel)
 	}
 	addError := func(err error) {
 		if err == nil {
@@ -243,16 +254,19 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	merged.Spec = ensureSpecSections(merged.Spec, plan)
 	merged.Task = ensureTaskSections(merged.Task, plan)
+	specRel := docRelPath(cfg.SpecDoc)
+	taskRel := docRelPath(cfg.TaskDoc)
+	evalRel := docRelPath(cfg.EvalDoc)
 	if p, err := store.WriteFile("planning/merge.json", raw); err != nil {
 		return fail(err)
 	} else {
 		record("planning_merge", p)
 	}
-	specArtifact, err := store.WriteString("SPEC.md", merged.Spec)
+	specArtifact, err := store.WriteString(specRel, merged.Spec)
 	if err != nil {
 		return fail(err)
 	}
-	taskArtifact, err := store.WriteString("TASK.md", merged.Task)
+	taskArtifact, err := store.WriteString(taskRel, merged.Task)
 	if err != nil {
 		return fail(err)
 	}
@@ -265,17 +279,17 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		return &Result{RunID: cfg.RunID, RunDir: store.RunDir}, nil
 	}
 
-	specPath := filepath.Join(cfg.CWD, "SPEC.md")
-	taskPath := filepath.Join(cfg.CWD, "TASK.md")
-	if err := artifact.AtomicWriteFile(specPath, []byte(merged.Spec), 0o644); err != nil {
-		return fail(fmt.Errorf("write SPEC.md: %w", err))
+	specPath := filepath.Join(cfg.CWD, filepath.FromSlash(specRel))
+	taskPath := filepath.Join(cfg.CWD, filepath.FromSlash(taskRel))
+	if err := writeWorktreeFile(specPath, []byte(merged.Spec)); err != nil {
+		return fail(fmt.Errorf("write %s: %w", specRel, err))
 	}
-	if err := artifact.AtomicWriteFile(taskPath, []byte(merged.Task), 0o644); err != nil {
-		return fail(fmt.Errorf("write TASK.md: %w", err))
+	if err := writeWorktreeFile(taskPath, []byte(merged.Task)); err != nil {
+		return fail(fmt.Errorf("write %s: %w", taskRel, err))
 	}
-	fmt.Fprintln(cfg.Stdout, "jj: wrote SPEC.md and TASK.md")
-	record("spec_worktree", specPath)
-	record("task_worktree", taskPath)
+	fmt.Fprintf(cfg.Stdout, "jj: wrote %s and %s\n", specRel, taskRel)
+	recordRel("spec_worktree", specRel)
+	recordRel("task_worktree", taskRel)
 
 	runner := cfg.CodexRunner
 	if runner == nil {
@@ -288,7 +302,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		Bin:               cfg.CodexBin,
 		CWD:               cfg.CWD,
 		Model:             cfg.CodexModel,
-		Prompt:            codexPrompt("SPEC.md", "TASK.md"),
+		Prompt:            codexPrompt(specRel, taskRel),
 		EventsPath:        eventsPath,
 		OutputLastMessage: summaryPath,
 		AllowNoGit:        cfg.AllowNoGit,
@@ -357,7 +371,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	} else {
 		record("evaluation_json", p)
 	}
-	if p, err := store.WriteString("EVAL.md", renderEvaluation(eval)); err != nil {
+	if p, err := store.WriteString(evalRel, renderEvaluation(eval)); err != nil {
 		return fail(err)
 	} else {
 		record("eval", p)
@@ -369,6 +383,13 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	writeManifest(status)
 	fmt.Fprintln(cfg.Stdout, "jj: done")
 	return &Result{RunID: cfg.RunID, RunDir: store.RunDir}, nil
+}
+
+func writeWorktreeFile(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return artifact.AtomicWriteFile(path, data, 0o644)
 }
 
 func validateCWD(cwd string) error {

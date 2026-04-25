@@ -6,5 +6,8 @@ playground/workspace/.jj/
 playground/workspace/.git/
 playground/workspace/SPEC.md
 playground/workspace/TASK.md
+playground/workspace/docs/SPEC.md
+playground/workspace/docs/TASK.md
+playground/workspace/docs/EVAL.md
 playground/workspace/hello
 playground/workspace/*.test

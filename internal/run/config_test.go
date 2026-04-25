@@ -90,6 +90,36 @@ func TestResolveConfigExplicitFlagsOverrideEnvAndJJRC(t *testing.T) {
 	}
 }
 
+func TestResolveConfigAppliesDefaultDocumentNames(t *testing.T) {
+	cfg, err := ResolveConfig(Config{
+		PlanningAgents: DefaultPlanningAgents,
+		OpenAIModel:    defaultOpenAIModel,
+	})
+	if err != nil {
+		t.Fatalf("resolve config: %v", err)
+	}
+	if cfg.SpecDoc != DefaultSpecDoc || cfg.TaskDoc != DefaultTaskDoc || cfg.EvalDoc != DefaultEvalDoc {
+		t.Fatalf("unexpected document defaults: %#v", cfg)
+	}
+}
+
+func TestValidateResolvedConfigRejectsDocumentPaths(t *testing.T) {
+	base := Config{
+		PlanningAgents: DefaultPlanningAgents,
+		OpenAIModel:    defaultOpenAIModel,
+		SpecDoc:        DefaultSpecDoc,
+		TaskDoc:        DefaultTaskDoc,
+		EvalDoc:        DefaultEvalDoc,
+	}
+	for _, docName := range []string{"../SPEC.md", "/tmp/SPEC.md", "docs/SPEC.md", "foo/SPEC.md", `foo\SPEC.md`} {
+		cfg := base
+		cfg.SpecDoc = docName
+		if err := validateResolvedConfig(cfg); err == nil {
+			t.Fatalf("expected invalid spec doc %q to fail", docName)
+		}
+	}
+}
+
 func writeJJRC(t *testing.T, dir, data string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, ".jjrc"), []byte(data), 0o644); err != nil {

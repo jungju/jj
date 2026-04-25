@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	jjconfig "github.com/jungju/jj/internal/config"
@@ -11,6 +12,13 @@ import (
 
 const DefaultPlanningAgents = 3
 const defaultOpenAIModel = "gpt-5.5"
+const defaultDocsDir = "docs"
+
+const (
+	DefaultSpecDoc = "SPEC.md"
+	DefaultTaskDoc = "TASK.md"
+	DefaultEvalDoc = "EVAL.md"
+)
 
 type Config struct {
 	PlanPath       string
@@ -22,6 +30,9 @@ type Config struct {
 	CodexBin       string
 	AllowNoGit     bool
 	DryRun         bool
+	SpecDoc        string
+	TaskDoc        string
+	EvalDoc        string
 
 	ConfigSearchDir string
 	ConfigFile      string
@@ -94,6 +105,7 @@ func ResolveConfig(cfg Config) (Config, error) {
 	if strings.TrimSpace(cfg.OpenAIAPIKey) == "" {
 		cfg.OpenAIAPIKey = os.Getenv(cfg.OpenAIAPIKeyEnv)
 	}
+	cfg = applyDocumentDefaults(cfg)
 	return cfg, nil
 }
 
@@ -121,5 +133,52 @@ func validateResolvedConfig(cfg Config) error {
 	if strings.TrimSpace(cfg.OpenAIModel) == "" {
 		return fmt.Errorf("openai model is required")
 	}
+	if err := validateDocName("spec-doc", cfg.SpecDoc); err != nil {
+		return err
+	}
+	if err := validateDocName("task-doc", cfg.TaskDoc); err != nil {
+		return err
+	}
+	if err := validateDocName("eval-doc", cfg.EvalDoc); err != nil {
+		return err
+	}
 	return nil
+}
+
+func applyDocumentDefaults(cfg Config) Config {
+	if strings.TrimSpace(cfg.SpecDoc) == "" {
+		cfg.SpecDoc = DefaultSpecDoc
+	} else {
+		cfg.SpecDoc = strings.TrimSpace(cfg.SpecDoc)
+	}
+	if strings.TrimSpace(cfg.TaskDoc) == "" {
+		cfg.TaskDoc = DefaultTaskDoc
+	} else {
+		cfg.TaskDoc = strings.TrimSpace(cfg.TaskDoc)
+	}
+	if strings.TrimSpace(cfg.EvalDoc) == "" {
+		cfg.EvalDoc = DefaultEvalDoc
+	} else {
+		cfg.EvalDoc = strings.TrimSpace(cfg.EvalDoc)
+	}
+	return cfg
+}
+
+func validateDocName(flagName, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("%s is required", flagName)
+	}
+	if filepath.IsAbs(name) || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("%s must be a file name, not a path: %s", flagName, name)
+	}
+	clean := filepath.Clean(name)
+	if clean == "." || clean == ".." || clean != name {
+		return fmt.Errorf("%s must be a file name, not a path: %s", flagName, name)
+	}
+	return nil
+}
+
+func docRelPath(name string) string {
+	return filepath.ToSlash(filepath.Join(defaultDocsDir, strings.TrimSpace(name)))
 }

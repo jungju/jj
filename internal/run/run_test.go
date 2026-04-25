@@ -51,6 +51,27 @@ func TestExecuteRejectsInvalidRunID(t *testing.T) {
 	}
 }
 
+func TestExecuteRejectsInvalidDocumentName(t *testing.T) {
+	dir := t.TempDir()
+	writePlan(t, dir, "plan.md")
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       "plan.md",
+		CWD:            dir,
+		RunID:          "invalid-doc",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		SpecDoc:        "docs/SPEC.md",
+		AllowNoGit:     true,
+		DryRun:         true,
+		Stdout:         io.Discard,
+		Planner:        &fakePlanner{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "spec-doc must be a file name") {
+		t.Fatalf("expected spec-doc validation error, got %v", err)
+	}
+}
+
 func TestExecuteDryRunCreatesPlanningArtifactsOnly(t *testing.T) {
 	dir := t.TempDir()
 	writePlan(t, dir, "plan.md")
@@ -81,11 +102,13 @@ func TestExecuteDryRunCreatesPlanningArtifactsOnly(t *testing.T) {
 	if planner.evalCalls != 0 {
 		t.Fatal("evaluation should not run in dry-run")
 	}
-	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "dry-run", "SPEC.md"))
-	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "dry-run", "TASK.md"))
+	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "dry-run", "docs", "SPEC.md"))
+	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "dry-run", "docs", "TASK.md"))
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "dry-run", "planning", "product_spec.json"))
 	assertNoFile(t, filepath.Join(dir, "SPEC.md"))
 	assertNoFile(t, filepath.Join(dir, "TASK.md"))
+	assertNoFile(t, filepath.Join(dir, "docs", "SPEC.md"))
+	assertNoFile(t, filepath.Join(dir, "docs", "TASK.md"))
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "dry-run", "manifest.json"))
 	if manifest.Status != "success" || !manifest.DryRun {
 		t.Fatalf("unexpected dry-run manifest: %#v", manifest)
@@ -117,16 +140,55 @@ func TestExecuteEndToEndWithFakes(t *testing.T) {
 	if planner.evalCalls != 1 {
 		t.Fatalf("expected one eval call, got %d", planner.evalCalls)
 	}
-	assertFileExists(t, filepath.Join(dir, "SPEC.md"))
-	assertFileExists(t, filepath.Join(dir, "TASK.md"))
-	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "full", "EVAL.md"))
+	assertFileExists(t, filepath.Join(dir, "docs", "SPEC.md"))
+	assertFileExists(t, filepath.Join(dir, "docs", "TASK.md"))
+	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "full", "docs", "EVAL.md"))
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "full", "codex-events.jsonl"))
+	if !strings.Contains(codexRunner.lastRequest.Prompt, "docs/SPEC.md") || !strings.Contains(codexRunner.lastRequest.Prompt, "docs/TASK.md") {
+		t.Fatalf("codex prompt should reference docs paths:\n%s", codexRunner.lastRequest.Prompt)
+	}
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "full", "manifest.json"))
 	if manifest.SchemaVersion != "1" || manifest.Status != "success" || manifest.Evaluation.Result != "PASS" || manifest.Evaluation.Score != 90 {
 		t.Fatalf("unexpected manifest: %#v", manifest)
 	}
-	if manifest.Artifacts["spec"] != "SPEC.md" || manifest.Artifacts["task"] != "TASK.md" {
+	if manifest.Artifacts["spec"] != "docs/SPEC.md" || manifest.Artifacts["task"] != "docs/TASK.md" || manifest.Artifacts["eval"] != "docs/EVAL.md" {
 		t.Fatalf("unexpected artifact paths: %#v", manifest.Artifacts)
+	}
+	if manifest.Artifacts["spec_worktree"] != "docs/SPEC.md" || manifest.Artifacts["task_worktree"] != "docs/TASK.md" {
+		t.Fatalf("unexpected artifact paths: %#v", manifest.Artifacts)
+	}
+}
+
+func TestExecuteUsesCustomDocumentNames(t *testing.T) {
+	dir := initGit(t)
+	writePlan(t, dir, "plan.md")
+	codexRunner := &fakeCodexRunner{mutate: true}
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       "plan.md",
+		CWD:            dir,
+		RunID:          "custom-docs",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		SpecDoc:        "PRODUCT.md",
+		TaskDoc:        "WORK.md",
+		EvalDoc:        "REVIEW.md",
+		Stdout:         io.Discard,
+		Planner:        &fakePlanner{},
+		CodexRunner:    codexRunner,
+	})
+	if err != nil {
+		t.Fatalf("execute custom docs: %v", err)
+	}
+	assertFileExists(t, filepath.Join(dir, "docs", "PRODUCT.md"))
+	assertFileExists(t, filepath.Join(dir, "docs", "WORK.md"))
+	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "custom-docs", "docs", "REVIEW.md"))
+	if !strings.Contains(codexRunner.lastRequest.Prompt, "docs/PRODUCT.md") || !strings.Contains(codexRunner.lastRequest.Prompt, "docs/WORK.md") {
+		t.Fatalf("codex prompt should reference custom docs paths:\n%s", codexRunner.lastRequest.Prompt)
+	}
+	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "custom-docs", "manifest.json"))
+	if manifest.Artifacts["spec"] != "docs/PRODUCT.md" || manifest.Artifacts["task"] != "docs/WORK.md" || manifest.Artifacts["eval"] != "docs/REVIEW.md" {
+		t.Fatalf("unexpected custom artifact paths: %#v", manifest.Artifacts)
 	}
 }
 
@@ -255,7 +317,7 @@ func TestExecuteFullRunWithoutOpenAIKeyUsesCodexPlannerAndEvaluation(t *testing.
 	if manifest.Status != "success" || manifest.PlannerProvider != plannerProviderCodex || manifest.Evaluation.Result != "PASS" {
 		t.Fatalf("unexpected manifest: %#v", manifest)
 	}
-	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "codex-planner-full", "EVAL.md"))
+	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "codex-planner-full", "docs", "EVAL.md"))
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "codex-planner-full", "planning", "eval.events.jsonl"))
 }
 
@@ -309,6 +371,8 @@ func TestExecuteDryRunWithInjectedPlannerSkipsImplementationCodex(t *testing.T) 
 	}
 	assertNoFile(t, filepath.Join(dir, "SPEC.md"))
 	assertNoFile(t, filepath.Join(dir, "TASK.md"))
+	assertNoFile(t, filepath.Join(dir, "docs", "SPEC.md"))
+	assertNoFile(t, filepath.Join(dir, "docs", "TASK.md"))
 }
 
 func TestExecuteRequiresGitUnlessAllowed(t *testing.T) {
@@ -407,7 +471,7 @@ func TestExecuteReportsCodexFailure(t *testing.T) {
 	if manifest.Codex.Error == "" || !strings.Contains(manifest.Codex.Error, "boom") {
 		t.Fatalf("expected codex error in manifest, got %#v", manifest.Codex)
 	}
-	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "codex-fail", "EVAL.md"))
+	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "codex-fail", "docs", "EVAL.md"))
 }
 
 type fakePlanner struct {

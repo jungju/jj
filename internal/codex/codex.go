@@ -96,7 +96,7 @@ func BuildArgs(req Request) []string {
 		"--json",
 		"--output-last-message", req.OutputLastMessage,
 		"--sandbox", "workspace-write",
-		"--ask-for-approval", "never",
+		"--full-auto",
 	}
 	if strings.TrimSpace(req.Model) != "" {
 		args = append(args, "--model", req.Model)
