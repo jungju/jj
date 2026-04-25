@@ -63,6 +63,88 @@ func TestIndexShowsMissingReadiness(t *testing.T) {
 	}
 }
 
+func TestIndexShowsMalformedIncompleteAndLegacyRuns(t *testing.T) {
+	dir := newTestWorkspace(t)
+	writeFile(t, dir, ".jj/runs/20260425-130000-badjson/manifest.json", `{"run_id":"20260425-130000-badjson","status":"sk-proj-abcdef1234567890",`)
+	writeFile(t, dir, ".jj/runs/20260425-140000-incomplete/manifest.json", `{"run_id":"20260425-140000-incomplete","status":"success"}`)
+	writeFile(t, dir, ".jj/runs/20260425-150000-legacy/manifest.json", `{"run_id":"20260425-150000-legacy","status":"success","started_at":"2026-04-25T15:00:00Z","artifacts":{"manifest":"manifest.json"},"commit":{"ran":true,"status":"success","sha":"abc123"}}`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{
+		"20260425-130000-badjson",
+		"manifest is malformed",
+		"20260425-140000-incomplete",
+		"manifest is incomplete: missing artifacts",
+		"20260425-120000-bbbbbb",
+		"20260425-150000-legacy",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard missing %q:\n%s", want, body)
+		}
+	}
+	for _, leaked := range []string{
+		"sk-proj-abcdef1234567890",
+		`href="/run?id=20260425-130000-badjson"`,
+		`href="/runs/20260425-130000-badjson/manifest"`,
+		`artifact?run=20260425-130000-badjson`,
+		"commit_failed",
+	} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("dashboard leaked or linked invalid data %q:\n%s", leaked, body)
+		}
+	}
+}
+
+func TestMalformedManifestArtifactFailsClosedWithoutPathLeak(t *testing.T) {
+	dir := newTestWorkspace(t)
+	writeFile(t, dir, ".jj/runs/20260425-130000-badjson/manifest.json", `{"run_id":"20260425-130000-badjson","status":"sk-proj-abcdef1234567890",`)
+	writeFile(t, dir, ".jj/runs/20260425-130000-badjson/docs/TASK.md", "# Secret task\n")
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/artifact?run=20260425-130000-badjson&path=docs/TASK.md", nil)
+	server.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if rec.Code < 400 {
+		t.Fatalf("expected malformed-manifest artifact rejection, got %d body=%s", rec.Code, body)
+	}
+	if !strings.Contains(body, "manifest is malformed") {
+		t.Fatalf("expected sanitized manifest error, got:\n%s", body)
+	}
+	for _, leaked := range []string{dir, "sk-proj-abcdef1234567890", "Secret task"} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("artifact error leaked %q:\n%s", leaked, body)
+		}
+	}
+}
+
+func TestRunManifestMalformedResponseIsSanitized(t *testing.T) {
+	dir := newTestWorkspace(t)
+	writeFile(t, dir, ".jj/runs/20260425-130000-badjson/manifest.json", `{"run_id":"20260425-130000-badjson","status":"sk-proj-abcdef1234567890",`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs/20260425-130000-badjson/manifest", nil)
+	server.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	if !strings.Contains(body, "manifest is malformed") || strings.Contains(body, "sk-proj-abcdef1234567890") {
+		t.Fatalf("malformed manifest response was not sanitized:\n%s", body)
+	}
+}
+
 func TestResolveConfigUsesServeJJRC(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, ".jjrc", `{"serve_host":"localhost","serve_port":0}`)
@@ -140,6 +222,37 @@ func TestDocShowsRedactedMarkdown(t *testing.T) {
 	}
 	if strings.Contains(body, "sk-proj") || !strings.Contains(body, "[redacted-openai-key]") {
 		t.Fatalf("doc was not redacted:\n%s", body)
+	}
+}
+
+func TestRunDashboardAndArtifactRedactSecrets(t *testing.T) {
+	dir := newTestWorkspace(t)
+	secret := "serve-secret-token-1234567890"
+	t.Setenv("JJ_SERVE_TEST_TOKEN", secret)
+	writeFile(t, dir, ".jj/runs/20260425-160000-redacted/manifest.json", fmt.Sprintf(`{"run_id":"20260425-160000-redacted","status":"failed","started_at":"2026-04-25T16:00:00Z","artifacts":{"manifest":"manifest.json","eval":"docs/EVAL.md"},"errors":["token=%s"],"risks":["Bearer %s"],"evaluation":{"result":"FAIL","recommended_next_action":"remove %s"}}`, secret, secret, secret))
+	writeFile(t, dir, ".jj/runs/20260425-160000-redacted/docs/EVAL.md", "Authorization: Bearer "+secret+"\n")
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	if strings.Contains(body, secret) || !strings.Contains(body, "[redacted]") {
+		t.Fatalf("dashboard did not redact secret:\n%s", body)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/artifact?run=20260425-160000-redacted&path=docs/EVAL.md", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body = rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("artifact status = %d body=%s", rec.Code, body)
+	}
+	if strings.Contains(body, secret) || !strings.Contains(body, "Authorization: [redacted]") {
+		t.Fatalf("artifact did not redact secret:\n%s", body)
 	}
 }
 

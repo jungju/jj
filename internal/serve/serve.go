@@ -79,6 +79,36 @@ type runLink struct {
 	Risks           []string
 	Failures        []string
 	NextActions     []string
+	Invalid         bool
+	EvalArtifact    string
+}
+
+type dashboardManifest struct {
+	RunID           string `json:"run_id"`
+	Status          string `json:"status"`
+	StartedAt       string `json:"started_at"`
+	FinishedAt      string `json:"finished_at"`
+	EndedAt         string `json:"ended_at"`
+	PlannerProvider string `json:"planner_provider"`
+	Planner         struct {
+		Provider string `json:"provider"`
+	} `json:"planner"`
+	DryRun     bool `json:"dry_run"`
+	Evaluation struct {
+		Result                string `json:"result"`
+		Status                string `json:"status"`
+		Error                 string `json:"error"`
+		RecommendedNextAction string `json:"recommended_next_action"`
+	} `json:"evaluation"`
+	Artifacts map[string]string `json:"artifacts"`
+	Errors    []string          `json:"errors"`
+	Risks     []string          `json:"risks"`
+}
+
+type dashboardManifestLoad struct {
+	Manifest dashboardManifest
+	Valid    bool
+	Error    string
 }
 
 type artifactLink struct {
@@ -668,7 +698,7 @@ func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		s.renderError(w, http.StatusNotFound, err)
+		s.renderError(w, http.StatusNotFound, errors.New("document unavailable"))
 		return
 	}
 	content, rendered := presentContent(rel, data)
@@ -773,7 +803,7 @@ func (s *Server) handleRunManifest(w http.ResponseWriter, runID string) {
 	}
 	data, err := os.ReadFile(filepath.Join(runDir, "manifest.json"))
 	if err != nil {
-		s.renderError(w, http.StatusNotFound, err)
+		s.renderError(w, http.StatusNotFound, errors.New("manifest unavailable"))
 		return
 	}
 	redacted := secrets.Redact(string(data))
@@ -784,7 +814,7 @@ func (s *Server) handleRunManifest(w http.ResponseWriter, runID string) {
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"run_id": runID,
 			"status": "unknown",
-			"error":  "manifest is corrupt",
+			"error":  "manifest is malformed",
 		})
 		return
 	}
@@ -822,7 +852,7 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		s.renderError(w, http.StatusNotFound, err)
+		s.renderError(w, http.StatusNotFound, errors.New("artifact unavailable"))
 		return
 	}
 	content, rendered := presentContent(rel, data)
@@ -1098,57 +1128,47 @@ func (s *Server) discoverRuns() ([]runLink, error) {
 		if err := artifact.ValidateRunID(entry.Name()); err != nil {
 			continue
 		}
+		runDir := filepath.Join(runsDir, entry.Name())
+		loaded := loadDashboardManifest(entry.Name(), runDir)
 		run := runLink{ID: entry.Name()}
-		manifestPath := filepath.Join(runsDir, entry.Name(), "manifest.json")
-		if data, err := os.ReadFile(manifestPath); err == nil {
-			var manifest struct {
-				Status          string `json:"status"`
-				StartedAt       string `json:"started_at"`
-				FinishedAt      string `json:"finished_at"`
-				EndedAt         string `json:"ended_at"`
-				PlannerProvider string `json:"planner_provider"`
-				Planner         struct {
-					Provider string `json:"provider"`
-				} `json:"planner"`
-				DryRun     bool `json:"dry_run"`
-				Evaluation struct {
-					Result string `json:"result"`
-					Status string `json:"status"`
-					Error  string `json:"error"`
-				} `json:"evaluation"`
-				Errors []string `json:"errors"`
-				Risks  []string `json:"risks"`
-			}
-			_ = json.Unmarshal(data, &manifest)
-			run.Status = manifest.Status
-			run.StartedAt = manifest.StartedAt
-			run.FinishedAt = manifest.FinishedAt
-			if run.FinishedAt == "" {
-				run.FinishedAt = manifest.EndedAt
-			}
-			run.PlannerProvider = manifest.PlannerProvider
-			if run.PlannerProvider == "" {
-				run.PlannerProvider = manifest.Planner.Provider
-			}
-			run.DryRun = manifest.DryRun
-			run.Evaluation = manifest.Evaluation.Result
-			if run.Evaluation == "" {
-				run.Evaluation = manifest.Evaluation.Status
-			}
-			if run.Evaluation == "" {
-				run.Evaluation = manifest.Evaluation.Error
-			}
-			run.Evaluation = secrets.Redact(run.Evaluation)
-			if len(manifest.Errors) > 0 {
-				run.ErrorSummary = secrets.Redact(manifest.Errors[0])
-				run.Failures = redactList(manifest.Errors)
-			}
-			if len(manifest.Risks) > 0 {
-				run.RiskSummary = secrets.Redact(manifest.Risks[0])
-				run.Risks = redactList(manifest.Risks)
-			}
+		if !loaded.Valid {
+			run.Invalid = true
+			run.Status = "unavailable"
+			run.ErrorSummary = loaded.Error
+			run.Failures = []string{loaded.Error}
+			runs = append(runs, run)
+			continue
 		}
-		evalPath := filepath.Join(runsDir, entry.Name(), "docs", "EVAL.md")
+		manifest := loaded.Manifest
+		run.Status = secrets.Redact(manifest.Status)
+		run.StartedAt = secrets.Redact(manifest.StartedAt)
+		run.FinishedAt = secrets.Redact(manifest.FinishedAt)
+		if run.FinishedAt == "" {
+			run.FinishedAt = secrets.Redact(manifest.EndedAt)
+		}
+		run.PlannerProvider = secrets.Redact(manifest.PlannerProvider)
+		if run.PlannerProvider == "" {
+			run.PlannerProvider = secrets.Redact(manifest.Planner.Provider)
+		}
+		run.DryRun = manifest.DryRun
+		run.Evaluation = firstNonEmpty(manifest.Evaluation.Result, manifest.Evaluation.Status, manifest.Evaluation.Error)
+		run.Evaluation = secrets.Redact(run.Evaluation)
+		run.EvalArtifact = listedArtifactPath(manifest.Artifacts, "eval", "evaluation", "docs_eval")
+		if run.EvalArtifact == "" {
+			run.EvalArtifact = artifactPathByValue(manifest.Artifacts, "docs/EVAL.md")
+		}
+		if len(manifest.Errors) > 0 {
+			run.ErrorSummary = secrets.Redact(manifest.Errors[0])
+			run.Failures = redactList(manifest.Errors)
+		}
+		if len(manifest.Risks) > 0 {
+			run.RiskSummary = secrets.Redact(manifest.Risks[0])
+			run.Risks = redactList(manifest.Risks)
+		}
+		if action := strings.TrimSpace(secrets.Redact(manifest.Evaluation.RecommendedNextAction)); action != "" {
+			run.NextActions = appendUnique(run.NextActions, action)
+		}
+		evalPath := filepath.Join(runDir, "docs", "EVAL.md")
 		if data, err := os.ReadFile(evalPath); err == nil {
 			evalText := secrets.Redact(string(data))
 			if run.Evaluation == "" {
@@ -1177,6 +1197,58 @@ func (s *Server) discoverRuns() ([]runLink, error) {
 		return runs[i].ID > runs[j].ID
 	})
 	return runs, nil
+}
+
+func loadDashboardManifest(runID, runDir string) dashboardManifestLoad {
+	data, err := os.ReadFile(filepath.Join(runDir, "manifest.json"))
+	if err != nil {
+		return dashboardManifestLoad{Valid: false, Error: "manifest unavailable"}
+	}
+	var manifest dashboardManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return dashboardManifestLoad{Valid: false, Error: "manifest is malformed"}
+	}
+	if strings.TrimSpace(manifest.RunID) == "" {
+		return dashboardManifestLoad{Valid: false, Error: "manifest is incomplete: missing run_id"}
+	}
+	if manifest.RunID != runID {
+		return dashboardManifestLoad{Valid: false, Error: "manifest is incomplete: run_id mismatch"}
+	}
+	if strings.TrimSpace(manifest.Status) == "" {
+		return dashboardManifestLoad{Valid: false, Error: "manifest is incomplete: missing status"}
+	}
+	if manifest.Artifacts == nil {
+		return dashboardManifestLoad{Valid: false, Error: "manifest is incomplete: missing artifacts"}
+	}
+	return dashboardManifestLoad{Manifest: manifest, Valid: true}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func listedArtifactPath(artifacts map[string]string, keys ...string) string {
+	for _, key := range keys {
+		if clean, err := cleanAllowedArtifactPath(artifacts[key]); err == nil {
+			return clean
+		}
+	}
+	return ""
+}
+
+func artifactPathByValue(artifacts map[string]string, target string) string {
+	for _, raw := range artifacts {
+		clean, err := cleanAllowedArtifactPath(raw)
+		if err == nil && clean == target {
+			return clean
+		}
+	}
+	return ""
 }
 
 func redactList(items []string) []string {
@@ -1403,37 +1475,12 @@ func isManifestListedArtifact(runDir, rel string) (bool, error) {
 }
 
 func manifestArtifactPaths(runDir string) (map[string]struct{}, error) {
-	data, err := os.ReadFile(filepath.Join(runDir, "manifest.json"))
-	if err != nil {
-		return nil, fmt.Errorf("read manifest: %w", err)
+	runID := filepath.Base(runDir)
+	loaded := loadDashboardManifest(runID, runDir)
+	if !loaded.Valid {
+		return nil, errors.New(loaded.Error)
 	}
-	var manifest struct {
-		Artifacts map[string]string `json:"artifacts"`
-		Planner   struct {
-			Artifacts map[string]string `json:"artifacts"`
-		} `json:"planner"`
-		Git struct {
-			BaselinePath     string `json:"baseline_path"`
-			BaselineTextPath string `json:"baseline_text_path"`
-			StatusBeforePath string `json:"status_before_path"`
-			StatusAfterPath  string `json:"status_after_path"`
-			StatusPath       string `json:"status_path"`
-			DiffPath         string `json:"diff_path"`
-			DiffStatPath     string `json:"diff_stat_path"`
-			DiffSummaryPath  string `json:"diff_summary_path"`
-		} `json:"git"`
-		Codex struct {
-			EventsPath  string `json:"events_path"`
-			SummaryPath string `json:"summary_path"`
-			ExitPath    string `json:"exit_path"`
-		} `json:"codex"`
-		Evaluation struct {
-			EvalPath string `json:"eval_path"`
-		} `json:"evaluation"`
-	}
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("decode manifest: %w", err)
-	}
+	manifest := loaded.Manifest
 	artifacts := map[string]struct{}{}
 	add := func(raw string) {
 		if clean, err := cleanAllowedArtifactPath(raw); err == nil {
@@ -1443,21 +1490,6 @@ func manifestArtifactPaths(runDir string) (map[string]struct{}, error) {
 	for _, path := range manifest.Artifacts {
 		add(path)
 	}
-	for _, path := range manifest.Planner.Artifacts {
-		add(path)
-	}
-	add(manifest.Git.BaselinePath)
-	add(manifest.Git.BaselineTextPath)
-	add(manifest.Git.StatusBeforePath)
-	add(manifest.Git.StatusAfterPath)
-	add(manifest.Git.StatusPath)
-	add(manifest.Git.DiffPath)
-	add(manifest.Git.DiffStatPath)
-	add(manifest.Git.DiffSummaryPath)
-	add(manifest.Codex.EventsPath)
-	add(manifest.Codex.SummaryPath)
-	add(manifest.Codex.ExitPath)
-	add(manifest.Evaluation.EvalPath)
 	return artifacts, nil
 }
 
@@ -1529,11 +1561,12 @@ func isLocalAddr(addr string) bool {
 
 func (s *Server) renderError(w http.ResponseWriter, status int, err error) {
 	w.WriteHeader(status)
-	s.render(w, pageData{Title: "error", CWD: s.cwd, Error: secrets.Redact(err.Error())})
+	s.render(w, pageData{Title: "error", Error: secrets.Redact(err.Error())})
 }
 
 func (s *Server) renderErrorData(w http.ResponseWriter, status int, data pageData) {
 	w.WriteHeader(status)
+	data.CWD = ""
 	data.Error = secrets.Redact(data.Error)
 	s.render(w, data)
 }
@@ -1814,7 +1847,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
       <h2>Runs</h2>
       <ul>
       {{range .Runs}}
-        <li><a href="/runs/{{q .ID}}">{{.ID}}</a> <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}} {{.Evaluation}}</span>{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{end}}</li>
+        <li>{{if .Invalid}}<strong>{{.ID}}</strong>{{else}}<a href="/runs/{{q .ID}}">{{.ID}}</a>{{end}} <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}} {{.Evaluation}}</span>{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{end}}</li>
       {{else}}
         <li class="muted">No jj runs found.</li>
       {{end}}
@@ -1845,11 +1878,16 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	      <section>
 	        <h2>Latest Run</h2>
 	        {{if .Runs}}{{with index .Runs 0}}
-	          <p><a href="/run?id={{q .ID}}">{{.ID}}</a> <span class="muted">{{.Status}} {{.StartedAt}}</span></p>
-	          <p class="muted">provider {{.PlannerProvider}} · dry-run {{.DryRun}} · evaluation {{.Evaluation}}</p>
-	          <p><a href="/runs/{{q .ID}}/manifest">Raw manifest</a> · <a href="/artifact?run={{q .ID}}&path=docs/EVAL.md">Evaluation artifact</a></p>
+	          {{if .Invalid}}
+	            <p><strong>{{.ID}}</strong> <span class="muted">{{.Status}} {{.StartedAt}}</span></p>
+	            <p class="error">{{.ErrorSummary}}</p>
+	          {{else}}
+	            <p><a href="/run?id={{q .ID}}">{{.ID}}</a> <span class="muted">{{.Status}} {{.StartedAt}}</span></p>
+	            <p class="muted">provider {{.PlannerProvider}} · dry-run {{.DryRun}} · evaluation {{.Evaluation}}</p>
+	            <p><a href="/runs/{{q .ID}}/manifest">Raw manifest</a>{{if .EvalArtifact}} · <a href="/artifact?run={{q .ID}}&path={{q .EvalArtifact}}">Evaluation artifact</a>{{end}}</p>
+	          {{end}}
 	          {{if .Evaluation}}<p><strong>Evaluation Verdict</strong> {{.Evaluation}}</p>{{end}}
-	          {{if .ErrorSummary}}<p class="error">{{.ErrorSummary}}</p>{{end}}
+	          {{if and .ErrorSummary (not .Invalid)}}<p class="error">{{.ErrorSummary}}</p>{{end}}
 	          {{if .RiskSummary}}<p class="muted">{{.RiskSummary}}</p>{{end}}
 	        {{end}}{{else}}
 	          <p class="muted">No jj runs found. First suggested command: <code>jj run plan.md --dry-run</code></p>
@@ -1910,7 +1948,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          <h2>Runs</h2>
 	          <ul>
 	          {{range .Runs}}
-	            <li><a href="/run?id={{q .ID}}">{{.ID}}</a> <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}} {{.Evaluation}}</span> <a href="/runs/{{q .ID}}/manifest">manifest</a>{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{else if .RiskSummary}} <span class="muted">{{.RiskSummary}}</span>{{end}}</li>
+	            <li>{{if .Invalid}}<strong>{{.ID}}</strong>{{else}}<a href="/run?id={{q .ID}}">{{.ID}}</a>{{end}} <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}} {{.Evaluation}}</span>{{if not .Invalid}} <a href="/runs/{{q .ID}}/manifest">manifest</a>{{end}}{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{else if .RiskSummary}} <span class="muted">{{.RiskSummary}}</span>{{end}}</li>
 	          {{else}}
 	            <li class="muted">No jj runs found. Try <code>jj run plan.md --dry-run</code>.</li>
 	          {{end}}

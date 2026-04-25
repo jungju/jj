@@ -417,7 +417,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		plan = strings.TrimRight(originalPlan, "\n") + "\n\n---\n\n# jj Continuation Context\n\n" + continuationContext + "\n"
 	}
 
-	if p, err := store.WriteString("input-original.md", originalPlan); err != nil {
+	if p, err := store.WriteString("input-original.md", redactSecrets(originalPlan)); err != nil {
 		return fail(StatusPartial, err)
 	} else {
 		record("input_original", p)
@@ -427,7 +427,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	} else {
 		record("input_context", p)
 	}
-	if p, err := store.WriteString("input.md", plan); err != nil {
+	if p, err := store.WriteString("input.md", redactSecrets(plan)); err != nil {
 		return fail(StatusPartial, err)
 	} else {
 		record("input", p)

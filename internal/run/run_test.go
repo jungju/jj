@@ -569,6 +569,69 @@ func TestExecuteDryRunWithoutOpenAIKeyUsesCodexPlanner(t *testing.T) {
 	assertManifestDoesNotContain(t, manifestPath, "super-secret-value")
 }
 
+func TestExecuteDryRunWithoutOpenAIKeyUsesFakeCodexExecutable(t *testing.T) {
+	dir := t.TempDir()
+	writePlan(t, dir, "plan.md")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("JJ_OPENAI_API_KEY_ENV", "OPENAI_API_KEY")
+	fakeCodex := filepath.Join(t.TempDir(), "codex")
+	script := `#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output-last-message)
+      shift
+      out="$1"
+      ;;
+  esac
+  shift
+done
+stage=$(basename "$out" .last-message.txt)
+case "$stage" in
+  merge)
+    printf '%s\n' '{"spec":"# SPEC\n\nCodex executable merged spec.","task":"# TASK\n\n1. Codex executable merged task.","notes":["merged by fake executable"]}' > "$out"
+    ;;
+  *)
+    printf '%s\n' '{"agent":"product_spec","summary":"Codex executable draft.","spec_markdown":"# SPEC draft","task_markdown":"# TASK draft","risks":["risk"],"assumptions":["assumption"],"acceptance_criteria":["acceptance"],"test_plan":["go test ./..."]}' > "$out"
+    ;;
+esac
+printf '{"type":"done","stage":"%s"}\n' "$stage"
+`
+	if err := os.WriteFile(fakeCodex, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:               filepath.Join(dir, "plan.md"),
+		CWD:                    dir,
+		RunID:                  "codex-executable-dry-run",
+		PlanningAgents:         1,
+		PlanningAgentsExplicit: true,
+		OpenAIModel:            "test-model",
+		CodexModel:             "codex-test-model",
+		CodexBin:               fakeCodex,
+		CodexBinExplicit:       true,
+		AllowNoGit:             true,
+		AllowNoGitExplicit:     true,
+		DryRun:                 true,
+		DryRunExplicit:         true,
+		Stdout:                 io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("execute dry-run with fake codex executable: %v", err)
+	}
+	runDir := filepath.Join(dir, ".jj", "runs", "codex-executable-dry-run")
+	manifest := readManifest(t, filepath.Join(runDir, "manifest.json"))
+	if manifest.Status != StatusPlanned || manifest.PlannerProvider != plannerProviderCodex || manifest.Planner.Provider != plannerProviderCodex {
+		t.Fatalf("unexpected manifest: %#v", manifest)
+	}
+	if manifest.Planner.Model != "codex-test-model" || manifest.Config.CodexBin != fakeCodex {
+		t.Fatalf("expected fake codex config in manifest, got planner=%#v config=%#v", manifest.Planner, manifest.Config)
+	}
+	assertFileExists(t, filepath.Join(runDir, "planning", "product_spec.events.jsonl"))
+	assertFileExists(t, filepath.Join(runDir, "planning", "merge.last-message.txt"))
+}
+
 func TestExecuteFullRunWithoutOpenAIKeyUsesCodexPlannerAndEvaluation(t *testing.T) {
 	dir := initGit(t)
 	writePlan(t, dir, "plan.md")
@@ -688,6 +751,55 @@ func TestExecuteRedactsGitBaselineArtifact(t *testing.T) {
 	baseline := readFile(t, filepath.Join(dir, ".jj", "runs", "redacted-git-baseline", "git", "baseline.json"))
 	if strings.Contains(baseline, "super-secret-value") || !strings.Contains(baseline, "[redacted]") {
 		t.Fatalf("git baseline should be redacted:\n%s", baseline)
+	}
+}
+
+func TestExecuteRedactsPersistedArtifactsEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	secret := "run-secret-token-1234567890"
+	openAIKey := "sk-proj-redact1234567890"
+	t.Setenv("JJ_RUN_TEST_TOKEN", secret)
+	writePlan(t, dir, "plan.md")
+	if err := os.WriteFile(filepath.Join(dir, "plan.md"), []byte("Build a thing.\nAuthorization: Bearer "+secret+"\napi_key="+secret+"\n"+openAIKey+"\n"), 0o644); err != nil {
+		t.Fatalf("write plan with secret: %v", err)
+	}
+	writeJJRC(t, dir, `{"codex_model":"`+secret+`","codex_bin":"`+secret+`"}`)
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:               filepath.Join(dir, "plan.md"),
+		CWD:                    dir,
+		ConfigSearchDir:        dir,
+		RunID:                  "redaction-e2e",
+		PlanningAgents:         1,
+		PlanningAgentsExplicit: true,
+		OpenAIModel:            "test-model",
+		AllowNoGit:             true,
+		AllowNoGitExplicit:     true,
+		DryRun:                 false,
+		DryRunExplicit:         true,
+		Stdout:                 io.Discard,
+		Planner:                &fakePlanner{secret: secret},
+		CodexRunner:            &fakeCodexRunner{secret: secret},
+	})
+	if err != nil {
+		t.Fatalf("execute redaction run: %v", err)
+	}
+	runDir := filepath.Join(dir, ".jj", "runs", "redaction-e2e")
+	assertTreeDoesNotContain(t, runDir, secret)
+	assertTreeDoesNotContain(t, runDir, openAIKey)
+	for _, rel := range []string{"docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md"} {
+		data := readFile(t, filepath.Join(dir, rel))
+		if strings.Contains(data, secret) || strings.Contains(data, openAIKey) {
+			t.Fatalf("%s contains raw secret:\n%s", rel, data)
+		}
+	}
+	manifestData := readFile(t, filepath.Join(runDir, "manifest.json"))
+	if !strings.Contains(manifestData, "[redacted]") {
+		t.Fatalf("manifest missing redaction marker:\n%s", manifestData)
+	}
+	input := readFile(t, filepath.Join(runDir, "input.md"))
+	if !strings.Contains(input, "[redacted]") || !strings.Contains(input, "[redacted-openai-key]") {
+		t.Fatalf("input.md should retain redacted evidence:\n%s", input)
 	}
 }
 
@@ -892,6 +1004,7 @@ type fakePlanner struct {
 	draftIDs         []string
 	models           []string
 	evalCalls        int
+	secret           string
 	failAgents       map[string]error
 	incompleteAgents map[string]bool
 	failAll          bool
@@ -914,14 +1027,18 @@ func (f *fakePlanner) Draft(_ context.Context, req ai.DraftRequest) (ai.Planning
 		draft := ai.PlanningDraft{Agent: req.Agent.Name}
 		return draft, mustJSON(draft), nil
 	}
+	secretSuffix := ""
+	if f.secret != "" {
+		secretSuffix = " " + f.secret
+	}
 	draft := ai.PlanningDraft{
 		Agent:              req.Agent.Name,
-		Summary:            "summary",
-		SpecMarkdown:       "# Spec from " + req.Agent.Name,
-		TaskMarkdown:       "# Task from " + req.Agent.Name,
-		SpecDraft:          "# Spec from " + req.Agent.Name,
-		TaskDraft:          "# Task from " + req.Agent.Name,
-		Risks:              []string{"risk"},
+		Summary:            "summary" + secretSuffix,
+		SpecMarkdown:       "# Spec from " + req.Agent.Name + secretSuffix,
+		TaskMarkdown:       "# Task from " + req.Agent.Name + secretSuffix,
+		SpecDraft:          "# Spec from " + req.Agent.Name + secretSuffix,
+		TaskDraft:          "# Task from " + req.Agent.Name + secretSuffix,
+		Risks:              []string{"risk" + secretSuffix},
 		Assumptions:        []string{"assumption"},
 		AcceptanceCriteria: []string{"acceptance"},
 		TestPlan:           []string{"go test ./..."},
@@ -938,10 +1055,14 @@ func (f *fakePlanner) Merge(_ context.Context, req ai.MergeRequest) (ai.MergeRes
 		merged := ai.MergeResult{}
 		return merged, mustJSON(merged), nil
 	}
+	secretSuffix := ""
+	if f.secret != "" {
+		secretSuffix = " " + f.secret
+	}
 	merged := ai.MergeResult{
-		Spec:  "# SPEC\n\nImplement the requested behavior.\n",
-		Task:  "# TASK\n\n1. Implement it.\n2. Run tests.\n",
-		Notes: []string{"merged"},
+		Spec:  "# SPEC\n\nImplement the requested behavior." + secretSuffix + "\n",
+		Task:  "# TASK\n\n1. Implement it" + secretSuffix + ".\n2. Run tests.\n",
+		Notes: []string{"merged" + secretSuffix},
 	}
 	return merged, mustJSON(merged), nil
 }
@@ -954,16 +1075,26 @@ func (f *fakePlanner) Evaluate(_ context.Context, req ai.EvaluationRequest) (ai.
 	if f.evalErr != nil {
 		return ai.EvaluationResult{}, []byte("not-json"), f.evalErr
 	}
+	secretSuffix := ""
+	if f.secret != "" {
+		secretSuffix = " " + f.secret
+	}
+	risks := []string{}
+	followups := []string{}
+	if secretSuffix != "" {
+		risks = []string{secretSuffix}
+		followups = []string{"review" + secretSuffix}
+	}
 	eval := ai.EvaluationResult{
 		Result:               "PASS",
 		Score:                90,
-		Summary:              "Looks good.",
-		WhatChanged:          []string{"fake.go changed"},
-		RequirementsCoverage: []string{"Spec and task were used."},
-		TestCoverage:         []string{"fake tests passed"},
-		Risks:                []string{},
+		Summary:              "Looks good." + secretSuffix,
+		WhatChanged:          []string{"fake.go changed" + secretSuffix},
+		RequirementsCoverage: []string{"Spec and task were used." + secretSuffix},
+		TestCoverage:         []string{"fake tests passed" + secretSuffix},
+		Risks:                risks,
 		Regressions:          []string{},
-		RecommendedFollowups: []string{},
+		RecommendedFollowups: followups,
 	}
 	return eval, mustJSON(eval), nil
 }
@@ -972,16 +1103,23 @@ type fakeCodexRunner struct {
 	called      bool
 	mutate      bool
 	err         error
+	secret      string
 	lastRequest codex.Request
 }
 
 func (f *fakeCodexRunner) Run(_ context.Context, req codex.Request) (codex.Result, error) {
 	f.called = true
 	f.lastRequest = req
-	if err := os.WriteFile(req.EventsPath, []byte("{\"type\":\"done\"}\n"), 0o644); err != nil {
+	event := "{\"type\":\"done\"}\n"
+	summary := "Changed files: fake.go\nTests: fake pass\n"
+	if f.secret != "" {
+		event = "{\"type\":\"done\",\"token\":\"" + f.secret + "\"}\n"
+		summary += "Authorization: Bearer " + f.secret + "\n"
+	}
+	if err := os.WriteFile(req.EventsPath, []byte(event), 0o644); err != nil {
 		return codex.Result{}, err
 	}
-	if err := os.WriteFile(req.OutputLastMessage, []byte("Changed files: fake.go\nTests: fake pass\n"), 0o644); err != nil {
+	if err := os.WriteFile(req.OutputLastMessage, []byte(summary), 0o644); err != nil {
 		return codex.Result{}, err
 	}
 	if f.mutate {
@@ -992,7 +1130,7 @@ func (f *fakeCodexRunner) Run(_ context.Context, req codex.Request) (codex.Resul
 	if f.err != nil {
 		return codex.Result{Summary: "failed summary", ExitCode: 1, DurationMS: 12}, f.err
 	}
-	return codex.Result{Summary: "Changed files: fake.go\nTests: fake pass\n", ExitCode: 0, DurationMS: 12}, nil
+	return codex.Result{Summary: summary, ExitCode: 0, DurationMS: 12}, nil
 }
 
 type scriptedCodexPlannerRunner struct {
@@ -1148,6 +1286,29 @@ func assertManifestDoesNotContain(t *testing.T, path, needle string) {
 	}
 	if strings.Contains(string(data), needle) {
 		t.Fatalf("manifest should not contain %q", needle)
+	}
+}
+
+func assertTreeDoesNotContain(t *testing.T, root, needle string) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), needle) {
+			t.Fatalf("%s should not contain %q:\n%s", path, needle, data)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan %s: %v", root, err)
 	}
 }
 
