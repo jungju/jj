@@ -53,6 +53,29 @@ func TestDocShowsRedactedMarkdown(t *testing.T) {
 	}
 }
 
+func TestDocRendersMarkdownAndEscapesHTML(t *testing.T) {
+	dir := newTestWorkspace(t)
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Title\n\n<script>alert(1)</script>\n"), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/doc?path=README.md", nil)
+	server.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	if !strings.Contains(body, "<h1>Title</h1>") {
+		t.Fatalf("markdown heading was not rendered:\n%s", body)
+	}
+	if strings.Contains(body, "<script>") || !strings.Contains(body, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Fatalf("HTML was not escaped:\n%s", body)
+	}
+}
+
 func TestArtifactShowsRunFile(t *testing.T) {
 	dir := newTestWorkspace(t)
 	server := newTestServer(t, dir, "")
@@ -105,6 +128,27 @@ func TestPathTraversalRejected(t *testing.T) {
 		if rec.Code < 400 {
 			t.Fatalf("expected rejection for %s, got %d", target, rec.Code)
 		}
+	}
+}
+
+func TestSymlinkTraversalRejected(t *testing.T) {
+	dir := newTestWorkspace(t)
+	outside := t.TempDir()
+	outsideDoc := filepath.Join(outside, "outside.md")
+	if err := os.WriteFile(outsideDoc, []byte("# Outside\n"), 0o644); err != nil {
+		t.Fatalf("write outside doc: %v", err)
+	}
+	linkPath := filepath.Join(dir, "docs", "outside.md")
+	if err := os.Symlink(outsideDoc, linkPath); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/doc?path=docs/outside.md", nil)
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code < 400 {
+		t.Fatalf("expected symlink escape rejection, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

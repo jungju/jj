@@ -15,6 +15,9 @@ func LoadPlan(pathArg, cwd string) (content string, absPath string, err error) {
 	if pathArg == "-" {
 		return "", "", errors.New("stdin input is not supported yet; pass a plan file path")
 	}
+	if !isMarkdownLikePath(pathArg) {
+		return "", "", fmt.Errorf("plan file must be Markdown-like (.md or .markdown): %s", pathArg)
+	}
 	path, err := resolvePlanPath(pathArg, cwd)
 	if err != nil {
 		return "", "", err
@@ -33,25 +36,15 @@ func resolvePlanPath(pathArg, cwd string) (string, error) {
 	if filepath.IsAbs(pathArg) {
 		return filepath.Abs(pathArg)
 	}
+	_ = cwd
+	return filepath.Abs(pathArg)
+}
 
-	fromInvocation, err := filepath.Abs(pathArg)
-	if err != nil {
-		return "", err
+func isMarkdownLikePath(pathArg string) bool {
+	switch strings.ToLower(filepath.Ext(pathArg)) {
+	case ".md", ".markdown":
+		return true
+	default:
+		return false
 	}
-	if _, statErr := os.Stat(fromInvocation); statErr == nil {
-		return fromInvocation, nil
-	}
-
-	if strings.TrimSpace(cwd) == "" {
-		return fromInvocation, nil
-	}
-	absCWD, err := filepath.Abs(cwd)
-	if err != nil {
-		return "", err
-	}
-	fromTarget := filepath.Join(absCWD, pathArg)
-	if _, statErr := os.Stat(fromTarget); statErr == nil {
-		return filepath.Abs(fromTarget)
-	}
-	return fromInvocation, nil
 }

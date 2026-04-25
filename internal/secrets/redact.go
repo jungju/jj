@@ -9,6 +9,7 @@ import (
 var (
 	openAIKeyPattern = regexp.MustCompile(`\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_*.-]{6,}[A-Za-z0-9_*]`)
 	bearerPattern    = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`)
+	secretKVPattern  = regexp.MustCompile(`(?i)(["']?\b(?:api[_-]?key|token|password|secret|authorization)\b["']?\s*[:=]\s*)(["']?)([^"'\s,}]+)(["']?)`)
 )
 
 // Redact removes common secret values from strings before they are logged or
@@ -29,5 +30,6 @@ func Redact(s string) string {
 	}
 	s = bearerPattern.ReplaceAllString(s, "Bearer [redacted]")
 	s = openAIKeyPattern.ReplaceAllString(s, "[redacted-openai-key]")
+	s = secretKVPattern.ReplaceAllString(s, "${1}${2}[redacted]${4}")
 	return s
 }

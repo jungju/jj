@@ -56,7 +56,12 @@ func newRunCommand(exec executor) *cobra.Command {
 			cfg.PlanPath = args[0]
 			cfg.OpenAIModelExplicit = cmd.Flags().Changed("openai-model")
 			cfg.CodexModelExplicit = cmd.Flags().Changed("codex-model")
-			cfg.PlanningAgentsExplicit = cmd.Flags().Changed("planning-agents")
+			cfg.PlanningAgentsExplicit = cmd.Flags().Changed("planning-agents") || cmd.Flags().Changed("agents")
+			cfg.SpecDocExplicit = cmd.Flags().Changed("spec-doc")
+			cfg.TaskDocExplicit = cmd.Flags().Changed("task-doc")
+			cfg.EvalDocExplicit = cmd.Flags().Changed("eval-doc")
+			cfg.DryRunExplicit = cmd.Flags().Changed("dry-run")
+			cfg.AllowNoGitExplicit = cmd.Flags().Changed("allow-no-git")
 			if cwd, err := os.Getwd(); err == nil {
 				cfg.ConfigSearchDir = cwd
 			} else {
@@ -69,6 +74,7 @@ func newRunCommand(exec executor) *cobra.Command {
 
 	cmd.Flags().StringVar(&cfg.CWD, "cwd", "", "target repository directory (defaults to current directory)")
 	cmd.Flags().StringVar(&cfg.RunID, "run-id", "", "run identifier for .jj/runs/<run-id>")
+	cmd.Flags().IntVar(&cfg.PlanningAgents, "agents", run.DefaultPlanningAgents, "number of planning agents to run")
 	cmd.Flags().IntVar(&cfg.PlanningAgents, "planning-agents", run.DefaultPlanningAgents, "number of planning agents to run")
 	cmd.Flags().StringVar(&cfg.OpenAIModel, "openai-model", cfg.OpenAIModel, "OpenAI model for planning and evaluation")
 	cmd.Flags().StringVar(&cfg.CodexModel, "codex-model", cfg.CodexModel, "Codex CLI model override")

@@ -42,6 +42,11 @@ type Config struct {
 	PlanningAgentsExplicit bool
 	OpenAIModelExplicit    bool
 	CodexModelExplicit     bool
+	SpecDocExplicit        bool
+	TaskDocExplicit        bool
+	EvalDocExplicit        bool
+	DryRunExplicit         bool
+	AllowNoGitExplicit     bool
 
 	Stdout io.Writer
 	Stderr io.Writer
@@ -71,6 +76,12 @@ func ResolveConfig(cfg Config) (Config, error) {
 
 	if !cfg.PlanningAgentsExplicit && fileCfg.PlanningAgents != nil {
 		cfg.PlanningAgents = *fileCfg.PlanningAgents
+	}
+	if !cfg.DryRunExplicit && fileCfg.DryRun != nil {
+		cfg.DryRun = *fileCfg.DryRun
+	}
+	if !cfg.AllowNoGitExplicit && fileCfg.AllowNoGit != nil {
+		cfg.AllowNoGit = *fileCfg.AllowNoGit
 	}
 	if !cfg.OpenAIModelExplicit {
 		if v := strings.TrimSpace(os.Getenv("JJ_OPENAI_MODEL")); v != "" {
@@ -104,6 +115,15 @@ func ResolveConfig(cfg Config) (Config, error) {
 	}
 	if strings.TrimSpace(cfg.OpenAIAPIKey) == "" {
 		cfg.OpenAIAPIKey = os.Getenv(cfg.OpenAIAPIKeyEnv)
+	}
+	if !cfg.SpecDocExplicit && strings.TrimSpace(fileCfg.SpecDoc) != "" {
+		cfg.SpecDoc = fileCfg.SpecDoc
+	}
+	if !cfg.TaskDocExplicit && strings.TrimSpace(fileCfg.TaskDoc) != "" {
+		cfg.TaskDoc = fileCfg.TaskDoc
+	}
+	if !cfg.EvalDocExplicit && strings.TrimSpace(fileCfg.EvalDoc) != "" {
+		cfg.EvalDoc = fileCfg.EvalDoc
 	}
 	cfg = applyDocumentDefaults(cfg)
 	return cfg, nil

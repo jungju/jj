@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -40,6 +41,7 @@ type Manifest struct {
 	FinishedAt      string             `json:"finished_at,omitempty"`
 	Status          string             `json:"status"`
 	DryRun          bool               `json:"dry_run"`
+	NoGitMode       bool               `json:"no_git_mode"`
 	CWD             string             `json:"cwd"`
 	PlanPath        string             `json:"plan_path"`
 	PlannerProvider string             `json:"planner_provider"`
@@ -59,6 +61,8 @@ type ManifestGit struct {
 	Head            string `json:"head,omitempty"`
 	InitialStatus   string `json:"initial_status,omitempty"`
 	FinalStatus     string `json:"final_status,omitempty"`
+	BaselinePath    string `json:"baseline_path,omitempty"`
+	StatusPath      string `json:"status_path,omitempty"`
 	DiffPath        string `json:"diff_path,omitempty"`
 	DiffSummaryPath string `json:"diff_summary_path,omitempty"`
 }
@@ -69,6 +73,9 @@ type ManifestConfig struct {
 	CodexModel     string `json:"codex_model,omitempty"`
 	CodexBin       string `json:"codex_bin,omitempty"`
 	ConfigFile     string `json:"config_file,omitempty"`
+	OpenAIKeyEnv   string `json:"openai_api_key_env,omitempty"`
+	OpenAIKeySet   bool   `json:"openai_api_key_present"`
+	AllowNoGit     bool   `json:"allow_no_git"`
 	SpecDoc        string `json:"spec_doc"`
 	TaskDoc        string `json:"task_doc"`
 	EvalDoc        string `json:"eval_doc"`
@@ -163,6 +170,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		StartedAt:     started.Format(time.RFC3339),
 		Status:        "running",
 		DryRun:        cfg.DryRun,
+		NoGitMode:     !gitState.Available && cfg.AllowNoGit,
 		CWD:           cfg.CWD,
 		PlanPath:      planPath,
 		Git: ManifestGit{
@@ -178,6 +186,9 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			CodexModel:     cfg.CodexModel,
 			CodexBin:       cfg.CodexBin,
 			ConfigFile:     cfg.ConfigFile,
+			OpenAIKeyEnv:   cfg.OpenAIAPIKeyEnv,
+			OpenAIKeySet:   strings.TrimSpace(cfg.OpenAIAPIKey) != "",
+			AllowNoGit:     cfg.AllowNoGit,
 			SpecDoc:        cfg.SpecDoc,
 			TaskDoc:        cfg.TaskDoc,
 			EvalDoc:        cfg.EvalDoc,
@@ -209,7 +220,12 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		manifest.Status = status
 		manifest.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 		manifest.Artifacts["manifest"] = "manifest.json"
-		_, _ = store.WriteJSON("manifest.json", manifest)
+		data, err := json.MarshalIndent(manifest, "", "  ")
+		if err != nil {
+			return
+		}
+		data = append([]byte(redactSecrets(string(data))), '\n')
+		_, _ = store.WriteFile("manifest.json", data)
 	}
 	fail := func(err error) (*Result, error) {
 		addError(err)
@@ -227,6 +243,12 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		return fail(err)
 	} else {
 		record("input", p)
+	}
+	if p, err := store.WriteJSON("git-baseline.json", gitState); err != nil {
+		return fail(err)
+	} else {
+		record("git_baseline", p)
+		manifest.Git.BaselinePath = "git-baseline.json"
 	}
 
 	plannerSelection, err := selectPlanner(cfg, store, record)
@@ -257,7 +279,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	specRel := docRelPath(cfg.SpecDoc)
 	taskRel := docRelPath(cfg.TaskDoc)
 	evalRel := docRelPath(cfg.EvalDoc)
-	if p, err := store.WriteFile("planning/merge.json", raw); err != nil {
+	if p, err := store.WriteFile("planning/merge.json", redactBytes(raw)); err != nil {
 		return fail(err)
 	} else {
 		record("planning_merge", p)
@@ -274,7 +296,8 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	record("task", taskArtifact)
 
 	if cfg.DryRun {
-		fmt.Fprintf(cfg.Stdout, "jj: dry run complete; artifacts at %s\n", store.RunDir)
+		fmt.Fprintf(cfg.Stdout, "jj: dry run complete\n")
+		fmt.Fprintf(cfg.Stdout, "run_id=%s\nrun_dir=%s\nspec=%s\ntask=%s\n", cfg.RunID, store.RunDir, filepath.ToSlash(filepath.Join(store.RunDir, filepath.FromSlash(specRel))), filepath.ToSlash(filepath.Join(store.RunDir, filepath.FromSlash(taskRel))))
 		writeManifest("success")
 		return &Result{RunID: cfg.RunID, RunDir: store.RunDir}, nil
 	}
@@ -307,6 +330,12 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		OutputLastMessage: summaryPath,
 		AllowNoGit:        cfg.AllowNoGit,
 	})
+	if err := redactFile(eventsPath); err != nil {
+		return fail(err)
+	}
+	if err := redactFile(summaryPath); err != nil {
+		return fail(err)
+	}
 	manifest.Codex = ManifestCodex{
 		Ran:        true,
 		ExitCode:   codexResult.ExitCode,
@@ -319,6 +348,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			codexResult.Summary = string(data)
 		}
 	}
+	codexResult.Summary = redactSecrets(codexResult.Summary)
 	if codexErr != nil {
 		safeCodexErr := redactSecrets(codexErr.Error())
 		manifest.Codex.Error = safeCodexErr
@@ -338,6 +368,12 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	} else {
 		record("git_diff", p)
 		manifest.Git.DiffPath = "git-diff.patch"
+	}
+	if p, err := store.WriteString("git-status.txt", diff.Status+"\n"); err != nil {
+		return fail(err)
+	} else {
+		record("git_status", p)
+		manifest.Git.StatusPath = "git-status.txt"
 	}
 	if p, err := store.WriteString("git-diff-summary.txt", diff.Markdown()); err != nil {
 		return fail(err)
@@ -366,22 +402,51 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	ai.NormalizeEvaluation(&eval)
 	manifest.Evaluation = ManifestEvaluation{Ran: true, Result: eval.Result, Score: eval.Score}
-	if p, err := store.WriteFile("planning/eval.json", rawEval); err != nil {
+	if p, err := store.WriteFile("planning/eval.json", redactBytes(rawEval)); err != nil {
 		return fail(err)
 	} else {
 		record("evaluation_json", p)
 	}
-	if p, err := store.WriteString(evalRel, renderEvaluation(eval)); err != nil {
+	evalMarkdown := renderEvaluation(eval)
+	if p, err := store.WriteString(evalRel, evalMarkdown); err != nil {
 		return fail(err)
 	} else {
 		record("eval", p)
+	}
+	evalPath := filepath.Join(cfg.CWD, filepath.FromSlash(evalRel))
+	if err := writeWorktreeFile(evalPath, []byte(evalMarkdown)); err != nil {
+		return fail(fmt.Errorf("write %s: %w", evalRel, err))
+	}
+	recordRel("eval_worktree", evalRel)
+	if finalDiff, err := CaptureGitDiff(ctx, cfg.CWD, gitState.Available, cfg.GitRunner); err != nil {
+		return fail(fmt.Errorf("capture final git diff: %w", err))
+	} else {
+		manifest.Git.FinalStatus = finalDiff.Status
+		if p, err := store.WriteString("git-diff.patch", finalDiff.Full+"\n"); err != nil {
+			return fail(err)
+		} else {
+			record("git_diff", p)
+			manifest.Git.DiffPath = "git-diff.patch"
+		}
+		if p, err := store.WriteString("git-status.txt", finalDiff.Status+"\n"); err != nil {
+			return fail(err)
+		} else {
+			record("git_status", p)
+			manifest.Git.StatusPath = "git-status.txt"
+		}
+		if p, err := store.WriteString("git-diff-summary.txt", finalDiff.Markdown()); err != nil {
+			return fail(err)
+		} else {
+			record("git_diff_summary", p)
+			manifest.Git.DiffSummaryPath = "git-diff-summary.txt"
+		}
 	}
 	status := "success"
 	if codexErr != nil || eval.Result != "PASS" {
 		status = "partial"
 	}
 	writeManifest(status)
-	fmt.Fprintln(cfg.Stdout, "jj: done")
+	fmt.Fprintf(cfg.Stdout, "jj: done\nrun_id=%s\nrun_dir=%s\nspec=%s\ntask=%s\neval=%s\ncodex_exit_code=%d\nreview=jj serve --cwd %s\n", cfg.RunID, store.RunDir, specRel, taskRel, evalRel, manifest.Codex.ExitCode, cfg.CWD)
 	return &Result{RunID: cfg.RunID, RunDir: store.RunDir}, nil
 }
 
@@ -390,6 +455,28 @@ func writeWorktreeFile(path string, data []byte) error {
 		return err
 	}
 	return artifact.AtomicWriteFile(path, data, 0o644)
+}
+
+func redactFile(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	redacted := []byte(redactSecrets(string(data)))
+	if string(redacted) == string(data) {
+		return nil
+	}
+	return artifact.AtomicWriteFile(path, redacted, 0o644)
+}
+
+func redactBytes(data []byte) []byte {
+	return []byte(redactSecrets(string(data)))
 }
 
 func validateCWD(cwd string) error {
@@ -435,7 +522,7 @@ func runPlanningAgents(ctx context.Context, planner PlanningClient, store artifa
 				errs <- fmt.Errorf("%s planning failed: %w", agent.Name, err)
 				return
 			}
-			path, err := store.WriteFile(name, raw)
+			path, err := store.WriteFile(name, redactBytes(raw))
 			if err != nil {
 				errs <- err
 				results[i].Error = redactSecrets(err.Error())

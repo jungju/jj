@@ -20,7 +20,7 @@ func TestExecuteRejectsInvalidPlanningAgents(t *testing.T) {
 	writePlan(t, dir, "plan.md")
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:       "plan.md",
+		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
 		RunID:          "invalid-agents",
 		PlanningAgents: 0,
@@ -38,7 +38,7 @@ func TestExecuteRejectsInvalidRunID(t *testing.T) {
 	writePlan(t, dir, "plan.md")
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:       "plan.md",
+		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
 		RunID:          "../x",
 		PlanningAgents: 1,
@@ -56,7 +56,7 @@ func TestExecuteRejectsInvalidDocumentName(t *testing.T) {
 	writePlan(t, dir, "plan.md")
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:       "plan.md",
+		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
 		RunID:          "invalid-doc",
 		PlanningAgents: 1,
@@ -79,7 +79,7 @@ func TestExecuteDryRunCreatesPlanningArtifactsOnly(t *testing.T) {
 	codexRunner := &fakeCodexRunner{}
 
 	result, err := Execute(context.Background(), Config{
-		PlanPath:       "plan.md",
+		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
 		RunID:          "dry-run",
 		PlanningAgents: 3,
@@ -113,6 +113,12 @@ func TestExecuteDryRunCreatesPlanningArtifactsOnly(t *testing.T) {
 	if manifest.Status != "success" || !manifest.DryRun {
 		t.Fatalf("unexpected dry-run manifest: %#v", manifest)
 	}
+	if !manifest.NoGitMode || !manifest.Config.AllowNoGit {
+		t.Fatalf("expected no-git mode to be recorded: %#v", manifest)
+	}
+	if manifest.Git.BaselinePath != "git-baseline.json" || manifest.Artifacts["git_baseline"] != "git-baseline.json" {
+		t.Fatalf("expected git baseline artifact in manifest: %#v", manifest)
+	}
 }
 
 func TestExecuteEndToEndWithFakes(t *testing.T) {
@@ -122,7 +128,7 @@ func TestExecuteEndToEndWithFakes(t *testing.T) {
 	codexRunner := &fakeCodexRunner{mutate: true}
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:       "plan.md",
+		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
 		RunID:          "full",
 		PlanningAgents: 3,
@@ -142,6 +148,7 @@ func TestExecuteEndToEndWithFakes(t *testing.T) {
 	}
 	assertFileExists(t, filepath.Join(dir, "docs", "SPEC.md"))
 	assertFileExists(t, filepath.Join(dir, "docs", "TASK.md"))
+	assertFileExists(t, filepath.Join(dir, "docs", "EVAL.md"))
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "full", "docs", "EVAL.md"))
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "full", "codex-events.jsonl"))
 	if !strings.Contains(codexRunner.lastRequest.Prompt, "docs/SPEC.md") || !strings.Contains(codexRunner.lastRequest.Prompt, "docs/TASK.md") {
@@ -157,6 +164,9 @@ func TestExecuteEndToEndWithFakes(t *testing.T) {
 	if manifest.Artifacts["spec_worktree"] != "docs/SPEC.md" || manifest.Artifacts["task_worktree"] != "docs/TASK.md" {
 		t.Fatalf("unexpected artifact paths: %#v", manifest.Artifacts)
 	}
+	if manifest.Artifacts["eval_worktree"] != "docs/EVAL.md" || manifest.Config.OpenAIKeySet || manifest.Config.OpenAIKeyEnv == "" {
+		t.Fatalf("unexpected manifest metadata: %#v", manifest)
+	}
 }
 
 func TestExecuteUsesCustomDocumentNames(t *testing.T) {
@@ -165,7 +175,7 @@ func TestExecuteUsesCustomDocumentNames(t *testing.T) {
 	codexRunner := &fakeCodexRunner{mutate: true}
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:       "plan.md",
+		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
 		RunID:          "custom-docs",
 		PlanningAgents: 1,
@@ -182,6 +192,7 @@ func TestExecuteUsesCustomDocumentNames(t *testing.T) {
 	}
 	assertFileExists(t, filepath.Join(dir, "docs", "PRODUCT.md"))
 	assertFileExists(t, filepath.Join(dir, "docs", "WORK.md"))
+	assertFileExists(t, filepath.Join(dir, "docs", "REVIEW.md"))
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "custom-docs", "docs", "REVIEW.md"))
 	if !strings.Contains(codexRunner.lastRequest.Prompt, "docs/PRODUCT.md") || !strings.Contains(codexRunner.lastRequest.Prompt, "docs/WORK.md") {
 		t.Fatalf("codex prompt should reference custom docs paths:\n%s", codexRunner.lastRequest.Prompt)
@@ -210,7 +221,7 @@ func TestExecuteUsesJJRCConfiguration(t *testing.T) {
 	codexRunner := &fakeCodexRunner{}
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:        "plan.md",
+		PlanPath:        filepath.Join(dir, "plan.md"),
 		CWD:             dir,
 		ConfigSearchDir: dir,
 		RunID:           "jjrc-config",
@@ -252,7 +263,7 @@ func TestExecuteDryRunWithoutOpenAIKeyUsesCodexPlanner(t *testing.T) {
 	implementationRunner := &fakeCodexRunner{}
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:           "plan.md",
+		PlanPath:           filepath.Join(dir, "plan.md"),
 		CWD:                dir,
 		RunID:              "codex-planner-dry-run",
 		PlanningAgents:     2,
@@ -294,7 +305,7 @@ func TestExecuteFullRunWithoutOpenAIKeyUsesCodexPlannerAndEvaluation(t *testing.
 	implementationRunner := &fakeCodexRunner{mutate: true}
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:           "plan.md",
+		PlanPath:           filepath.Join(dir, "plan.md"),
 		CWD:                dir,
 		RunID:              "codex-planner-full",
 		PlanningAgents:     1,
@@ -327,7 +338,7 @@ func TestExecuteCodexPlannerInvalidJSONFailsManifest(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:           "plan.md",
+		PlanPath:           filepath.Join(dir, "plan.md"),
 		CWD:                dir,
 		RunID:              "codex-planner-invalid-json",
 		PlanningAgents:     1,
@@ -353,7 +364,7 @@ func TestExecuteDryRunWithInjectedPlannerSkipsImplementationCodex(t *testing.T) 
 	implementationRunner := &fakeCodexRunner{}
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:       "plan.md",
+		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
 		RunID:          "dry-run-injected",
 		PlanningAgents: 1,
@@ -380,7 +391,7 @@ func TestExecuteRequiresGitUnlessAllowed(t *testing.T) {
 	writePlan(t, dir, "plan.md")
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:       "plan.md",
+		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
 		RunID:          "no-git",
 		PlanningAgents: 1,
@@ -399,7 +410,7 @@ func TestExecuteAllowsPartialPlannerFailure(t *testing.T) {
 	planner := &fakePlanner{failAgents: map[string]error{"qa_evaluation": errors.New("qa failed")}}
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:       "plan.md",
+		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
 		RunID:          "partial-planning",
 		PlanningAgents: 3,
@@ -429,7 +440,7 @@ func TestExecuteFailsWhenAllPlannersFail(t *testing.T) {
 	planner := &fakePlanner{failAll: true}
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:       "plan.md",
+		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
 		RunID:          "all-planners-fail",
 		PlanningAgents: 2,
@@ -452,7 +463,7 @@ func TestExecuteReportsCodexFailure(t *testing.T) {
 	writePlan(t, dir, "plan.md")
 
 	_, err := Execute(context.Background(), Config{
-		PlanPath:       "plan.md",
+		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
 		RunID:          "codex-fail",
 		PlanningAgents: 1,

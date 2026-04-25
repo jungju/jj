@@ -23,7 +23,7 @@ func TestRunCommandParsesFlags(t *testing.T) {
 		"--dry-run",
 		"--cwd", "/tmp/repo",
 		"--run-id", "run-1",
-		"--planning-agents", "2",
+		"--agents", "2",
 		"--openai-model", "model-a",
 		"--codex-model", "model-b",
 		"--spec-doc", "PRODUCT_SPEC.md",
@@ -46,6 +46,9 @@ func TestRunCommandParsesFlags(t *testing.T) {
 	}
 	if !got.PlanningAgentsExplicit || !got.OpenAIModelExplicit || !got.CodexModelExplicit {
 		t.Fatalf("expected explicit flag markers: %#v", got)
+	}
+	if !got.SpecDocExplicit || !got.TaskDocExplicit || !got.EvalDocExplicit || !got.DryRunExplicit || !got.AllowNoGitExplicit {
+		t.Fatalf("expected explicit document/boolean flag markers: %#v", got)
 	}
 	if got.ConfigSearchDir == "" {
 		t.Fatal("expected config search directory to be set")
@@ -75,7 +78,7 @@ func TestRunCommandHelp(t *testing.T) {
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("help failed: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "--dry-run") || !strings.Contains(stdout.String(), "--cwd") || !strings.Contains(stdout.String(), "--spec-doc") {
+	if !strings.Contains(stdout.String(), "--dry-run") || !strings.Contains(stdout.String(), "--cwd") || !strings.Contains(stdout.String(), "--spec-doc") || !strings.Contains(stdout.String(), "--agents") {
 		t.Fatalf("help output missing expected flags:\n%s", stdout.String())
 	}
 }

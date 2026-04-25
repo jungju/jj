@@ -13,7 +13,12 @@ func TestResolveConfigUsesJJRCValues(t *testing.T) {
 		"openai_model": "file-openai",
 		"codex_model": "file-codex",
 		"codex_bin": "/tmp/file-codex",
-		"planning_agents": 2
+		"planning_agents": 2,
+		"spec_doc": "PRODUCT.md",
+		"task_doc": "WORK.md",
+		"eval_doc": "REVIEW.md",
+		"dry_run": true,
+		"allow_no_git": true
 	}`)
 	t.Setenv("JJ_TEST_OPENAI_KEY", "sk-test-value")
 	t.Setenv("JJ_OPENAI_MODEL", "")
@@ -31,11 +36,47 @@ func TestResolveConfigUsesJJRCValues(t *testing.T) {
 	if cfg.PlanningAgents != 2 || cfg.OpenAIModel != "file-openai" || cfg.CodexModel != "file-codex" || cfg.CodexBin != "/tmp/file-codex" {
 		t.Fatalf("unexpected resolved config: %#v", cfg)
 	}
+	if cfg.SpecDoc != "PRODUCT.md" || cfg.TaskDoc != "WORK.md" || cfg.EvalDoc != "REVIEW.md" || !cfg.DryRun || !cfg.AllowNoGit {
+		t.Fatalf("unexpected file defaults: %#v", cfg)
+	}
 	if cfg.OpenAIAPIKeyEnv != "JJ_TEST_OPENAI_KEY" || cfg.OpenAIAPIKey != "sk-test-value" {
 		t.Fatalf("unexpected API key resolution: %#v", cfg)
 	}
 	if cfg.ConfigFile != filepath.Join(dir, ".jjrc") {
 		t.Fatalf("unexpected config file: %q", cfg.ConfigFile)
+	}
+}
+
+func TestResolveConfigExplicitFlagsOverrideJJRCBooleansAndDocs(t *testing.T) {
+	dir := t.TempDir()
+	writeJJRC(t, dir, `{
+		"spec_doc": "PRODUCT.md",
+		"task_doc": "WORK.md",
+		"eval_doc": "REVIEW.md",
+		"dry_run": true,
+		"allow_no_git": true
+	}`)
+
+	cfg, err := ResolveConfig(Config{
+		ConfigSearchDir:    dir,
+		PlanningAgents:     DefaultPlanningAgents,
+		OpenAIModel:        defaultOpenAIModel,
+		SpecDoc:            "SPEC.md",
+		TaskDoc:            "TASK.md",
+		EvalDoc:            "EVAL.md",
+		SpecDocExplicit:    true,
+		TaskDocExplicit:    true,
+		EvalDocExplicit:    true,
+		DryRun:             false,
+		AllowNoGit:         false,
+		DryRunExplicit:     true,
+		AllowNoGitExplicit: true,
+	})
+	if err != nil {
+		t.Fatalf("resolve config: %v", err)
+	}
+	if cfg.SpecDoc != "SPEC.md" || cfg.TaskDoc != "TASK.md" || cfg.EvalDoc != "EVAL.md" || cfg.DryRun || cfg.AllowNoGit {
+		t.Fatalf("explicit flags should override .jjrc defaults: %#v", cfg)
 	}
 }
 

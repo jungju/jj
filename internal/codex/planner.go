@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/jungju/jj/internal/artifact"
 	ai "github.com/jungju/jj/internal/openai"
+	"github.com/jungju/jj/internal/secrets"
 )
 
 type Executor interface {
@@ -90,7 +92,14 @@ func (p Planner) runJSON(ctx context.Context, stage, prompt string, target any) 
 		p.Record("planning_"+stage+"_events", eventsPath)
 		p.Record("planning_"+stage+"_last_message", lastMessagePath)
 	}
-	raw := []byte(result.Summary)
+	_ = redactArtifact(eventsPath)
+	_ = redactArtifact(lastMessagePath)
+	raw := []byte(secrets.Redact(result.Summary))
+	if strings.TrimSpace(string(raw)) == "" {
+		if data, err := os.ReadFile(lastMessagePath); err == nil {
+			raw = data
+		}
+	}
 	if runErr != nil {
 		return raw, runErr
 	}
@@ -98,6 +107,21 @@ func (p Planner) runJSON(ctx context.Context, stage, prompt string, target any) 
 		return raw, err
 	}
 	return raw, nil
+}
+
+func redactArtifact(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	redacted := []byte(secrets.Redact(string(data)))
+	if string(redacted) == string(data) {
+		return nil
+	}
+	return artifact.AtomicWriteFile(path, redacted, 0o644)
 }
 
 func mustPrettyJSON(value any) []byte {

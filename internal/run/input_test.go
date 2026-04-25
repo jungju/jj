@@ -9,6 +9,18 @@ import (
 
 func TestLoadPlan(t *testing.T) {
 	dir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
 	planPath := filepath.Join(dir, "plan.md")
 	if err := os.WriteFile(planPath, []byte("build jj\n"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
@@ -61,7 +73,7 @@ func TestLoadPlanPrefersInvocationDirectoryOverTargetCWD(t *testing.T) {
 	}
 }
 
-func TestLoadPlanFallsBackToTargetCWD(t *testing.T) {
+func TestLoadPlanDoesNotFallBackToTargetCWD(t *testing.T) {
 	root := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -85,15 +97,12 @@ func TestLoadPlanFallsBackToTargetCWD(t *testing.T) {
 		t.Fatalf("write plan: %v", err)
 	}
 
-	content, abs, err := LoadPlan("plan.md", target)
-	if err != nil {
-		t.Fatalf("load plan: %v", err)
+	_, abs, err := LoadPlan("plan.md", target)
+	if err == nil || !strings.Contains(err.Error(), "read plan file") {
+		t.Fatalf("expected missing invocation-directory plan error, got %v", err)
 	}
-	if content != "from target cwd\n" {
-		t.Fatalf("unexpected content %q", content)
-	}
-	if abs != planPath {
-		t.Fatalf("expected %s, got %s", planPath, abs)
+	if abs != filepath.Join(root, "plan.md") {
+		t.Fatalf("expected invocation path %s, got %s", filepath.Join(root, "plan.md"), abs)
 	}
 }
 
@@ -108,5 +117,12 @@ func TestLoadPlanRejectsStdin(t *testing.T) {
 	_, _, err := LoadPlan("-", t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "stdin input is not supported") {
 		t.Fatalf("expected stdin rejection, got %v", err)
+	}
+}
+
+func TestLoadPlanRejectsNonMarkdownLikePath(t *testing.T) {
+	_, _, err := LoadPlan("plan.txt", t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "Markdown-like") {
+		t.Fatalf("expected Markdown-like validation error, got %v", err)
 	}
 }

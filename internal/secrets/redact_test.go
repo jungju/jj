@@ -27,3 +27,13 @@ func TestRedactRemovesBearerTokens(t *testing.T) {
 		t.Fatalf("bearer token was not redacted: %q", got)
 	}
 }
+
+func TestRedactRemovesSecretKeyValuePairs(t *testing.T) {
+	input := `api_key: abcdefghijklmnop token="tokensecret" password=hunter2 {"api_key":"jsonsecret"}`
+	got := Redact(input)
+	for _, secret := range []string{"abcdefghijklmnop", "tokensecret", "hunter2", "jsonsecret"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("secret %q was not redacted: %q", secret, got)
+		}
+	}
+}

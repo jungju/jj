@@ -59,6 +59,7 @@ type pageData struct {
 	Path        string
 	RunID       string
 	Content     string
+	Rendered    template.HTML
 	Error       string
 }
 
@@ -191,11 +192,13 @@ func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusNotFound, err)
 		return
 	}
+	content, rendered := presentContent(rel, data)
 	s.render(w, pageData{
-		Title:   rel,
-		CWD:     s.cwd,
-		Path:    filepath.ToSlash(rel),
-		Content: secrets.Redact(string(data)),
+		Title:    rel,
+		CWD:      s.cwd,
+		Path:     filepath.ToSlash(rel),
+		Content:  content,
+		Rendered: rendered,
 	})
 }
 
@@ -248,12 +251,14 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusNotFound, err)
 		return
 	}
+	content, rendered := presentContent(rel, data)
 	s.render(w, pageData{
-		Title:   runID + "/" + rel,
-		CWD:     s.cwd,
-		RunID:   runID,
-		Path:    filepath.ToSlash(rel),
-		Content: secrets.Redact(string(data)),
+		Title:    runID + "/" + rel,
+		CWD:      s.cwd,
+		RunID:    runID,
+		Path:     filepath.ToSlash(rel),
+		Content:  content,
+		Rendered: rendered,
 	})
 }
 
@@ -432,6 +437,17 @@ func safeJoin(root, rel string) (string, error) {
 	if relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path escapes root: %s", rel)
 	}
+	if evalRoot, err := filepath.EvalSymlinks(absRoot); err == nil {
+		if evalPath, err := filepath.EvalSymlinks(absPath); err == nil {
+			relToEvalRoot, err := filepath.Rel(evalRoot, evalPath)
+			if err != nil {
+				return "", err
+			}
+			if relToEvalRoot == ".." || strings.HasPrefix(relToEvalRoot, ".."+string(filepath.Separator)) {
+				return "", fmt.Errorf("path escapes root: %s", rel)
+			}
+		}
+	}
 	return absPath, nil
 }
 
@@ -445,6 +461,73 @@ func (s *Server) render(w http.ResponseWriter, data pageData) {
 	if err := pageTemplate.Execute(w, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func presentContent(path string, data []byte) (string, template.HTML) {
+	redacted := secrets.Redact(string(data))
+	if isMarkdown(path) {
+		return "", renderMarkdown(redacted)
+	}
+	return redacted, ""
+}
+
+func isMarkdown(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".md", ".markdown":
+		return true
+	default:
+		return false
+	}
+}
+
+func renderMarkdown(content string) template.HTML {
+	var b strings.Builder
+	inList := false
+	closeList := func() {
+		if inList {
+			b.WriteString("</ul>\n")
+			inList = false
+		}
+	}
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			closeList()
+			continue
+		}
+		switch {
+		case strings.HasPrefix(trimmed, "# "):
+			closeList()
+			b.WriteString("<h1>")
+			b.WriteString(template.HTMLEscapeString(strings.TrimSpace(strings.TrimPrefix(trimmed, "# "))))
+			b.WriteString("</h1>\n")
+		case strings.HasPrefix(trimmed, "## "):
+			closeList()
+			b.WriteString("<h2>")
+			b.WriteString(template.HTMLEscapeString(strings.TrimSpace(strings.TrimPrefix(trimmed, "## "))))
+			b.WriteString("</h2>\n")
+		case strings.HasPrefix(trimmed, "### "):
+			closeList()
+			b.WriteString("<h3>")
+			b.WriteString(template.HTMLEscapeString(strings.TrimSpace(strings.TrimPrefix(trimmed, "### "))))
+			b.WriteString("</h3>\n")
+		case strings.HasPrefix(trimmed, "- "):
+			if !inList {
+				b.WriteString("<ul>\n")
+				inList = true
+			}
+			b.WriteString("<li>")
+			b.WriteString(template.HTMLEscapeString(strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))))
+			b.WriteString("</li>\n")
+		default:
+			closeList()
+			b.WriteString("<p>")
+			b.WriteString(template.HTMLEscapeString(trimmed))
+			b.WriteString("</p>\n")
+		}
+	}
+	closeList()
+	return template.HTML(b.String())
 }
 
 var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
@@ -469,6 +552,11 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
     a { color: LinkText; text-decoration: none; }
     a:hover { text-decoration: underline; }
     pre { overflow: auto; padding: 18px; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 6px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+    article { overflow-wrap: anywhere; line-height: 1.55; }
+    article h1 { margin-top: 18px; }
+    article h2 { margin-top: 24px; }
+    article ul { list-style: disc; padding-left: 22px; }
+    article li { border: 0; padding: 3px 0; }
     .error { color: #b42318; }
   </style>
 </head>
@@ -480,10 +568,14 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
   <main>
     {{if .Error}}
       <p class="error">{{.Error}}</p>
-    {{else if .Content}}
+    {{else if or .Content .Rendered}}
       <p><a href="/">← index</a>{{if .RunID}} · <a href="/run?id={{q .RunID}}">run {{.RunID}}</a>{{end}}</p>
       <div class="muted">{{.Path}}</div>
+      {{if .Rendered}}
+      <article>{{.Rendered}}</article>
+      {{else}}
       <pre>{{.Content}}</pre>
+      {{end}}
     {{else if .Artifacts}}
       <p><a href="/">← index</a></p>
       <h2>Artifacts</h2>

@@ -19,7 +19,12 @@ func TestLoadFromFindsConfigInParent(t *testing.T) {
 		"openai_model": "model-from-file",
 		"codex_model": "codex-from-file",
 		"codex_bin": "/tmp/codex",
-		"planning_agents": 2
+		"planning_agents": 2,
+		"spec_doc": "PRODUCT.md",
+		"task_doc": "WORK.md",
+		"eval_doc": "REVIEW.md",
+		"dry_run": true,
+		"allow_no_git": true
 	}`), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -36,6 +41,12 @@ func TestLoadFromFindsConfigInParent(t *testing.T) {
 	}
 	if cfg.PlanningAgents == nil || *cfg.PlanningAgents != 2 {
 		t.Fatalf("unexpected planning agents: %#v", cfg.PlanningAgents)
+	}
+	if cfg.SpecDoc != "PRODUCT.md" || cfg.TaskDoc != "WORK.md" || cfg.EvalDoc != "REVIEW.md" {
+		t.Fatalf("unexpected doc config: %#v", cfg)
+	}
+	if cfg.DryRun == nil || !*cfg.DryRun || cfg.AllowNoGit == nil || !*cfg.AllowNoGit {
+		t.Fatalf("unexpected boolean config: %#v", cfg)
 	}
 }
 

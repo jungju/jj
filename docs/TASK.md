@@ -1,226 +1,144 @@
 # TASK
-
 ## Objective
-
-`jj`의 다음 단계 기능을 구현 가능한 로드맵으로 정리한다. 중심 목표는 로컬 우선 AI coding orchestration CLI라는 제품 의도를 유지하면서, 브라우저에서 실행을 시작하고, 실행 전후 hook을 연결하고, run 상태와 결과를 더 잘 관찰할 수 있게 만드는 것이다.
-
-이 문서는 구현 지시서다. 각 기능은 별도 PR 또는 별도 `jj run` 계획으로 분리해도 되지만, 공개 CLI와 artifact 신뢰성을 깨뜨리지 않아야 한다.
+Implement `jj` as a Go CLI that turns a single Markdown plan into auditable planning, implementation, and evaluation artifacts. The implementation must support `jj run` and `jj serve`, provider fallback, dry-run safety, secret redaction, manifest integrity, git evidence capture, and local artifact review.
 
 ## Constraints
+- Keep the CLI usable without network access by supporting injected planners and fake Codex runners in tests.
+- Resolve `<plan.md>` relative to the invocation directory, not `--cwd`.
+- Do not write workspace docs or invoke implementation Codex during `--dry-run`.
+- Require git by default and support explicit `--allow-no-git`.
+- Never serialize or serve raw API keys, bearer tokens, authorization headers, or token-like config values.
+- Never overwrite an existing `.jj/runs/<run-id>/` directory.
+- Use safe path handling for artifact writes and `jj serve`; do not serve outside the workspace.
+- Prefer existing project patterns and dependencies; use Go standard library where sufficient.
+- Treat documents as the source of development truth. Before implementing behavior changes, update or generate the relevant `plan.md`, `docs/SPEC.md`, `docs/TASK.md`, README, or run docs; after implementation, verify those docs still match the actual behavior.
+- Treat the web UI as dashboard-first. The first screen for `jj serve` must show current TASK state and active progress before secondary document or artifact navigation.
 
-- 기본 제품 방향은 local-first다. `jj`는 cloud service나 multi-user dashboard가 아니다.
-- 새 기능은 기존 `jj run <plan.md>`와 `jj serve` 흐름을 보강해야 하며, 기존 사용법을 깨뜨리지 않는다.
-- 모든 실행 결과는 `.jj/runs/<run-id>/`와 `manifest.json`에 감사 가능한 형태로 남긴다.
-- secret 값은 로그, manifest, artifact, 웹 화면에 노출하지 않는다.
-- destructive action, full-run, hook 실행은 사용자가 명시적으로 확인할 수 있어야 한다.
-- OpenAI API와 Codex CLI를 실제 호출하지 않아도 테스트 가능한 인터페이스를 유지한다.
-- `jj serve`의 기본 listen 주소는 local-only인 `127.0.0.1` 계열을 유지한다.
+## Implementation Steps
+1. Inspect the existing Go module, CLI entrypoint, package structure, tests, and dependencies.
+2. Define or update package boundaries: `cmd/jj`, `internal/cli`, `internal/config`, `internal/run`, `internal/planner`, `internal/codex`, `internal/gitutil`, `internal/artifact`, `internal/eval`, and `internal/serve` as appropriate for the current repo.
+3. Implement config resolution from defaults, `.jjrc`, environment, and CLI flags with the required precedence.
+4. Implement CLI parsing for `jj run <plan.md>` and `jj serve --cwd <path>` with flags for cwd, run id, dry-run, allow-no-git, agents, OpenAI model, Codex model, spec doc, and task doc.
+5. Implement plan loading and validation, including relative path behavior, Markdown-like extension checks, missing file errors, and empty file rejection.
+6. Implement git utilities for repo detection, repo root, branch, commit SHA, dirty state, baseline metadata, post-run status, and diff capture, with no-git metadata support.
+7. Implement run id generation using UTC timestamp plus short random suffix, with explicit override and collision failure.
+8. Implement artifact store creation under `.jj/runs/<run-id>/`, atomic writes where practical, stable relative paths, early `input.md`, planning JSON, docs, git artifacts, Codex artifacts, eval, and manifest persistence.
+9. Define planner interfaces and JSON schema with `agent`, `summary`, `spec_markdown`, `task_markdown`, `risks`, `assumptions`, `acceptance_criteria`, and `test_plan`.
+10. Implement planner provider selection: injected planner, OpenAI planner when `OPENAI_API_KEY` exists, Codex CLI fallback otherwise.
+11. Implement OpenAI planner behind an interface with model selection and redacted diagnostics.
+12. Implement Codex fallback planner by invoking the configured Codex binary, prompting for one JSON object, extracting/parsing structured output, and writing useful failure artifacts.
+13. Implement planner merge logic that produces final SPEC and TASK Markdown using the required section layouts.
+14. Implement dry-run finalization: write only run artifacts, mark manifest `dry_run`, print artifact paths, and skip workspace doc writes and Codex implementation.
+15. Implement non-dry-run execution: write configured workspace docs, invoke Codex with generated docs, capture events/summary/stderr/exit code, capture git status and diff, and generate `docs/EVAL.md`.
+16. Implement deterministic evaluation generation with plan summary, SPEC/TASK checklist, Codex result, git diff summary, test result or reason not run, risks, follow-up actions, and verdict.
+17. Implement centralized redaction and use it for manifests, logs, provider errors, Codex output, served HTML, and config display.
+18. Implement `jj serve` with `net/http`, dashboard home, run index, per-run artifact navigation, Markdown rendering, redaction, and path traversal rejection.
+19. Make the dashboard the `/` route. It must summarize the current `docs/TASK.md`, in-progress runs, recent run status, evaluation verdicts, failed/risky runs, and recommended next actions.
+20. Ensure document lists, run detail pages, and artifact pages remain reachable from the dashboard but are not the primary first screen.
+21. Ensure failed runs update manifest status and error summary whenever a run directory has been initialized.
+22. Run formatting and verification commands, then fix regressions.
 
-## Feature 1: Web Run
+## Files and Packages to Inspect
+- `go.mod` and `go.sum`
+- `cmd/jj`
+- Existing `internal/cli` or command packages
+- Existing config loading code and `.jjrc` handling
+- Existing planner, Codex, git, artifact, eval, and server packages if present
+- Existing tests and test helpers
+- README and docs for current CLI behavior
+- Any existing manifest schema or run artifact fixtures
 
-`jj serve` 웹 UI에서 `jj run`을 시작할 수 있게 한다.
+## Required Changes
+- Add or update CLI commands and flags for `run` and `serve`.
+- Add resolved config struct with source precedence and redacted serialization.
+- Add run orchestration for plan validation, git baseline, artifact initialization, planner execution, merge, dry-run branching, non-dry-run Codex execution, evaluation, and manifest finalization.
+- Add planner provider chain and test injection hooks.
+- Add Codex CLI execution/fallback planning wrappers with redacted output capture.
+- Add artifact layout and manifest contract under `.jj/runs/<run-id>/`.
+- Add git metadata and diff/status capture.
+- Add deterministic `docs/EVAL.md` generation.
+- Add centralized secret redaction utility.
+- Add local HTTP serving for a dashboard-first home page, README, plan files, project docs, run index, manifests, SPEC, TASK, EVAL, summaries, and diffs.
+- Add dashboard state extraction from `docs/TASK.md`, run manifests, evaluation artifacts, and active/failed run metadata.
+- Add or update docs whenever behavior changes, so implementation and product intent remain traceable through `plan.md`, `docs/SPEC.md`, `docs/TASK.md`, and README.
 
-구현 요구사항:
+## Web Dashboard Status and Turn Control
 
-1. `jj serve` 홈 또는 별도 `/run/new` 화면에 run form을 추가한다.
-2. 입력 필드는 최소한 `plan path`, `cwd`, `dry-run`, `planning agents`, `OpenAI model`, `Codex model`, `run-id`를 포함한다.
-3. `dry-run`은 기본값으로 켜는 것을 우선 검토한다.
-4. full-run을 선택하면 코드 변경과 hook 실행 가능성을 알리는 명시적 확인 UI를 제공한다.
-5. form submit은 서버 내부에서 기존 run pipeline을 호출해야 하며, CLI path를 shell로 조합해 실행하지 않는다.
-6. 실행 시작 직후 run id와 run detail URL을 보여준다.
-7. 동시에 여러 run을 시작할 수 있는 경우 run별 상태가 섞이지 않도록 run id 단위로 격리한다.
-8. 실행 실패 시 브라우저에는 짧고 명확한 에러를 보여주고, 상세 원인은 artifact와 manifest에 기록한다.
+Implement a dashboard-centered web UI that makes the current work state visible before users inspect raw artifacts.
 
-권장 엔드포인트:
+Required behavior:
 
-- `GET /run/new`: run 생성 form
-- `POST /run`: run 시작
-- `GET /run?id=<run-id>`: 기존 run detail 화면 재사용
+1. Show the current `TASK` and execution situation on the web UI dashboard.
+2. Add a TASK/status list page that displays each current task item, status, related run id when available, and links to source docs or artifacts.
+3. Represent the current workflow situation as a block diagram.
+4. Use blocks for major phases such as planning, merge, document generation, Codex execution, git capture, evaluation, review, commit, and turn control.
+5. Visually highlight the active block like a lit status indicator so the user can immediately see the current state.
+6. Provide `Continue to Next Turn` and `Finish Turn` controls in the dashboard.
+7. Define `Continue to Next Turn` as the state where the current turn may finish its commit step and the workflow may proceed to the next turn.
+8. Define `Finish Turn` as the state where the current turn finishes its commit step, is marked as terminal, and the workflow must not automatically create, start, or navigate to the next turn.
+9. Add a final commit step for successful or partially successful non-dry-run turns.
+10. Do not create an automatic commit for failed turns; preserve those through `.jj/runs/<run-id>/manifest.json` and artifacts.
+11. Persist commit state and selected turn state in the run artifact or manifest model when implementation work adds the necessary data structure.
+12. Keep the UI local-first and safe: turn controls must not execute hidden shell commands or mutate files outside the configured workspace.
 
-수용 기준:
+Acceptance criteria:
 
-- 브라우저에서 dry-run을 시작하면 `.jj/runs/<run-id>/docs/SPEC.md`, `docs/TASK.md`, `manifest.json`이 생성된다.
-- full-run은 확인 UI 없이는 시작되지 않는다.
-- path traversal 입력은 거부된다.
-- API key나 bearer token은 response body에 그대로 노출되지 않는다.
-
-## Feature 2: Hooks
-
-사용자가 run 단계 전후에 로컬 명령을 연결할 수 있게 한다.
-
-지원 단계:
-
-- `pre_plan`
-- `post_plan`
-- `pre_codex`
-- `post_codex`
-- `post_eval`
-- `on_failure`
-
-설정 방향:
-
-`.jjrc`를 확장해 hook을 선언한다. 실제 명령에는 secret 값을 직접 넣지 않도록 문서화하고, manifest에는 hook command 전체를 저장하지 않거나 redaction된 형태로만 저장한다.
-
-예시:
-
-```json
-{
-  "hooks": {
-    "pre_plan": [
-      {
-        "name": "check workspace",
-        "command": "git status --short",
-        "required": true
-      }
-    ],
-    "post_eval": [
-      {
-        "name": "print eval",
-        "command": "sed -n '1,120p' \"$JJ_RUN_DIR/docs/EVAL.md\"",
-        "required": false
-      }
-    ]
-  }
-}
-```
-
-실행 환경:
-
-- `JJ_RUN_ID`
-- `JJ_RUN_DIR`
-- `JJ_CWD`
-- `JJ_STATUS`
-- `JJ_DRY_RUN`
-- `JJ_PLANNER_PROVIDER`
-
-구현 요구사항:
-
-1. hook 설정 파서를 추가하고 unknown field는 명확한 에러로 처리한다.
-2. hook 실행 결과를 `.jj/runs/<run-id>/hooks/<stage>/<name>.log`에 저장한다.
-3. `required: true` hook 실패는 pipeline 실패로 처리한다.
-4. `required: false` hook 실패는 manifest 경고로 남기고 가능한 다음 단계로 진행한다.
-5. hook timeout 기본값을 둔다. 권장 기본값은 5분이다.
-6. SIGINT/SIGTERM 시 실행 중 hook 프로세스를 종료하고 manifest에 `cancelled`를 기록한다.
-
-수용 기준:
-
-- 각 단계 hook이 올바른 순서로 실행된다.
-- hook stdout/stderr가 artifact에 기록된다.
-- required hook 실패 시 Codex 구현 단계가 실행되지 않는다.
-- secret 후보 문자열은 hook log 표시 화면에서 redaction된다.
-
-## Feature 3: Monitoring
-
-run 진행 상태와 결과를 웹에서 추적할 수 있게 한다.
-
-구현 요구사항:
-
-1. `manifest.json`에 단계별 status를 기록할 수 있는 구조를 추가한다.
-2. 단계는 최소 `read_plan`, `git_baseline`, `planning`, `merge`, `write_outputs`, `codex`, `git_capture`, `evaluation`, `hooks`를 포함한다.
-3. `jj serve` run detail 화면에 timeline을 표시한다.
-4. planner events, Codex events, hook logs, git diff summary, EVAL을 한 화면에서 이동할 수 있게 링크를 정리한다.
-5. 가능하면 Server-Sent Events로 live update를 제공한다.
-6. SSE가 어렵거나 브라우저 호환성이 문제가 되면 interval polling으로 시작한다.
-7. 실행 중 run과 완료된 run을 목록에서 구분한다.
-
-권장 엔드포인트:
-
-- `GET /runs`: run 목록 JSON
-- `GET /run/status?id=<run-id>`: 단일 run status JSON
-- `GET /run/events?id=<run-id>`: SSE 또는 polling용 event stream
-
-수용 기준:
-
-- 실행 중인 run의 현재 단계가 웹에서 확인된다.
-- Codex non-zero exit도 timeline과 manifest에 표시된다.
-- 완료된 run은 `PASS`, `PARTIAL`, `FAIL`, `success`, `failed`, `cancelled` 상태를 빠르게 확인할 수 있다.
-- monitoring UI는 secret 값을 표시하지 않는다.
-
-## Feature 4: Run Review and Comparison
-
-여러 run의 결과를 비교해 어떤 시도가 더 나은지 판단할 수 있게 한다.
-
-구현 요구사항:
-
-1. run 목록에 run id, started_at, status, planner provider, evaluation result, score, changed files 수를 표시한다.
-2. 두 run을 선택해 `docs/SPEC.md`, `docs/TASK.md`, `docs/EVAL.md`, `git-diff-summary.txt`를 나란히 비교할 수 있게 한다.
-3. 비교 기능은 파일 원문을 안전하게 escape해서 보여준다.
-4. run detail 화면에서 이전/다음 run으로 이동할 수 있게 한다.
-5. `PASS/PARTIAL/FAIL`, score, test result, Codex exit code를 스캔하기 쉽게 표시한다.
-
-권장 엔드포인트:
-
-- `GET /compare?left=<run-id>&right=<run-id>`
-
-수용 기준:
-
-- 사용자는 두 run의 SPEC/TASK/EVAL 차이를 브라우저에서 확인할 수 있다.
-- 존재하지 않는 run id는 404로 처리한다.
-- 비교 대상 파일이 없으면 화면 전체가 실패하지 않고 해당 파일만 missing으로 표시한다.
-
-## Feature 5: Configuration and Safety
-
-웹 실행, hook, monitoring을 안전하게 운영하기 위한 설정과 보호 장치를 추가한다.
-
-구현 요구사항:
-
-1. `.jjrc`에 web run과 hooks 관련 설정을 추가한다.
-2. 기본값은 보수적으로 둔다.
-3. `jj serve`가 `127.0.0.1`이 아닌 주소로 bind될 때 web run 기능을 기본 비활성화하거나 경고를 명확히 표시한다.
-4. POST 요청에는 최소한 same-origin 확인 또는 local-only 전제를 검증하는 보호 장치를 둔다.
-5. hook command와 web run 입력값은 shell injection 위험을 고려해 검증한다.
-6. manifest에는 설정값 중 secret이 아닌 것만 기록한다.
-7. README에는 web run과 hooks가 로컬 명령 실행 기능임을 분명히 문서화한다.
-
-권장 `.jjrc` 예시:
-
-```json
-{
-  "serve": {
-    "web_run_enabled": true,
-    "allow_full_run_from_web": false
-  },
-  "hooks": {}
-}
-```
-
-수용 기준:
-
-- 기본 설정에서 우발적인 원격 full-run이 불가능하다.
-- `.jjrc`에 잘못된 hook 설정이 있으면 명확한 에러를 낸다.
-- manifest와 웹 화면에 API key 값이 남지 않는다.
+- The dashboard shows a TASK 상태 리스트 before lower-level artifact lists.
+- The dashboard includes a block diagram of the current situation.
+- The active phase has a clear 활성 상태 표시.
+- `Continue to Next Turn` and `Finish Turn` are visible controls with distinct states.
+- When `Finish Turn` is selected, the current turn completes the commit step if eligible and the UI/backend do not proceed to a next turn.
+- The block diagram includes a commit block.
+- Commit result is recorded in run artifacts or manifest when commit support is implemented.
+- The behavior is covered by HTTP handler tests and documented in `docs/SPEC.md`.
 
 ## Testing Requirements
+- Unit test config precedence across defaults, `.jjrc`, env vars, and CLI flags.
+- Unit test redaction for OpenAI-style keys, bearer tokens, authorization headers, `api_key`, `token`, and `password` values.
+- Unit test plan loading for relative paths, absolute paths, empty files, missing files, Markdown-like validation, and `--cwd` combinations.
+- Unit test planner selection for injected planner, OpenAI key present, OpenAI key absent fallback, and missing Codex binary error.
+- Unit test dry-run to assert workspace docs are not written and Codex runner is not called.
+- Unit test artifact writes, run id collision behavior, and manifest redaction.
+- Integration test dry-run in a temporary git repo and assert run artifacts and manifest fields.
+- Integration test dry-run with `--cwd` and a plan path outside cwd.
+- Integration test no-git rejection and `--allow-no-git` success.
+- Integration test non-dry-run with fake planner and fake Codex runner, asserting workspace docs, Codex artifacts, git status/diff, EVAL, and manifest.
+- Integration test dirty workspace baseline handling so pre-existing changes remain visible.
+- HTTP tests for `jj serve` run index, Markdown rendering, artifact pages, redaction, and path traversal rejection.
+- HTTP tests for the dashboard home page showing TASK summary, in-progress or recent runs, evaluation status, failed run indicators, and next-action links.
+- HTTP tests for the TASK/status list page, block diagram rendering, active block highlight, `Continue to Next Turn`, and `Finish Turn`.
+- State tests confirming `Finish Turn` blocks next-turn progression and `Continue to Next Turn` leaves next-turn progression available.
+- State tests confirming eligible `PASS` and `PARTIAL` non-dry-run turns include a final commit step.
+- State tests confirming failed turns skip automatic commit and preserve failure evidence in manifest/artifacts.
+- Manifest schema should be protected with structure assertions or snapshot-style tests.
 
-문서 변경 후 실제 구현 단계에서는 다음 테스트를 추가한다.
-
-- Web run handler test: form render, dry-run submit, full-run confirmation required.
-- Web run pipeline test: fake planner와 fake Codex runner로 browser-triggered run이 artifact를 생성하는지 확인.
-- Local-only safety test: non-local bind에서 web run 제한 또는 경고가 동작하는지 확인.
-- Hook config test: valid config parsing, unknown field failure, invalid stage failure.
-- Hook execution test: required hook failure stops pipeline, optional hook failure records warning.
-- Hook artifact test: stdout/stderr log와 manifest hook result가 생성되는지 확인.
-- Monitoring test: run status JSON과 run detail timeline이 manifest 상태를 반영하는지 확인.
-- SSE or polling test: 실행 중 status update가 관찰 가능한지 확인.
-- Comparison test: 두 run의 SPEC/TASK/EVAL/diff summary가 안전하게 표시되는지 확인.
-- Secret redaction test: API key, bearer token, password 후보가 HTML response와 manifest에 그대로 노출되지 않는지 확인.
-
-품질 게이트:
-
-```bash
-go test ./...
-go vet ./...
-go build -o jj ./cmd/jj
-```
+## Manual Verification
+- Run `go test ./...`.
+- Run `go vet ./...`.
+- Run `go build -o jj ./cmd/jj`.
+- In a temporary git repo, run `./jj run plan.md --dry-run` and confirm `.jj/runs/<run-id>/` contains `input.md`, planning JSON, generated SPEC/TASK, and manifest while workspace docs remain unchanged.
+- Run without `OPENAI_API_KEY` and confirm Codex CLI fallback selection or clear missing-Codex failure is recorded.
+- Run a fake or controlled non-dry-run path and confirm Codex artifacts, git status/diff, EVAL, and final manifest are present.
+- Start `./jj serve --cwd .` and inspect README/docs/run artifacts while confirming secret fixtures are redacted.
+- Confirm the first `jj serve` screen is a dashboard and not only a raw document list.
+- Confirm the dashboard shows current TASK status, running/recent runs, latest evaluation status, failed/risky items, and links to docs and artifacts.
+- Confirm the dashboard shows a TASK 상태 리스트 page, a block diagram, a lit active-state block, and `Continue to Next Turn`/`Finish Turn` controls.
+- Confirm the block diagram includes a commit block.
+- Confirm selecting `Finish Turn` completes the eligible commit step and prevents movement into the next turn.
+- Confirm failed turns do not create an automatic commit and remain reviewable through manifest/artifacts.
 
 ## Done Criteria
-
-- `docs/TASK.md`에 다음 기능 로드맵이 정리되어 있다.
-  - 웹에서 Run하기
-  - Hook 기능
-  - 모니터링 기능
-  - Run review and comparison
-  - Configuration and safety
-- 문서는 기본적으로 `docs/` 아래에 둔다.
-- 각 기능은 구현 요구사항과 수용 기준을 포함한다.
-- 후속 구현자가 `docs/TASK.md`만 읽고 작업 범위와 테스트 방향을 이해할 수 있다.
+- Required SPEC and TASK documents are generated into run artifacts for dry-run and also written to workspace docs for non-dry-run.
+- Planner provider fallback order is implemented and recorded in manifest.
+- Dry-run is harmless to workspace docs and skips Codex implementation.
+- Non-dry-run captures Codex evidence, git status/diff, EVAL, and manifest results.
+- No raw secrets appear in manifests, logs, errors, Codex diagnostics, or served HTML in tests.
+- `jj serve` provides a dashboard-first home page, expected artifact navigation, and path traversal blocking.
+- The dashboard exposes current TASK state, progress, recent results, and next actions before lower-level artifact lists.
+- The dashboard exposes TASK/status list, block diagram, active-state highlighting, and turn controls.
+- Eligible `PASS` and `PARTIAL` non-dry-run turns include a final commit step.
+- Failed turns skip automatic commit and preserve their state through `.jj/runs/<run-id>/manifest.json` and artifacts.
+- `Finish Turn` reliably stops next-turn progression after the eligible commit step, while `Continue to Next Turn` allows the workflow to remain eligible for a next turn after the eligible commit step.
+- All behavior changes are reflected in the relevant documents before the work is considered done.
+- Git-required and `--allow-no-git` behavior are covered.
+- All required tests and verification commands pass.

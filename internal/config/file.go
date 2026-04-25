@@ -17,6 +17,11 @@ type File struct {
 	CodexModel      string `json:"codex_model"`
 	CodexBin        string `json:"codex_bin"`
 	PlanningAgents  *int   `json:"planning_agents"`
+	SpecDoc         string `json:"spec_doc"`
+	TaskDoc         string `json:"task_doc"`
+	EvalDoc         string `json:"eval_doc"`
+	DryRun          *bool  `json:"dry_run"`
+	AllowNoGit      *bool  `json:"allow_no_git"`
 
 	Path string `json:"-"`
 }

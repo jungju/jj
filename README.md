@@ -16,7 +16,9 @@
 6. git diff/status와 Codex 결과를 평가해 `docs/EVAL.md`를 만듭니다.
 7. 모든 입력, 출력, 이벤트, manifest를 `.jj/runs/<run-id>/`에 저장합니다.
 
-`jj serve`는 생성된 README, TASK/SPEC/EVAL, manifest, planning artifact를 로컬 웹페이지로 보여줍니다.
+`jj serve`의 첫 화면은 대시보드입니다. 현재 `docs/TASK.md` 상태, 진행 중인 run, 최근 실행 결과, 평가 상태를 먼저 보여주고, 생성된 README, TASK/SPEC/EVAL, manifest, planning artifact로 이동할 수 있게 합니다.
+
+`jj`의 개발 원칙은 문서 기반입니다. 기능 변경은 `plan.md`, `docs/SPEC.md`, `docs/TASK.md`, README 같은 문서에서 시작하고, 구현 후에도 문서와 실제 동작이 일치해야 합니다.
 
 ## 빠른 시작
 
@@ -32,7 +34,7 @@ go build -o jj ./cmd/jj
 ./jj run plan.md --dry-run
 ```
 
-생성된 문서와 실행 아티팩트를 웹에서 확인합니다.
+대시보드에서 현재 TASK 상태와 실행 아티팩트를 확인합니다.
 
 ```bash
 ./jj serve --cwd .
@@ -80,7 +82,8 @@ dry-run은 plan 읽기, git 확인, planning, merge, run directory 안의 `docs/
 ```text
 --cwd DIR              대상 저장소 디렉터리
 --run-id ID            .jj/runs/<run-id>에 사용할 실행 ID
---planning-agents N    병렬 기획 에이전트 수, 기본값 3
+--agents N             병렬 기획 에이전트 수, 기본값 3
+--planning-agents N    --agents의 이전 이름
 --openai-model MODEL   기획 및 평가에 사용할 OpenAI 모델
 --codex-model MODEL    Codex CLI에 넘길 모델
 --spec-doc NAME        docs/ 아래에 쓸 SPEC 문서명, 기본값 SPEC.md
@@ -102,7 +105,7 @@ dry-run은 plan 읽기, git 확인, planning, merge, run directory 안의 `docs/
 
 ### `jj serve`
 
-README와 `.jj/runs` 아티팩트를 로컬 웹페이지로 보여줍니다.
+대시보드를 첫 화면으로 띄우고 README와 `.jj/runs` 아티팩트를 로컬 웹페이지로 보여줍니다.
 
 ```text
 --cwd DIR       문서와 .jj/runs를 읽을 디렉터리
@@ -116,6 +119,8 @@ README와 `.jj/runs` 아티팩트를 로컬 웹페이지로 보여줍니다.
 ./jj serve --cwd .
 ./jj serve --cwd playground/workspace
 ```
+
+대시보드는 현재 `docs/TASK.md` 요약, 진행 중인 run, 최근 run status, 평가 결과, 실패/위험 항목, 다음 액션을 먼저 보여주는 화면입니다. 문서 목록과 artifact 상세 화면은 대시보드에서 들어가는 보조 화면입니다.
 
 ## 설정
 
@@ -136,7 +141,12 @@ JJ_CODEX_MODEL       Codex 모델 override
   "openai_model": "gpt-5.5",
   "codex_model": "gpt-5.5",
   "codex_bin": "codex",
-  "planning_agents": 3
+  "planning_agents": 3,
+  "spec_doc": "SPEC.md",
+  "task_doc": "TASK.md",
+  "eval_doc": "EVAL.md",
+  "dry_run": false,
+  "allow_no_git": false
 }
 ```
 
@@ -173,6 +183,8 @@ codex-summary.md
 git-diff.patch
 git-diff-summary.txt
 docs/EVAL.md
+git-baseline.json
+git-status.txt
 manifest.json
 ```
 
@@ -223,6 +235,9 @@ run-id는 `a-z A-Z 0-9 . _ -`만 허용합니다. 이미 같은 run directory가
     "codex_model": "...",
     "codex_bin": "...",
     "config_file": "/path/to/.jjrc",
+    "openai_api_key_env": "OPENAI_API_KEY",
+    "openai_api_key_present": false,
+    "allow_no_git": false,
     "spec_doc": "SPEC.md",
     "task_doc": "TASK.md",
     "eval_doc": "EVAL.md"
@@ -263,6 +278,13 @@ repo 루트를 오염시키지 않고 시험하려면 `playground/`를 사용합
 - 환경 변수 전체를 로그로 출력하지 않습니다.
 - OpenAI/Codex 원문 응답을 저장할 때도 실패 원문은 필요한 일부만 저장하고 secret 후보 값은 redaction합니다.
 - `jj serve`는 path traversal을 차단하고 화면에 표시하기 전에 secret 후보 문자열을 redaction합니다.
+
+## 개발 원칙
+
+- 모든 개발은 문서를 기반으로 진행합니다.
+- 기능을 바꾸기 전에는 관련 `plan.md`, `docs/SPEC.md`, `docs/TASK.md`, README를 먼저 갱신하거나 생성합니다.
+- 구현이 끝난 뒤에는 문서가 실제 CLI 동작, artifact 구조, 웹 대시보드 상태와 일치하는지 확인합니다.
+- `jj serve`의 첫 화면은 항상 현재 작업 상태를 보는 대시보드여야 하며, 단순 파일 목록이 첫 경험이 되면 안 됩니다.
 
 ## 개발
 
