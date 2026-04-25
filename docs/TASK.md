@@ -1,144 +1,133 @@
 # TASK
 ## Objective
-Implement `jj` as a Go CLI that turns a single Markdown plan into auditable planning, implementation, and evaluation artifacts. The implementation must support `jj run` and `jj serve`, provider fallback, dry-run safety, secret redaction, manifest integrity, git evidence capture, and local artifact review.
+Implement `jj` as a Go CLI that turns a Markdown plan into reproducible planning, implementation, evaluation, and dashboard artifacts. The implementation must preserve the document-first workflow: plan to SPEC/TASK, SPEC/TASK to Codex implementation, implementation to evidence and evaluation, and dashboard to review.
 
 ## Constraints
-- Keep the CLI usable without network access by supporting injected planners and fake Codex runners in tests.
-- Resolve `<plan.md>` relative to the invocation directory, not `--cwd`.
-- Do not write workspace docs or invoke implementation Codex during `--dry-run`.
-- Require git by default and support explicit `--allow-no-git`.
-- Never serialize or serve raw API keys, bearer tokens, authorization headers, or token-like config values.
-- Never overwrite an existing `.jj/runs/<run-id>/` directory.
-- Use safe path handling for artifact writes and `jj serve`; do not serve outside the workspace.
-- Prefer existing project patterns and dependencies; use Go standard library where sufficient.
-- Treat documents as the source of development truth. Before implementing behavior changes, update or generate the relevant `plan.md`, `docs/SPEC.md`, `docs/TASK.md`, README, or run docs; after implementation, verify those docs still match the actual behavior.
-- Treat the web UI as dashboard-first. The first screen for `jj serve` must show current TASK state and active progress before secondary document or artifact navigation.
+- Use existing repository conventions and package layout where present.
+- Keep `--cwd` workspace resolution separate from relative plan path resolution.
+- Do not require `OPENAI_API_KEY`; Codex CLI fallback planning must work when no key is present.
+- Do not call real OpenAI or real Codex in normal unit tests; use injected planners, fake implementers, and fake evaluators.
+- Do not write workspace `docs/SPEC.md` or `docs/TASK.md` during `--dry-run`.
+- Do not expose secrets in `.jjrc`-derived output, manifests, logs, generated docs, Codex events, evaluation output, or dashboard HTML.
+- Keep manifest status transitions explicit for success, skipped steps, partial failure, and failure.
+- `jj serve` is local-only and dashboard-first; it is not a marketing page or generic file browser.
 
 ## Implementation Steps
-1. Inspect the existing Go module, CLI entrypoint, package structure, tests, and dependencies.
-2. Define or update package boundaries: `cmd/jj`, `internal/cli`, `internal/config`, `internal/run`, `internal/planner`, `internal/codex`, `internal/gitutil`, `internal/artifact`, `internal/eval`, and `internal/serve` as appropriate for the current repo.
-3. Implement config resolution from defaults, `.jjrc`, environment, and CLI flags with the required precedence.
-4. Implement CLI parsing for `jj run <plan.md>` and `jj serve --cwd <path>` with flags for cwd, run id, dry-run, allow-no-git, agents, OpenAI model, Codex model, spec doc, and task doc.
-5. Implement plan loading and validation, including relative path behavior, Markdown-like extension checks, missing file errors, and empty file rejection.
-6. Implement git utilities for repo detection, repo root, branch, commit SHA, dirty state, baseline metadata, post-run status, and diff capture, with no-git metadata support.
-7. Implement run id generation using UTC timestamp plus short random suffix, with explicit override and collision failure.
-8. Implement artifact store creation under `.jj/runs/<run-id>/`, atomic writes where practical, stable relative paths, early `input.md`, planning JSON, docs, git artifacts, Codex artifacts, eval, and manifest persistence.
-9. Define planner interfaces and JSON schema with `agent`, `summary`, `spec_markdown`, `task_markdown`, `risks`, `assumptions`, `acceptance_criteria`, and `test_plan`.
-10. Implement planner provider selection: injected planner, OpenAI planner when `OPENAI_API_KEY` exists, Codex CLI fallback otherwise.
-11. Implement OpenAI planner behind an interface with model selection and redacted diagnostics.
-12. Implement Codex fallback planner by invoking the configured Codex binary, prompting for one JSON object, extracting/parsing structured output, and writing useful failure artifacts.
-13. Implement planner merge logic that produces final SPEC and TASK Markdown using the required section layouts.
-14. Implement dry-run finalization: write only run artifacts, mark manifest `dry_run`, print artifact paths, and skip workspace doc writes and Codex implementation.
-15. Implement non-dry-run execution: write configured workspace docs, invoke Codex with generated docs, capture events/summary/stderr/exit code, capture git status and diff, and generate `docs/EVAL.md`.
-16. Implement deterministic evaluation generation with plan summary, SPEC/TASK checklist, Codex result, git diff summary, test result or reason not run, risks, follow-up actions, and verdict.
-17. Implement centralized redaction and use it for manifests, logs, provider errors, Codex output, served HTML, and config display.
-18. Implement `jj serve` with `net/http`, dashboard home, run index, per-run artifact navigation, Markdown rendering, redaction, and path traversal rejection.
-19. Make the dashboard the `/` route. It must summarize the current `docs/TASK.md`, in-progress runs, recent run status, evaluation verdicts, failed/risky runs, and recommended next actions.
-20. Ensure document lists, run detail pages, and artifact pages remain reachable from the dashboard but are not the primary first screen.
-21. Ensure failed runs update manifest status and error summary whenever a run directory has been initialized.
-22. Run formatting and verification commands, then fix regressions.
+1. Establish CLI command structure.
+- Add or update `cmd/jj` as the executable entrypoint.
+- Implement `jj run <plan.md>` and `jj serve`.
+- Add run flags for `--cwd`, `--run-id`, `--planning-agents`, `--openai-model`, `--codex-model`, `--spec-doc`, `--task-doc`, `--allow-no-git`, and `--dry-run`.
+- Add serve address or port flags.
+- Implement config precedence: defaults, `.jjrc`, environment variables, CLI flags.
+
+2. Implement workspace and config foundations.
+- Validate that the plan exists, is readable, is Markdown, and is non-empty.
+- Resolve `--cwd` as the target workspace while keeping relative plan paths based on the caller working directory.
+- Create `.jj/runs/<run-id>/` safely and deterministically enough for tests.
+- Add secret redaction helpers for env/config/manifest/log/rendered output.
+
+3. Implement git capture.
+- Detect git repository by default.
+- Fail outside git unless `--allow-no-git` is set.
+- Capture baseline commit, branch, dirty state, and status when available.
+- Capture post-run status and full diff for non-dry-run.
+- Record git metadata and no-git mode in `manifest.json`.
+
+4. Implement planner pipeline.
+- Define planner request/result types and a planner interface.
+- Add injected planner support for tests and internal orchestration.
+- Add OpenAI planner selection when `OPENAI_API_KEY` is present.
+- Add Codex CLI fallback planner selection when no API key is present.
+- Generate or preserve product/spec, implementation/tasking, and QA/evaluation drafts.
+- Merge drafts into final `docs/SPEC.md` and `docs/TASK.md`.
+- Persist raw planning outputs and final docs under the run directory.
+
+5. Implement artifact and manifest writer.
+- Copy the input plan to `.jj/runs/<run-id>/input.md`.
+- Write run-local `docs/SPEC.md` and `docs/TASK.md` for every successful planning run.
+- Represent skipped implementation, git, or evaluation steps explicitly.
+- Write and update `manifest.json` with run id, timestamps, cwd, plan path, dry-run flag, no-git flag, planner provider, models, artifact paths, git metadata, Codex result, evaluation result, status, skipped steps, and errors.
+- Redact sensitive values before writing artifacts or rendering them.
+
+6. Implement dry-run behavior.
+- Ensure `jj run plan.md --dry-run` writes only run-scoped planning artifacts, optional evaluation where possible, and manifest data.
+- Ensure dry-run does not write workspace `docs/SPEC.md` or workspace `docs/TASK.md`.
+- Ensure dry-run does not invoke Codex implementation.
+- Assert dry-run does not create unintended git diffs in the workspace.
+
+7. Implement non-dry-run behavior.
+- Write generated SPEC/TASK docs to configured workspace doc paths before implementation.
+- Invoke Codex CLI using generated docs as the implementation prompt.
+- Capture Codex events and summary under the run directory.
+- Capture post-run git status and diff.
+- Run evaluation and write `docs/EVAL.md` to run artifacts and workspace docs when evaluation is possible.
+- Update manifest consistently on success, Codex failure, evaluation failure, and partial completion.
+
+8. Implement dashboard server.
+- Make `jj serve --cwd .` serve a dashboard at `/`.
+- Show current TASK state, active or latest run, recent runs, latest statuses, evaluation summary, failures/risks, and next actions.
+- Add routes or links for README, `plan.md`, project docs, run artifacts, SPEC, TASK, EVAL, git diff, events, and manifest JSON.
+- Escape HTML while rendering Markdown and artifacts.
+- Apply redaction before displaying config, logs, manifests, generated docs, or event content.
+- Handle empty runs, corrupt manifests, missing artifacts, and failed runs without crashing.
+
+9. Implement evaluation.
+- Generate `docs/EVAL.md` for non-dry-run and for dry-run where meaningful.
+- Evaluate original plan coverage, SPEC/TASK coverage, implementation or dry-run evidence, tests run, failed criteria, skipped steps, unresolved risks, and recommended next action.
+- Ensure evaluation output and manifest evaluation fields do not overstate success when Codex or tests were skipped or failed.
 
 ## Files and Packages to Inspect
-- `go.mod` and `go.sum`
-- `cmd/jj`
-- Existing `internal/cli` or command packages
-- Existing config loading code and `.jjrc` handling
-- Existing planner, Codex, git, artifact, eval, and server packages if present
-- Existing tests and test helpers
-- README and docs for current CLI behavior
-- Any existing manifest schema or run artifact fixtures
+- `cmd/jj`: CLI entrypoint and command wiring.
+- `internal/cli`: flag parsing, config loading, command orchestration.
+- `internal/config`: defaults, env vars, `.jjrc` parsing, secret redaction.
+- `internal/workspace`: cwd handling, plan paths, docs paths, `.jj` paths, filesystem helpers.
+- `internal/gitutil`: repo detection, baseline metadata, status, diff capture.
+- `internal/runstore`: run id creation, artifact paths, manifest read/write.
+- `internal/planner`: planner interface, merge logic, injected/OpenAI/Codex providers.
+- `internal/codex`: Codex CLI implementation runner and event capture.
+- `internal/eval`: evaluation result generation and `docs/EVAL.md` writing.
+- `internal/server`: local HTTP dashboard and artifact browser.
+- `internal/markdown`: Markdown validation and safe rendering helpers.
+- `docs/`, `.jj/`, `.jjrc`, and existing tests for current conventions.
 
 ## Required Changes
-- Add or update CLI commands and flags for `run` and `serve`.
-- Add resolved config struct with source precedence and redacted serialization.
-- Add run orchestration for plan validation, git baseline, artifact initialization, planner execution, merge, dry-run branching, non-dry-run Codex execution, evaluation, and manifest finalization.
-- Add planner provider chain and test injection hooks.
-- Add Codex CLI execution/fallback planning wrappers with redacted output capture.
-- Add artifact layout and manifest contract under `.jj/runs/<run-id>/`.
-- Add git metadata and diff/status capture.
-- Add deterministic `docs/EVAL.md` generation.
-- Add centralized secret redaction utility.
-- Add local HTTP serving for a dashboard-first home page, README, plan files, project docs, run index, manifests, SPEC, TASK, EVAL, summaries, and diffs.
-- Add dashboard state extraction from `docs/TASK.md`, run manifests, evaluation artifacts, and active/failed run metadata.
-- Add or update docs whenever behavior changes, so implementation and product intent remain traceable through `plan.md`, `docs/SPEC.md`, `docs/TASK.md`, and README.
-
-## Web Dashboard Status and Turn Control
-
-Implement a dashboard-centered web UI that makes the current work state visible before users inspect raw artifacts.
-
-Required behavior:
-
-1. Show the current `TASK` and execution situation on the web UI dashboard.
-2. Add a TASK/status list page that displays each current task item, status, related run id when available, and links to source docs or artifacts.
-3. Represent the current workflow situation as a block diagram.
-4. Use blocks for major phases such as planning, merge, document generation, Codex execution, git capture, evaluation, review, commit, and turn control.
-5. Visually highlight the active block like a lit status indicator so the user can immediately see the current state.
-6. Provide `Continue to Next Turn` and `Finish Turn` controls in the dashboard.
-7. Define `Continue to Next Turn` as the state where the current turn may finish its commit step and the workflow may proceed to the next turn.
-8. Define `Finish Turn` as the state where the current turn finishes its commit step, is marked as terminal, and the workflow must not automatically create, start, or navigate to the next turn.
-9. Add a final commit step for successful or partially successful non-dry-run turns.
-10. Do not create an automatic commit for failed turns; preserve those through `.jj/runs/<run-id>/manifest.json` and artifacts.
-11. Persist commit state and selected turn state in the run artifact or manifest model when implementation work adds the necessary data structure.
-12. Keep the UI local-first and safe: turn controls must not execute hidden shell commands or mutate files outside the configured workspace.
-
-Acceptance criteria:
-
-- The dashboard shows a TASK 상태 리스트 before lower-level artifact lists.
-- The dashboard includes a block diagram of the current situation.
-- The active phase has a clear 활성 상태 표시.
-- `Continue to Next Turn` and `Finish Turn` are visible controls with distinct states.
-- When `Finish Turn` is selected, the current turn completes the commit step if eligible and the UI/backend do not proceed to a next turn.
-- The block diagram includes a commit block.
-- Commit result is recorded in run artifacts or manifest when commit support is implemented.
-- The behavior is covered by HTTP handler tests and documented in `docs/SPEC.md`.
+- Add or complete CLI command handling for `run` and `serve`.
+- Add config loading and precedence across defaults, `.jjrc`, env, and flags.
+- Add secret redaction across persisted and rendered output.
+- Add run store creation, artifact writing, and manifest schema updates.
+- Add planner provider selection and fallback order.
+- Add final SPEC/TASK merge behavior from product, implementation, and QA drafts.
+- Add dry-run isolation from workspace docs and Codex execution.
+- Add non-dry-run Codex invocation, evidence capture, git capture, and evaluation writing.
+- Add dashboard-first server root page with artifact navigation and degraded-run handling.
+- Add tests covering CLI validation, provider fallback, dry-run, no-git mode, manifest consistency, redaction, evaluation, and dashboard rendering.
 
 ## Testing Requirements
-- Unit test config precedence across defaults, `.jjrc`, env vars, and CLI flags.
-- Unit test redaction for OpenAI-style keys, bearer tokens, authorization headers, `api_key`, `token`, and `password` values.
-- Unit test plan loading for relative paths, absolute paths, empty files, missing files, Markdown-like validation, and `--cwd` combinations.
-- Unit test planner selection for injected planner, OpenAI key present, OpenAI key absent fallback, and missing Codex binary error.
-- Unit test dry-run to assert workspace docs are not written and Codex runner is not called.
-- Unit test artifact writes, run id collision behavior, and manifest redaction.
-- Integration test dry-run in a temporary git repo and assert run artifacts and manifest fields.
-- Integration test dry-run with `--cwd` and a plan path outside cwd.
-- Integration test no-git rejection and `--allow-no-git` success.
-- Integration test non-dry-run with fake planner and fake Codex runner, asserting workspace docs, Codex artifacts, git status/diff, EVAL, and manifest.
-- Integration test dirty workspace baseline handling so pre-existing changes remain visible.
-- HTTP tests for `jj serve` run index, Markdown rendering, artifact pages, redaction, and path traversal rejection.
-- HTTP tests for the dashboard home page showing TASK summary, in-progress or recent runs, evaluation status, failed run indicators, and next-action links.
-- HTTP tests for the TASK/status list page, block diagram rendering, active block highlight, `Continue to Next Turn`, and `Finish Turn`.
-- State tests confirming `Finish Turn` blocks next-turn progression and `Continue to Next Turn` leaves next-turn progression available.
-- State tests confirming eligible `PASS` and `PARTIAL` non-dry-run turns include a final commit step.
-- State tests confirming failed turns skip automatic commit and preserve failure evidence in manifest/artifacts.
-- Manifest schema should be protected with structure assertions or snapshot-style tests.
+- Unit test missing plan, empty plan, directory path, unreadable file, invalid extension, valid Markdown, and `--cwd` path handling.
+- Unit test config precedence, `.jjrc` loading, env var handling, and redaction helpers.
+- Unit test planner provider selection for injected planner, OpenAI with API key, and Codex CLI fallback without API key.
+- Unit test manifest required fields, artifact path consistency, skipped-step markers, status transitions, and no secret leakage.
+- Integration test `jj run plan.md --dry-run` in a temp git repo and assert run-local artifacts exist while workspace docs are unchanged.
+- Integration test no-git behavior: default failure and `--allow-no-git` success with manifest metadata.
+- Integration test non-dry-run orchestration using fake planner, fake implementer, and fake evaluator.
+- HTTP tests for dashboard root, empty runs, successful runs, failed runs, corrupt manifest fixtures, missing files, artifact links, and redacted output.
+- Security regression tests that inject fake key/token/password values into env, `.jjrc`, fake planner output, fake Codex logs, and manifests, then assert raw secrets are absent everywhere.
+- Run `gofmt` on changed Go files.
+- Run `go test ./...`, `go vet ./...`, and `go build -o jj ./cmd/jj`.
 
 ## Manual Verification
-- Run `go test ./...`.
-- Run `go vet ./...`.
-- Run `go build -o jj ./cmd/jj`.
-- In a temporary git repo, run `./jj run plan.md --dry-run` and confirm `.jj/runs/<run-id>/` contains `input.md`, planning JSON, generated SPEC/TASK, and manifest while workspace docs remain unchanged.
-- Run without `OPENAI_API_KEY` and confirm Codex CLI fallback selection or clear missing-Codex failure is recorded.
-- Run a fake or controlled non-dry-run path and confirm Codex artifacts, git status/diff, EVAL, and final manifest are present.
-- Start `./jj serve --cwd .` and inspect README/docs/run artifacts while confirming secret fixtures are redacted.
-- Confirm the first `jj serve` screen is a dashboard and not only a raw document list.
-- Confirm the dashboard shows current TASK status, running/recent runs, latest evaluation status, failed/risky items, and links to docs and artifacts.
-- Confirm the dashboard shows a TASK 상태 리스트 page, a block diagram, a lit active-state block, and `Continue to Next Turn`/`Finish Turn` controls.
-- Confirm the block diagram includes a commit block.
-- Confirm selecting `Finish Turn` completes the eligible commit step and prevents movement into the next turn.
-- Confirm failed turns do not create an automatic commit and remain reviewable through manifest/artifacts.
+- Run `jj run plan.md --dry-run` and inspect `.jj/runs/<run-id>/input.md`, planning outputs, `docs/SPEC.md`, `docs/TASK.md`, and `manifest.json`.
+- Confirm dry-run did not create or modify workspace `docs/SPEC.md` or `docs/TASK.md`.
+- Run without `OPENAI_API_KEY` and confirm the manifest records Codex CLI fallback planning.
+- Run in a non-git temp directory and confirm failure without `--allow-no-git` and success with it.
+- Run a non-dry-run with fakes or a controlled Codex binary and confirm Codex events, summary, git status, git diff, evaluation, and manifest updates.
+- Start `jj serve --cwd .` and confirm the root page is the dashboard with TASK state, recent runs, evaluation state, risks, failures, next actions, and links to artifacts.
+- Check served pages and artifacts for absence of raw secret values.
 
 ## Done Criteria
-- Required SPEC and TASK documents are generated into run artifacts for dry-run and also written to workspace docs for non-dry-run.
-- Planner provider fallback order is implemented and recorded in manifest.
-- Dry-run is harmless to workspace docs and skips Codex implementation.
-- Non-dry-run captures Codex evidence, git status/diff, EVAL, and manifest results.
-- No raw secrets appear in manifests, logs, errors, Codex diagnostics, or served HTML in tests.
-- `jj serve` provides a dashboard-first home page, expected artifact navigation, and path traversal blocking.
-- The dashboard exposes current TASK state, progress, recent results, and next actions before lower-level artifact lists.
-- The dashboard exposes TASK/status list, block diagram, active-state highlighting, and turn controls.
-- Eligible `PASS` and `PARTIAL` non-dry-run turns include a final commit step.
-- Failed turns skip automatic commit and preserve their state through `.jj/runs/<run-id>/manifest.json` and artifacts.
-- `Finish Turn` reliably stops next-turn progression after the eligible commit step, while `Continue to Next Turn` allows the workflow to remain eligible for a next turn after the eligible commit step.
-- All behavior changes are reflected in the relevant documents before the work is considered done.
-- Git-required and `--allow-no-git` behavior are covered.
-- All required tests and verification commands pass.
+- The required SPEC/TASK generation, provider fallback, dry-run behavior, non-dry-run evidence capture, evaluation, manifest, and dashboard flows are implemented.
+- Manifest status accurately reflects completed, skipped, failed, and partial steps.
+- Dashboard root is task/run-status focused and tolerates missing or corrupt artifacts.
+- Secret redaction is applied consistently before persistence and rendering.
+- Tests cover the major contracts and failure modes.
+- `go test ./...`, `go vet ./...`, and `go build -o jj ./cmd/jj` pass.

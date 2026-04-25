@@ -12,16 +12,25 @@ import (
 const FileName = ".jjrc"
 
 type File struct {
+	CWD             string `json:"cwd"`
+	RunID           string `json:"run_id"`
 	OpenAIAPIKeyEnv string `json:"openai_api_key_env"`
 	OpenAIModel     string `json:"openai_model"`
 	CodexModel      string `json:"codex_model"`
 	CodexBin        string `json:"codex_bin"`
+	CodexBinary     string `json:"codex_binary"`
 	PlanningAgents  *int   `json:"planning_agents"`
+	SpecPath        string `json:"spec_path"`
+	TaskPath        string `json:"task_path"`
+	EvalPath        string `json:"eval_path"`
 	SpecDoc         string `json:"spec_doc"`
 	TaskDoc         string `json:"task_doc"`
 	EvalDoc         string `json:"eval_doc"`
 	DryRun          *bool  `json:"dry_run"`
 	AllowNoGit      *bool  `json:"allow_no_git"`
+	ServeAddr       string `json:"serve_addr"`
+	ServeHost       string `json:"serve_host"`
+	ServePort       *int   `json:"serve_port"`
 
 	Path string `json:"-"`
 }
@@ -73,7 +82,6 @@ func Load(path string) (File, error) {
 	defer f.Close()
 
 	dec := json.NewDecoder(f)
-	dec.DisallowUnknownFields()
 	var cfg File
 	if err := dec.Decode(&cfg); err != nil {
 		return File{}, fmt.Errorf("parse config file %s: %w", path, err)

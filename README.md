@@ -16,7 +16,7 @@
 6. git diff/status와 Codex 결과를 평가해 `docs/EVAL.md`를 만듭니다.
 7. 모든 입력, 출력, 이벤트, manifest를 `.jj/runs/<run-id>/`에 저장합니다.
 
-`jj serve`의 첫 화면은 대시보드입니다. 현재 `docs/TASK.md` 상태, 진행 중인 run, 최근 실행 결과, 평가 상태를 먼저 보여주고, 생성된 README, TASK/SPEC/EVAL, manifest, planning artifact로 이동할 수 있게 합니다.
+`jj serve`의 첫 화면은 대시보드입니다. 현재 `docs/TASK.md` 상태, 진행 중인 run, 최근 실행 결과, 평가 상태를 먼저 보여주고, 생성된 README, TASK/SPEC/EVAL, manifest, planning artifact로 이동할 수 있게 합니다. 대시보드는 `plan.md`, `README.md`, `docs/SPEC.md`, `docs/TASK.md` 발견 여부를 Ready/Missing 상태로 표시하고, 로컬 브라우저에서 run을 시작할 수 있습니다.
 
 `jj`의 개발 원칙은 문서 기반입니다. 기능 변경은 `plan.md`, `docs/SPEC.md`, `docs/TASK.md`, README 같은 문서에서 시작하고, 구현 후에도 문서와 실제 동작이 일치해야 합니다.
 
@@ -73,6 +73,8 @@ go build -o jj ./cmd/jj
 
 dry-run은 plan 읽기, git 확인, planning, merge, run directory 안의 `docs/SPEC.md`/`docs/TASK.md`와 manifest 생성을 수행합니다. 대상 워크트리에는 `docs/SPEC.md`/`docs/TASK.md`를 쓰지 않고, 구현 Codex와 post-Codex 평가는 실행하지 않습니다. 다만 `OPENAI_API_KEY`가 없으면 기획/병합을 위해 Codex CLI가 실행될 수 있습니다.
 
+dry-run manifest의 최종 status는 `dry_run_complete`입니다.
+
 ## 명령
 
 ### `jj run <plan.md>`
@@ -82,26 +84,37 @@ dry-run은 plan 읽기, git 확인, planning, merge, run directory 안의 `docs/
 ```text
 --cwd DIR              대상 저장소 디렉터리
 --run-id ID            .jj/runs/<run-id>에 사용할 실행 ID
---agents N             병렬 기획 에이전트 수, 기본값 3
---planning-agents N    --agents의 이전 이름
+--planner-agents N     병렬 기획 에이전트 수, 기본값 3
+--agent-count N        --planner-agents의 alias
+--agents N             --planner-agents의 alias
+--planning-agents N    --planner-agents의 alias
 --openai-model MODEL   기획 및 평가에 사용할 OpenAI 모델
 --codex-model MODEL    Codex CLI에 넘길 모델
---spec-doc NAME        docs/ 아래에 쓸 SPEC 문서명, 기본값 SPEC.md
---task-doc NAME        docs/ 아래에 쓸 TASK 문서명, 기본값 TASK.md
---eval-doc NAME        docs/ 아래에 쓸 EVAL 문서명, 기본값 EVAL.md
+--codex-bin PATH       Codex CLI 바이너리 경로
+--codex-binary PATH    --codex-bin의 alias
+--spec-path PATH       workspace-relative SPEC 경로, 기본값 docs/SPEC.md
+--task-path PATH       workspace-relative TASK 경로, 기본값 docs/TASK.md
+--eval-path PATH       workspace-relative EVAL 경로, 기본값 docs/EVAL.md
+--spec-doc NAME        --spec-path의 legacy alias
+--task-doc NAME        --task-path의 legacy alias
+--eval-doc NAME        --eval-path의 legacy alias
 --allow-no-git         git 저장소가 아닌 곳에서도 실행
 --dry-run              기획 산출물만 생성
 ```
 
-문서명 옵션은 파일명만 받습니다. 예를 들어 `--spec-doc PRODUCT_SPEC.md`는 `docs/PRODUCT_SPEC.md`를 생성합니다. `docs/SPEC.md`, `../SPEC.md`, `/tmp/SPEC.md`처럼 경로가 포함된 값은 거부됩니다.
+문서 경로 옵션은 workspace-relative Markdown 경로만 받습니다. 예를 들어 `--spec-path docs/PRODUCT_SPEC.md`는 workspace에 `docs/PRODUCT_SPEC.md`를 생성하고, `--spec-path SPEC.md`는 workspace 루트의 `SPEC.md`를 생성합니다. `../SPEC.md`, `/tmp/SPEC.md`, `docs/../SPEC.md`처럼 workspace를 벗어나거나 정리되지 않은 값은 거부됩니다. Legacy `--spec-doc PRODUCT_SPEC.md` 값은 `docs/PRODUCT_SPEC.md`로 해석됩니다.
 
 기본 planning agent:
 
 - `product_spec`
-- `implementation_tasking`
-- `qa_evaluation`
+- `implementation_task`
+- `qa_eval`
 
 기본 3개 중 일부가 실패해도 최소 1개 이상 성공하면 merge를 시도합니다. 0개가 성공하면 실행은 실패합니다.
+
+planner가 비어 있거나 필수 draft/merge 필드를 빠뜨린 경우에는 구현 단계로 넘어가지 않고 `failed` manifest를 남깁니다.
+
+종료 코드는 validation 오류가 `2`, 외부 실행 또는 pipeline 실패가 `1`, 성공이 `0`입니다.
 
 ### `jj serve`
 
@@ -110,6 +123,8 @@ dry-run은 plan 읽기, git 확인, planning, merge, run directory 안의 `docs/
 ```text
 --cwd DIR       문서와 .jj/runs를 읽을 디렉터리
 --addr ADDR     서버 listen 주소, 기본값 127.0.0.1:7331
+--host HOST     --addr 대신 사용할 host
+--port PORT     --addr 대신 사용할 port
 --run-id ID     기본으로 강조할 run id
 ```
 
@@ -122,6 +137,10 @@ dry-run은 plan 읽기, git 확인, planning, merge, run directory 안의 `docs/
 
 대시보드는 현재 `docs/TASK.md` 요약, 진행 중인 run, 최근 run status, 평가 결과, 실패/위험 항목, 다음 액션을 먼저 보여주는 화면입니다. 문서 목록과 artifact 상세 화면은 대시보드에서 들어가는 보조 화면입니다.
 
+대시보드의 Web Run 화면에서는 브라우저에서 `jj run`을 시작할 수 있습니다. 기본은 안전한 dry-run입니다. full-run은 `confirm full-run workspace mutation` 확인이 필요하고, 로컬 주소(`127.0.0.1` 또는 `localhost`)에서만 허용됩니다.
+
+`auto continue turns`를 켜면 Web Run이 여러 턴을 자동으로 이어갑니다. 각 턴은 이전 턴의 `docs/SPEC.md`, `docs/TASK.md`, `docs/EVAL.md`, manifest, git diff summary, Codex summary를 다음 턴의 추가 기획 컨텍스트로 사용합니다. 반복은 평가가 `PASS`가 되거나 실패하거나 `max turns`에 도달하거나 사용자가 `Finish Turn`을 눌렀을 때 멈춥니다. 자동 턴 반복은 full-run에서만 지원되며 시작 시 git workspace가 깨끗해야 합니다. 자동 반복 턴은 성공 또는 부분성공이면 마지막에 `git commit`을 생성합니다.
+
 ## 설정
 
 환경 변수:
@@ -130,10 +149,17 @@ dry-run은 plan 읽기, git 확인, planning, merge, run directory 안의 `docs/
 OPENAI_API_KEY       있으면 OpenAI 기획 및 평가 API 호출에 사용
 JJ_OPENAI_MODEL      기본 OpenAI 모델 override
 JJ_CODEX_BIN         Codex 바이너리 경로 override
+JJ_CODEX_BINARY      JJ_CODEX_BIN의 alias
 JJ_CODEX_MODEL       Codex 모델 override
+JJ_SPEC_PATH         SPEC 경로 override
+JJ_TASK_PATH         TASK 경로 override
+JJ_EVAL_PATH         EVAL 경로 override
+JJ_SERVE_ADDR        serve listen 주소 override
+JJ_SERVE_HOST        --addr 대신 조합할 serve host
+JJ_SERVE_PORT        --addr 대신 조합할 serve port
 ```
 
-`.jjrc` 설정 파일도 사용할 수 있습니다. `jj`는 명령을 실행한 현재 디렉터리에서 시작해 상위 디렉터리로 올라가며 첫 번째 `.jjrc`를 자동으로 읽습니다. `--cwd`는 대상 workspace만 지정하며 `.jjrc` 탐색 시작점은 바꾸지 않습니다.
+`.jjrc` 설정 파일도 사용할 수 있습니다. `jj`는 선택된 대상 workspace에서 먼저 `.jjrc`를 찾고, 없으면 명령을 실행한 디렉터리에서 상위 디렉터리로 올라가며 첫 번째 `.jjrc`를 자동으로 읽습니다. `--cwd`를 지정하면 그 workspace의 `.jjrc`가 우선합니다.
 
 ```json
 {
@@ -141,16 +167,20 @@ JJ_CODEX_MODEL       Codex 모델 override
   "openai_model": "gpt-5.5",
   "codex_model": "gpt-5.5",
   "codex_bin": "codex",
+  "codex_binary": "codex",
   "planning_agents": 3,
-  "spec_doc": "SPEC.md",
-  "task_doc": "TASK.md",
-  "eval_doc": "EVAL.md",
+  "spec_path": "docs/SPEC.md",
+  "task_path": "docs/TASK.md",
+  "eval_path": "docs/EVAL.md",
   "dry_run": false,
-  "allow_no_git": false
+  "allow_no_git": false,
+  "serve_addr": "127.0.0.1:7331"
 }
 ```
 
 `.jjrc`에는 실제 API key를 저장하지 않습니다. `openai_api_key_env`에는 API key가 들어 있는 환경 변수 이름만 적습니다.
+
+알 수 없는 `.jjrc` 필드는 앞으로의 호환성을 위해 무시하지만, JSON 문법 오류나 여러 JSON 객체가 들어 있는 파일은 명확한 오류로 실패합니다.
 
 설정 우선순위:
 
@@ -172,19 +202,22 @@ JJ_CODEX_MODEL       Codex 모델 override
 ```text
 input.md
 planning/product_spec.json
-planning/implementation_tasking.json
-planning/qa_evaluation.json
+planning/implementation_task.json
+planning/qa_eval.json
+planning/planning.json
 planning/merge.json
-planning/eval.json
+planning/evaluation.json
 docs/SPEC.md
 docs/TASK.md
-codex-events.jsonl
-codex-summary.md
-git-diff.patch
-git-diff-summary.txt
+codex/events.jsonl
+codex/summary.md
+git/diff.patch
+git/diff-summary.txt
+git/status.before.txt
+git/status.after.txt
 docs/EVAL.md
-git-baseline.json
-git-status.txt
+git/baseline.json
+git/status.txt
 manifest.json
 ```
 
@@ -199,7 +232,7 @@ planning/eval.events.jsonl
 planning/eval.last-message.txt
 ```
 
-dry-run에서도 `.jj/runs/<run-id>/docs/SPEC.md`와 `.jj/runs/<run-id>/docs/TASK.md`는 생성됩니다. non-dry-run에서는 대상 워크트리에도 `docs/SPEC.md`와 `docs/TASK.md`가 생성됩니다.
+dry-run에서도 `.jj/runs/<run-id>/docs/SPEC.md`, `.jj/runs/<run-id>/docs/TASK.md`, `.jj/runs/<run-id>/docs/EVAL.md`는 생성됩니다. dry-run EVAL은 구현과 테스트가 의도적으로 건너뛰어졌음을 `SKIPPED`로 기록하고, workspace 문서는 수정하지 않습니다. non-dry-run에서는 대상 워크트리에도 `docs/SPEC.md`, `docs/TASK.md`, `docs/EVAL.md`가 생성됩니다.
 
 run-id를 지정하지 않으면 다음 형식으로 생성됩니다.
 
@@ -217,8 +250,9 @@ run-id는 `a-z A-Z 0-9 . _ -`만 허용합니다. 이미 같은 run directory가
 {
   "schema_version": "1",
   "run_id": "...",
-  "status": "success|partial|failed|cancelled",
+  "status": "planning|dry_run_complete|implementing|evaluating|complete|partial_failed|failed",
   "dry_run": false,
+  "allow_no_git": false,
   "planner_provider": "openai|codex|injected",
   "git": {
     "is_repo": true,
@@ -227,7 +261,12 @@ run-id는 `a-z A-Z 0-9 . _ -`만 허용합니다. 이미 같은 run directory가
     "head": "...",
     "initial_status": "...",
     "final_status": "...",
-    "diff_path": "git-diff.patch"
+    "dirty": false,
+    "no_git": false,
+    "status_before_path": "git/status.before.txt",
+    "status_after_path": "git/status.after.txt",
+    "diff_path": "git/diff.patch",
+    "warnings": []
   },
   "config": {
     "planning_agents": 3,
@@ -238,24 +277,34 @@ run-id는 `a-z A-Z 0-9 . _ -`만 허용합니다. 이미 같은 run directory가
     "openai_api_key_env": "OPENAI_API_KEY",
     "openai_api_key_present": false,
     "allow_no_git": false,
-    "spec_doc": "SPEC.md",
-    "task_doc": "TASK.md",
-    "eval_doc": "EVAL.md"
+    "spec_path": "docs/SPEC.md",
+    "task_path": "docs/TASK.md",
+    "eval_path": "docs/EVAL.md"
   },
   "planning": {
     "agents": []
   },
   "codex": {
     "ran": true,
+    "skipped": false,
     "exit_code": 0,
     "duration_ms": 0
   },
   "evaluation": {
     "ran": true,
+    "skipped": false,
+    "status": "PASS|PARTIAL|FAIL|skipped",
     "result": "PASS|PARTIAL|FAIL",
-    "score": 0
+    "score": 0,
+    "eval_path": "docs/EVAL.md",
+    "risks": [],
+    "recommended_next_action": "..."
   },
-  "errors": []
+  "risks": [],
+  "risk_count": 0,
+  "errors": [],
+  "failure_phase": "...",
+  "failure_message": "..."
 }
 ```
 

@@ -51,8 +51,12 @@ func NewRunID(now time.Time) string {
 }
 
 func ValidateRunID(runID string) error {
-	if strings.TrimSpace(runID) == "" {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
 		return errors.New("run id is required")
+	}
+	if runID == "." || runID == ".." {
+		return fmt.Errorf("run id %q is reserved", runID)
 	}
 	if !runIDPattern.MatchString(runID) {
 		return fmt.Errorf("run id %q may only contain letters, numbers, dots, underscores, and dashes", runID)
@@ -70,8 +74,10 @@ func (s Store) Init() error {
 		}
 		return fmt.Errorf("create run directory: %w", err)
 	}
-	if err := os.Mkdir(filepath.Join(s.RunDir, "planning"), 0o755); err != nil {
-		return fmt.Errorf("create artifact directory: %w", err)
+	for _, dir := range []string{"planning", "docs", "codex", "git"} {
+		if err := os.Mkdir(filepath.Join(s.RunDir, dir), 0o755); err != nil {
+			return fmt.Errorf("create artifact directory %s: %w", dir, err)
+		}
 	}
 	return nil
 }

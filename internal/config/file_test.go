@@ -72,15 +72,18 @@ func TestLoadRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsUnknownFields(t *testing.T) {
+func TestLoadIgnoresUnknownFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
-	if err := os.WriteFile(path, []byte(`{"openai_api_key": "sk-secret"}`), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"openai_api_key": "sk-secret", "codex_binary": "/tmp/codex"}`), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
-	_, err := Load(path)
-	if err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("expected unknown field error, got %v", err)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unknown fields should be ignored, got %v", err)
+	}
+	if cfg.CodexBinary != "/tmp/codex" {
+		t.Fatalf("expected codex_binary to load, got %#v", cfg)
 	}
 }
 

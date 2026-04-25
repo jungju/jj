@@ -112,6 +112,67 @@ func CaptureGitDiff(ctx context.Context, cwd string, available bool, runners ...
 	}, nil
 }
 
+func HasNonJJDirtyStatus(status string) bool {
+	for _, line := range strings.Split(status, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		path := line
+		if len(line) > 3 {
+			path = strings.TrimSpace(line[3:])
+		}
+		if path == ".jj" || strings.HasPrefix(path, ".jj/") || strings.Contains(path, " -> .jj/") {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func commitAll(ctx context.Context, cwd, message string, available bool, runners ...GitRunner) (ManifestCommit, error) {
+	result := ManifestCommit{
+		Message: message,
+		Status:  "skipped",
+	}
+	if !available {
+		result.Error = "git unavailable"
+		return result, errors.New("git unavailable")
+	}
+	runner := chooseGitRunner(runners...)
+	if _, err := runner.Output(ctx, cwd, "add", "--all"); err != nil {
+		result.Ran = true
+		result.Status = "failed"
+		result.Error = err.Error()
+		return result, err
+	}
+	status, err := runner.Output(ctx, cwd, "status", "--short")
+	if err != nil {
+		result.Ran = true
+		result.Status = "failed"
+		result.Error = err.Error()
+		return result, err
+	}
+	if strings.TrimSpace(status) == "" {
+		return result, nil
+	}
+	result.Ran = true
+	if _, err := runner.Output(ctx, cwd, "commit", "-m", message); err != nil {
+		result.Status = "failed"
+		result.Error = err.Error()
+		return result, err
+	}
+	sha, err := runner.Output(ctx, cwd, "rev-parse", "HEAD")
+	if err != nil {
+		result.Status = "failed"
+		result.Error = err.Error()
+		return result, err
+	}
+	result.Status = "success"
+	result.SHA = strings.TrimSpace(sha)
+	return result, nil
+}
+
 func (d GitDiff) Markdown() string {
 	return fmt.Sprintf("## git status --short\n%s\n\n## git diff --stat\n%s\n\n## git diff --name-status\n%s\n\n## git diff --binary\n%s\n", emptyAsNone(d.Status), emptyAsNone(d.Stat), emptyAsNone(d.NameStatus), emptyAsNone(d.Full))
 }

@@ -28,6 +28,13 @@ func TestRedactRemovesBearerTokens(t *testing.T) {
 	}
 }
 
+func TestRedactRemovesAuthorizationHeaderValues(t *testing.T) {
+	got := Redact("Authorization: Basic dXNlcjpwYXNz\nnext: visible")
+	if strings.Contains(got, "dXNlcjpwYXNz") || !strings.Contains(got, "next: visible") {
+		t.Fatalf("authorization header was not redacted correctly: %q", got)
+	}
+}
+
 func TestRedactRemovesSecretKeyValuePairs(t *testing.T) {
 	input := `api_key: abcdefghijklmnop token="tokensecret" password=hunter2 {"api_key":"jsonsecret"}`
 	got := Redact(input)

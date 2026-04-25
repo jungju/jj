@@ -1,6 +1,6 @@
 .jj/
 .jjrc.local
-jj
+/jj
 *.test
 playground/workspace/.jj/
 playground/workspace/.git/

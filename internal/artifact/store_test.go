@@ -60,7 +60,7 @@ func TestStoreInitRejectsExistingRunDir(t *testing.T) {
 }
 
 func TestValidateRunIDRejectsPathTraversal(t *testing.T) {
-	for _, runID := range []string{"../foo", "/foo", "foo/bar", `foo\bar`} {
+	for _, runID := range []string{".", "..", "../foo", "/foo", "foo/bar", `foo\bar`} {
 		if err := ValidateRunID(runID); err == nil {
 			t.Fatalf("expected %q to fail validation", runID)
 		}

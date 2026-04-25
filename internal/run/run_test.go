@@ -61,14 +61,14 @@ func TestExecuteRejectsInvalidDocumentName(t *testing.T) {
 		RunID:          "invalid-doc",
 		PlanningAgents: 1,
 		OpenAIModel:    "test-model",
-		SpecDoc:        "docs/SPEC.md",
+		SpecDoc:        "../SPEC.md",
 		AllowNoGit:     true,
 		DryRun:         true,
 		Stdout:         io.Discard,
 		Planner:        &fakePlanner{},
 	})
-	if err == nil || !strings.Contains(err.Error(), "spec-doc must be a file name") {
-		t.Fatalf("expected spec-doc validation error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "spec-path") {
+		t.Fatalf("expected spec-path validation error, got %v", err)
 	}
 }
 
@@ -104,20 +104,68 @@ func TestExecuteDryRunCreatesPlanningArtifactsOnly(t *testing.T) {
 	}
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "dry-run", "docs", "SPEC.md"))
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "dry-run", "docs", "TASK.md"))
+	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "dry-run", "docs", "EVAL.md"))
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "dry-run", "planning", "product_spec.json"))
 	assertNoFile(t, filepath.Join(dir, "SPEC.md"))
 	assertNoFile(t, filepath.Join(dir, "TASK.md"))
 	assertNoFile(t, filepath.Join(dir, "docs", "SPEC.md"))
 	assertNoFile(t, filepath.Join(dir, "docs", "TASK.md"))
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "dry-run", "manifest.json"))
-	if manifest.Status != "success" || !manifest.DryRun {
+	if manifest.Status != StatusPlanned || !manifest.DryRun {
 		t.Fatalf("unexpected dry-run manifest: %#v", manifest)
+	}
+	if manifest.RiskCount == 0 {
+		t.Fatalf("expected risk count in manifest: %#v", manifest)
 	}
 	if !manifest.NoGitMode || !manifest.Config.AllowNoGit {
 		t.Fatalf("expected no-git mode to be recorded: %#v", manifest)
 	}
-	if manifest.Git.BaselinePath != "git-baseline.json" || manifest.Artifacts["git_baseline"] != "git-baseline.json" {
+	if manifest.Git.BaselinePath != "git/baseline.json" || manifest.Artifacts["git_baseline"] != "git/baseline.json" {
 		t.Fatalf("expected git baseline artifact in manifest: %#v", manifest)
+	}
+	if manifest.Git.StatusBeforePath != "git/status.before.txt" || manifest.Artifacts["git_status_before"] != "git/status.before.txt" {
+		t.Fatalf("expected git status.before artifact in manifest: %#v", manifest)
+	}
+	if !manifest.Evaluation.Ran || manifest.Evaluation.Skipped || manifest.Evaluation.Result != "SKIPPED" || manifest.Evaluation.EvalPath != "docs/EVAL.md" {
+		t.Fatalf("dry-run evaluation should produce a skipped report, got %#v", manifest.Evaluation)
+	}
+	planning := readPlanning(t, filepath.Join(dir, ".jj", "runs", "dry-run", "planning", "planning.json"))
+	if planning.Spec == "" || planning.Task == "" || len(planning.AcceptanceCriteria) == 0 || len(planning.TestGuidance) == 0 {
+		t.Fatalf("normalized planning json missing top-level fields: %#v", planning)
+	}
+}
+
+func TestExecuteWritesContinuationInputArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	writePlan(t, dir, "plan.md")
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:              filepath.Join(dir, "plan.md"),
+		CWD:                   dir,
+		RunID:                 "continuation",
+		PlanningAgents:        1,
+		OpenAIModel:           "test-model",
+		AllowNoGit:            true,
+		DryRun:                true,
+		AdditionalPlanContext: "Previous Manifest: keep going",
+		Stdout:                io.Discard,
+		Planner:               &fakePlanner{},
+	})
+	if err != nil {
+		t.Fatalf("execute continuation dry run: %v", err)
+	}
+	runDir := filepath.Join(dir, ".jj", "runs", "continuation")
+	input := readFile(t, filepath.Join(runDir, "input.md"))
+	original := readFile(t, filepath.Join(runDir, "input-original.md"))
+	contextInput := readFile(t, filepath.Join(runDir, "input-context.md"))
+	if !strings.Contains(input, "jj Continuation Context") || !strings.Contains(input, "Previous Manifest") {
+		t.Fatalf("input.md missing continuation context:\n%s", input)
+	}
+	if strings.Contains(original, "Previous Manifest") {
+		t.Fatalf("input-original.md should remain unchanged:\n%s", original)
+	}
+	if !strings.Contains(contextInput, "Previous Manifest") {
+		t.Fatalf("input-context.md missing context:\n%s", contextInput)
 	}
 }
 
@@ -150,12 +198,19 @@ func TestExecuteEndToEndWithFakes(t *testing.T) {
 	assertFileExists(t, filepath.Join(dir, "docs", "TASK.md"))
 	assertFileExists(t, filepath.Join(dir, "docs", "EVAL.md"))
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "full", "docs", "EVAL.md"))
-	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "full", "codex-events.jsonl"))
+	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "full", "codex", "events.jsonl"))
+	evalData, err := os.ReadFile(filepath.Join(dir, ".jj", "runs", "full", "docs", "EVAL.md"))
+	if err != nil {
+		t.Fatalf("read eval: %v", err)
+	}
+	if !strings.Contains(string(evalData), "SPEC Requirement Results") || !strings.Contains(string(evalData), "TASK Item Results") {
+		t.Fatalf("evaluation should classify spec and task items:\n%s", evalData)
+	}
 	if !strings.Contains(codexRunner.lastRequest.Prompt, "docs/SPEC.md") || !strings.Contains(codexRunner.lastRequest.Prompt, "docs/TASK.md") {
 		t.Fatalf("codex prompt should reference docs paths:\n%s", codexRunner.lastRequest.Prompt)
 	}
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "full", "manifest.json"))
-	if manifest.SchemaVersion != "1" || manifest.Status != "success" || manifest.Evaluation.Result != "PASS" || manifest.Evaluation.Score != 90 {
+	if manifest.SchemaVersion != "1" || manifest.Status != StatusCompleted || manifest.Evaluation.Result != "PASS" || manifest.Evaluation.Score != 90 {
 		t.Fatalf("unexpected manifest: %#v", manifest)
 	}
 	if manifest.Artifacts["spec"] != "docs/SPEC.md" || manifest.Artifacts["task"] != "docs/TASK.md" || manifest.Artifacts["eval"] != "docs/EVAL.md" {
@@ -166,6 +221,115 @@ func TestExecuteEndToEndWithFakes(t *testing.T) {
 	}
 	if manifest.Artifacts["eval_worktree"] != "docs/EVAL.md" || manifest.Config.OpenAIKeySet || manifest.Config.OpenAIKeyEnv == "" {
 		t.Fatalf("unexpected manifest metadata: %#v", manifest)
+	}
+	if manifest.Git.StatusAfterPath != "git/status.after.txt" || manifest.Artifacts["git_status_after"] != "git/status.after.txt" {
+		t.Fatalf("expected git status.after artifact in manifest: %#v", manifest)
+	}
+	if manifest.Codex.EventsPath != "codex/events.jsonl" || manifest.Codex.SummaryPath != "codex/summary.md" || manifest.Codex.Summary == "" {
+		t.Fatalf("expected codex evidence in manifest: %#v", manifest.Codex)
+	}
+	if len(manifest.Risks) == 0 || manifest.Risks[0] != "risk" {
+		t.Fatalf("expected planning risk summary in manifest, got %#v", manifest.Risks)
+	}
+}
+
+func TestExecuteCommitOnSuccessCommitsChanges(t *testing.T) {
+	dir := initGit(t)
+	runGit(t, dir, "config", "user.email", "jj@example.com")
+	runGit(t, dir, "config", "user.name", "jj test")
+	writePlan(t, dir, "plan.md")
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".jj/\n"), 0o644); err != nil {
+		t.Fatalf("write gitignore: %v", err)
+	}
+	runGit(t, dir, "add", "--all")
+	runGit(t, dir, "commit", "-m", "initial")
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:        filepath.Join(dir, "plan.md"),
+		CWD:             dir,
+		RunID:           "commit-turn",
+		PlanningAgents:  1,
+		OpenAIModel:     "test-model",
+		Stdout:          io.Discard,
+		Planner:         &fakePlanner{},
+		CodexRunner:     &fakeCodexRunner{mutate: true},
+		CommitOnSuccess: true,
+		CommitMessage:   "jj: turn commit-turn",
+	})
+	if err != nil {
+		t.Fatalf("execute with auto commit: %v", err)
+	}
+	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "commit-turn", "manifest.json"))
+	if !manifest.Commit.Ran || manifest.Commit.Status != "success" || manifest.Commit.SHA == "" || manifest.Commit.Message != "jj: turn commit-turn" {
+		t.Fatalf("expected successful commit in manifest: %#v", manifest.Commit)
+	}
+	log := runGitOutput(t, dir, "log", "-1", "--pretty=%s")
+	if strings.TrimSpace(log) != "jj: turn commit-turn" {
+		t.Fatalf("unexpected commit message: %q", log)
+	}
+	status := runGitOutput(t, dir, "status", "--short")
+	if strings.TrimSpace(status) != "" {
+		t.Fatalf("expected clean git status after commit, got %q", status)
+	}
+}
+
+func TestExecuteCommitOnSuccessRejectsDirtyWorkspace(t *testing.T) {
+	dir := initGit(t)
+	runGit(t, dir, "config", "user.email", "jj@example.com")
+	runGit(t, dir, "config", "user.name", "jj test")
+	writePlan(t, dir, "plan.md")
+	runGit(t, dir, "add", "--all")
+	runGit(t, dir, "commit", "-m", "initial")
+	if err := os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:        filepath.Join(dir, "plan.md"),
+		CWD:             dir,
+		RunID:           "dirty-commit-turn",
+		PlanningAgents:  1,
+		OpenAIModel:     "test-model",
+		Stdout:          io.Discard,
+		Planner:         &fakePlanner{},
+		CodexRunner:     &fakeCodexRunner{},
+		CommitOnSuccess: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "clean git working tree") {
+		t.Fatalf("expected dirty workspace rejection, got %v", err)
+	}
+}
+
+func TestExecutePathModeWritesWorkspaceRelativeRootDocs(t *testing.T) {
+	dir := initGit(t)
+	writePlan(t, dir, "plan.md")
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:        filepath.Join(dir, "plan.md"),
+		CWD:             dir,
+		RunID:           "root-docs",
+		PlanningAgents:  1,
+		OpenAIModel:     "test-model",
+		SpecDoc:         "SPEC.md",
+		TaskDoc:         "TASK.md",
+		EvalDoc:         "EVAL.md",
+		SpecDocPathMode: true,
+		TaskDocPathMode: true,
+		EvalDocPathMode: true,
+		Stdout:          io.Discard,
+		Planner:         &fakePlanner{},
+		CodexRunner:     &fakeCodexRunner{},
+	})
+	if err != nil {
+		t.Fatalf("execute root docs: %v", err)
+	}
+	assertFileExists(t, filepath.Join(dir, "SPEC.md"))
+	assertFileExists(t, filepath.Join(dir, "TASK.md"))
+	assertFileExists(t, filepath.Join(dir, "EVAL.md"))
+	assertNoFile(t, filepath.Join(dir, "docs", "SPEC.md"))
+	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "root-docs", "manifest.json"))
+	if manifest.Workspace.SpecPath != "SPEC.md" || manifest.Artifacts["spec_worktree"] != "SPEC.md" {
+		t.Fatalf("expected root workspace paths in manifest: %#v", manifest)
 	}
 }
 
@@ -193,12 +357,12 @@ func TestExecuteUsesCustomDocumentNames(t *testing.T) {
 	assertFileExists(t, filepath.Join(dir, "docs", "PRODUCT.md"))
 	assertFileExists(t, filepath.Join(dir, "docs", "WORK.md"))
 	assertFileExists(t, filepath.Join(dir, "docs", "REVIEW.md"))
-	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "custom-docs", "docs", "REVIEW.md"))
+	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "custom-docs", "docs", "EVAL.md"))
 	if !strings.Contains(codexRunner.lastRequest.Prompt, "docs/PRODUCT.md") || !strings.Contains(codexRunner.lastRequest.Prompt, "docs/WORK.md") {
 		t.Fatalf("codex prompt should reference custom docs paths:\n%s", codexRunner.lastRequest.Prompt)
 	}
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "custom-docs", "manifest.json"))
-	if manifest.Artifacts["spec"] != "docs/PRODUCT.md" || manifest.Artifacts["task"] != "docs/WORK.md" || manifest.Artifacts["eval"] != "docs/REVIEW.md" {
+	if manifest.Artifacts["spec"] != "docs/SPEC.md" || manifest.Artifacts["task"] != "docs/TASK.md" || manifest.Artifacts["eval"] != "docs/EVAL.md" {
 		t.Fatalf("unexpected custom artifact paths: %#v", manifest.Artifacts)
 	}
 }
@@ -286,7 +450,7 @@ func TestExecuteDryRunWithoutOpenAIKeyUsesCodexPlanner(t *testing.T) {
 	}
 	manifestPath := filepath.Join(dir, ".jj", "runs", "codex-planner-dry-run", "manifest.json")
 	manifest := readManifest(t, manifestPath)
-	if manifest.Status != "success" || manifest.PlannerProvider != plannerProviderCodex || len(manifest.Errors) != 0 {
+	if manifest.Status != StatusPlanned || manifest.PlannerProvider != plannerProviderCodex || len(manifest.Errors) != 0 {
 		t.Fatalf("unexpected manifest: %#v", manifest)
 	}
 	if manifest.Config.CodexModel != "codex-test-model" {
@@ -325,7 +489,7 @@ func TestExecuteFullRunWithoutOpenAIKeyUsesCodexPlannerAndEvaluation(t *testing.
 		t.Fatalf("expected draft, merge, eval calls, got %d", got)
 	}
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "codex-planner-full", "manifest.json"))
-	if manifest.Status != "success" || manifest.PlannerProvider != plannerProviderCodex || manifest.Evaluation.Result != "PASS" {
+	if manifest.Status != StatusCompleted || manifest.PlannerProvider != plannerProviderCodex || manifest.Evaluation.Result != "PASS" {
 		t.Fatalf("unexpected manifest: %#v", manifest)
 	}
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "codex-planner-full", "docs", "EVAL.md"))
@@ -352,7 +516,7 @@ func TestExecuteCodexPlannerInvalidJSONFailsManifest(t *testing.T) {
 		t.Fatalf("expected codex draft parse error, got %v", err)
 	}
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "codex-planner-invalid-json", "manifest.json"))
-	if manifest.Status != "failed" || manifest.PlannerProvider != plannerProviderCodex {
+	if manifest.Status != StatusPlanningFailed || manifest.PlannerProvider != plannerProviderCodex {
 		t.Fatalf("unexpected manifest: %#v", manifest)
 	}
 }
@@ -386,6 +550,39 @@ func TestExecuteDryRunWithInjectedPlannerSkipsImplementationCodex(t *testing.T) 
 	assertNoFile(t, filepath.Join(dir, "docs", "TASK.md"))
 }
 
+func TestExecuteRedactsGitBaselineArtifact(t *testing.T) {
+	dir := t.TempDir()
+	writePlan(t, dir, "plan.md")
+	t.Setenv("JJ_TEST_SECRET", "super-secret-value")
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "redacted-git-baseline",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		AllowNoGit:     false,
+		DryRun:         true,
+		Stdout:         io.Discard,
+		Planner:        &fakePlanner{},
+		GitRunner: fakeGitRunner{
+			outputs: map[string]string{
+				"rev-parse --show-toplevel": dir,
+				"rev-parse HEAD":            "abc123",
+				"branch --show-current":     "feature/super-secret-value",
+				"status --short":            "",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute dry run: %v", err)
+	}
+	baseline := readFile(t, filepath.Join(dir, ".jj", "runs", "redacted-git-baseline", "git", "baseline.json"))
+	if strings.Contains(baseline, "super-secret-value") || !strings.Contains(baseline, "[redacted]") {
+		t.Fatalf("git baseline should be redacted:\n%s", baseline)
+	}
+}
+
 func TestExecuteRequiresGitUnlessAllowed(t *testing.T) {
 	dir := t.TempDir()
 	writePlan(t, dir, "plan.md")
@@ -407,7 +604,7 @@ func TestExecuteRequiresGitUnlessAllowed(t *testing.T) {
 func TestExecuteAllowsPartialPlannerFailure(t *testing.T) {
 	dir := t.TempDir()
 	writePlan(t, dir, "plan.md")
-	planner := &fakePlanner{failAgents: map[string]error{"qa_evaluation": errors.New("qa failed")}}
+	planner := &fakePlanner{failAgents: map[string]error{"qa_eval": errors.New("qa failed")}}
 
 	_, err := Execute(context.Background(), Config{
 		PlanPath:       filepath.Join(dir, "plan.md"),
@@ -425,12 +622,12 @@ func TestExecuteAllowsPartialPlannerFailure(t *testing.T) {
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "partial-planning", "manifest.json"))
 	var failed bool
 	for _, agent := range manifest.Planning.Agents {
-		if agent.Name == "qa_evaluation" && agent.Status == "failed" {
+		if agent.Name == "qa_eval" && agent.Status == "failed" {
 			failed = true
 		}
 	}
 	if !failed {
-		t.Fatalf("expected failed qa_evaluation agent in manifest: %#v", manifest.Planning.Agents)
+		t.Fatalf("expected failed qa_eval agent in manifest: %#v", manifest.Planning.Agents)
 	}
 }
 
@@ -453,8 +650,59 @@ func TestExecuteFailsWhenAllPlannersFail(t *testing.T) {
 		t.Fatalf("expected all planners failed error, got %v", err)
 	}
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "all-planners-fail", "manifest.json"))
-	if manifest.Status != "failed" {
+	if manifest.Status != StatusPlanningFailed {
 		t.Fatalf("expected failed manifest, got %q", manifest.Status)
+	}
+	if !manifest.Codex.Skipped || !manifest.Evaluation.Skipped || manifest.Evaluation.Result != "SKIPPED" {
+		t.Fatalf("expected unreached steps to be marked skipped: codex=%#v eval=%#v", manifest.Codex, manifest.Evaluation)
+	}
+}
+
+func TestExecuteRejectsIncompletePlannerDrafts(t *testing.T) {
+	dir := t.TempDir()
+	writePlan(t, dir, "plan.md")
+	planner := &fakePlanner{incompleteAgents: map[string]bool{"product_spec": true}}
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "incomplete-planner",
+		PlanningAgents: 1,
+		AllowNoGit:     true,
+		DryRun:         true,
+		Stdout:         io.Discard,
+		Planner:        planner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "all planning agents failed") {
+		t.Fatalf("expected incomplete planner failure, got %v", err)
+	}
+	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "incomplete-planner", "manifest.json"))
+	if manifest.Status != StatusPlanningFailed || manifest.FailurePhase != StatusPlanning {
+		t.Fatalf("unexpected manifest: %#v", manifest)
+	}
+}
+
+func TestExecuteRejectsEmptyMergedPlannerOutput(t *testing.T) {
+	dir := t.TempDir()
+	writePlan(t, dir, "plan.md")
+	planner := &fakePlanner{emptyMerge: true}
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "empty-merge",
+		PlanningAgents: 1,
+		AllowNoGit:     true,
+		DryRun:         true,
+		Stdout:         io.Discard,
+		Planner:        planner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "merged spec is required") {
+		t.Fatalf("expected merge validation failure, got %v", err)
+	}
+	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "empty-merge", "manifest.json"))
+	if manifest.Status != StatusPlanningFailed || manifest.FailurePhase != StatusPlanning {
+		t.Fatalf("unexpected manifest: %#v", manifest)
 	}
 }
 
@@ -472,12 +720,12 @@ func TestExecuteReportsCodexFailure(t *testing.T) {
 		Planner:        &fakePlanner{},
 		CodexRunner:    &fakeCodexRunner{err: errors.New("boom")},
 	})
-	if err != nil {
-		t.Fatalf("codex failure should continue to evaluation, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("codex failure should return sanitized error after evaluation, got %v", err)
 	}
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "codex-fail", "manifest.json"))
-	if manifest.Status != "partial" {
-		t.Fatalf("expected partial status, got %q", manifest.Status)
+	if manifest.Status != StatusImplementationFailed {
+		t.Fatalf("expected implementation failed status, got %q", manifest.Status)
 	}
 	if manifest.Codex.Error == "" || !strings.Contains(manifest.Codex.Error, "boom") {
 		t.Fatalf("expected codex error in manifest, got %#v", manifest.Codex)
@@ -486,12 +734,14 @@ func TestExecuteReportsCodexFailure(t *testing.T) {
 }
 
 type fakePlanner struct {
-	mu         sync.Mutex
-	draftIDs   []string
-	models     []string
-	evalCalls  int
-	failAgents map[string]error
-	failAll    bool
+	mu               sync.Mutex
+	draftIDs         []string
+	models           []string
+	evalCalls        int
+	failAgents       map[string]error
+	incompleteAgents map[string]bool
+	failAll          bool
+	emptyMerge       bool
 }
 
 func (f *fakePlanner) Draft(_ context.Context, req ai.DraftRequest) (ai.PlanningDraft, []byte, error) {
@@ -504,6 +754,10 @@ func (f *fakePlanner) Draft(_ context.Context, req ai.DraftRequest) (ai.Planning
 	}
 	if err := f.failAgents[req.Agent.Name]; err != nil {
 		return ai.PlanningDraft{}, []byte("not-json"), err
+	}
+	if f.incompleteAgents[req.Agent.Name] {
+		draft := ai.PlanningDraft{Agent: req.Agent.Name}
+		return draft, mustJSON(draft), nil
 	}
 	draft := ai.PlanningDraft{
 		Agent:              req.Agent.Name,
@@ -525,6 +779,10 @@ func (f *fakePlanner) Merge(_ context.Context, req ai.MergeRequest) (ai.MergeRes
 	f.mu.Lock()
 	f.models = append(f.models, req.Model)
 	f.mu.Unlock()
+	if f.emptyMerge {
+		merged := ai.MergeResult{}
+		return merged, mustJSON(merged), nil
+	}
 	merged := ai.MergeResult{
 		Spec:  "# SPEC\n\nImplement the requested behavior.\n",
 		Task:  "# TASK\n\n1. Implement it.\n2. Run tests.\n",
@@ -584,6 +842,19 @@ type scriptedCodexPlannerRunner struct {
 	calls       []codex.Request
 	invalidJSON bool
 	err         error
+}
+
+type fakeGitRunner struct {
+	outputs map[string]string
+}
+
+func (f fakeGitRunner) Output(_ context.Context, _ string, args ...string) (string, error) {
+	key := strings.Join(args, " ")
+	value, ok := f.outputs[key]
+	if !ok {
+		return "", errors.New("unexpected git command: " + key)
+	}
+	return value + "\n", nil
 }
 
 func (s *scriptedCodexPlannerRunner) Run(_ context.Context, req codex.Request) (codex.Result, error) {
@@ -687,6 +958,28 @@ func readManifest(t *testing.T, path string) Manifest {
 		t.Fatalf("decode manifest: %v", err)
 	}
 	return manifest
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
+
+func readPlanning(t *testing.T, path string) normalizedPlanningResult {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read planning: %v", err)
+	}
+	var planning normalizedPlanningResult
+	if err := json.Unmarshal(data, &planning); err != nil {
+		t.Fatalf("decode planning: %v", err)
+	}
+	return planning
 }
 
 func assertManifestDoesNotContain(t *testing.T, path, needle string) {
