@@ -364,6 +364,211 @@ func TestLatestRunSelectionIsDeterministicForTimestampFallbacksAndTies(t *testin
 	}
 }
 
+func TestDashboardRecentRunsSummaryListsLimitedGuardedRunsAndPreservesSections(t *testing.T) {
+	dir := t.TempDir()
+	secret := "sk-proj-recentruns1234567890"
+	writeFile(t, dir, "plan.md", "# Plan\n")
+	writeFile(t, dir, "README.md", "# README\n")
+	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n")
+	writeFile(t, dir, "docs/EVAL.md", "# Eval\n")
+	writeFile(t, dir, "docs/TASK.md", `# Tasks
+
+- [~] TASK-0046 [feature] Show sanitized recent runs on the dashboard
+`)
+
+	writeRecentRun := func(id, status, startedAt, provider, validation, extra string) {
+		fields := []string{
+			fmt.Sprintf(`"run_id":%q`, id),
+			fmt.Sprintf(`"status":%q`, status),
+			fmt.Sprintf(`"planner_provider":%q`, provider),
+			`"artifacts":{"manifest":"manifest.json"}`,
+			fmt.Sprintf(`"validation":{"status":%q}`, validation),
+		}
+		if startedAt != "" {
+			fields = append(fields, fmt.Sprintf(`"started_at":%q`, startedAt))
+		}
+		if extra != "" {
+			fields = append(fields, extra)
+		}
+		writeFile(t, dir, ".jj/runs/"+id+"/manifest.json", "{"+strings.Join(fields, ",")+"}")
+	}
+	extra := fmt.Sprintf(`"repository":{"enabled":true,"repo_url":"https://user:%s@example.invalid/repo.git"},"errors":["raw artifact body token=%s"]`, secret, secret)
+	writeRecentRun("20260429-120000-tie-b", "needs_work", "2026-04-29T15:00:00Z", "codex", "needs_work", "")
+	writeRecentRun("20260429-110000-tie-a", "complete", "2026-04-29T15:00:00Z", "openai", "passed", "")
+	writeRecentRun("20260429-140000-id-fallback", "failed", "not-a-time", "local", "failed", extra)
+	writeRecentRun("20260429-130000-no-time", "complete", "", "codex", "passed", "")
+	writeRecentRun("20260429-100000-fifth", "complete", "2026-04-29T10:00:00Z", "openai", "passed", "")
+	writeRecentRun("20260429-090000-excluded", "complete", "2026-04-29T09:00:00Z", "openai", "passed", "")
+
+	server := newTestServer(t, dir, "")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+
+	recent := htmlSection(body, "Recent Runs", "Next Action")
+	for _, want := range []string{
+		"Recent Runs",
+		"20260429-120000-tie-b",
+		"needs_work",
+		"provider/result codex",
+		"evaluation needs_work",
+		`href="/runs/20260429-120000-tie-b"`,
+		`href="/runs/audit?run=20260429-120000-tie-b"`,
+		`href="/runs">Run history</a>`,
+		"20260429-100000-fifth",
+	} {
+		if !strings.Contains(recent, want) {
+			t.Fatalf("recent runs missing %q:\n%s", want, recent)
+		}
+	}
+	ordered := []string{
+		"20260429-120000-tie-b",
+		"20260429-110000-tie-a",
+		"20260429-140000-id-fallback",
+		"20260429-130000-no-time",
+		"20260429-100000-fifth",
+	}
+	last := -1
+	for _, id := range ordered {
+		idx := strings.Index(recent, id)
+		if idx < 0 || idx <= last {
+			t.Fatalf("recent runs order is not deterministic around %q:\n%s", id, recent)
+		}
+		last = idx
+	}
+	for _, leaked := range []string{secret, "repo_url", "raw artifact body", "token=", security.RedactionMarker, "[omitted]"} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("dashboard leaked recent-run payload %q:\n%s", leaked, body)
+		}
+	}
+	for _, leaked := range []string{"20260429-090000-excluded", "Raw manifest", "Validation artifact"} {
+		if strings.Contains(recent, leaked) {
+			t.Fatalf("recent runs leaked %q:\n%s", leaked, recent)
+		}
+	}
+
+	taskSection := htmlSection(body, "Current TASK", "Latest Run")
+	for _, want := range []string{"TASK-0046", "feature", "in-progress", "Show sanitized recent runs on the dashboard"} {
+		if !strings.Contains(taskSection, want) {
+			t.Fatalf("TASK summary changed, missing %q:\n%s", want, taskSection)
+		}
+	}
+	latest := htmlSection(body, "Latest Run", "Risks And Failures")
+	for _, want := range []string{"20260429-120000-tie-b", "provider/result codex", "evaluation needs_work"} {
+		if !strings.Contains(latest, want) {
+			t.Fatalf("latest-run summary changed, missing %q:\n%s", want, latest)
+		}
+	}
+	next := htmlSection(body, "Next Action", "Project Docs")
+	for _, want := range []string{"Continue Task", "continue_task", "TASK-0046"} {
+		if !strings.Contains(next, want) {
+			t.Fatalf("next-action summary changed, missing %q:\n%s", want, next)
+		}
+	}
+	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
+	for _, want := range []string{"plan.md", "docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md", "README.md"} {
+		if !strings.Contains(projectDocs, want) {
+			t.Fatalf("project docs summary changed, missing %q:\n%s", want, projectDocs)
+		}
+	}
+}
+
+func TestDashboardRecentRunsSummaryNoRunsState(t *testing.T) {
+	dir := t.TempDir()
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	recent := htmlSection(body, "Recent Runs", "Next Action")
+	for _, want := range []string{"Recent Runs", "No jj runs found.", `href="/runs">Run history</a>`} {
+		if !strings.Contains(recent, want) {
+			t.Fatalf("recent no-run state missing %q:\n%s", want, recent)
+		}
+	}
+}
+
+func TestDashboardRecentRunsSummaryInvalidMetadataAndHostileIDsAreSafe(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	secret := "sk-proj-recentrunsafe1234567890"
+	writeFile(t, dir, ".jj/runs/20260429-120000-badjson/manifest.json", `{"run_id":"20260429-120000-badjson","status":"`+secret+`",`)
+	writeFile(t, dir, ".jj/runs/20260429-121000-incomplete/manifest.json", `{"run_id":"20260429-121000-incomplete","status":"success"}`)
+	writeFile(t, dir, ".jj/runs/20260429-122000-mismatch/manifest.json", `{"run_id":"20260429-000000-other","status":"success","artifacts":{"manifest":"manifest.json"}}`)
+	if err := os.MkdirAll(filepath.Join(dir, ".jj/runs/20260429-123000-missing"), 0o755); err != nil {
+		t.Fatalf("mkdir missing run: %v", err)
+	}
+	writeFile(t, dir, ".jj/runs/20260429-124000-secretstatus/manifest.json", `{"run_id":"20260429-124000-secretstatus","status":"`+secret+`","artifacts":{"manifest":"manifest.json"},"errors":["Authorization: Bearer `+secret+`"]}`)
+	writeFile(t, dir, ".jj/runs/sk-proj-recentrunid1234567890/manifest.json", `{"run_id":"sk-proj-recentrunid1234567890","status":"complete","artifacts":{"manifest":"manifest.json"}}`)
+	writeFile(t, dir, ".jj/runs/20260429-126000-%2fescape/manifest.json", `{"run_id":"20260429-126000-%2fescape","status":"complete","artifacts":{"manifest":"manifest.json"}}`)
+	writeFile(t, outside, "target/manifest.json", `{"run_id":"20260429-125000-link","status":"complete","artifacts":{"manifest":"manifest.json"}}`)
+	if err := os.MkdirAll(filepath.Join(dir, ".jj/runs"), 0o755); err != nil {
+		t.Fatalf("mkdir runs: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "target"), filepath.Join(dir, ".jj/runs/20260429-125000-link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	server := newTestServer(t, dir, "")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	recent := htmlSection(body, "Recent Runs", "Next Action")
+	for _, want := range []string{
+		"20260429-124000-secretstatus",
+		"unknown",
+		"20260429-123000-missing",
+		"manifest unavailable",
+		"20260429-122000-mismatch",
+		"manifest is incomplete: run_id mismatch",
+		"20260429-121000-incomplete",
+		"manifest is incomplete: missing artifacts",
+		"20260429-120000-badjson",
+		"manifest is malformed",
+	} {
+		if !strings.Contains(recent, want) {
+			t.Fatalf("recent invalid state missing %q:\n%s", want, recent)
+		}
+	}
+	for _, leaked := range []string{
+		secret,
+		"Authorization: Bearer",
+		"sk-proj-recentrunid",
+		"20260429-126000-%2fescape",
+		"20260429-125000-link",
+		outside,
+		filepath.ToSlash(outside),
+		security.RedactionMarker,
+		"[omitted]",
+		"Raw manifest",
+		"Validation artifact",
+	} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("recent invalid states leaked %q:\n%s", leaked, recent)
+		}
+	}
+
+	summary := recentRunsSummaryFromRuns([]runLink{
+		{ID: "sk-proj-recentrunid1234567890", Status: "failed"},
+		{ID: "20260429-130000-denied", Invalid: true, ErrorSummary: "run id denied"},
+	})
+	if summary.State != "available" || len(summary.Items) != 1 || summary.Items[0].State != "denied" || summary.Items[0].RunID != "20260429-130000-denied" {
+		t.Fatalf("recent runs helper should drop token-like IDs and render denied state safely: %#v", summary)
+	}
+}
+
 func TestDashboardShowsTaskMarkdownQueueSummary(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "docs/TASK.md", `# Work Queue

@@ -1296,6 +1296,37 @@
       "updated_at": "2026-04-28T21:28:18Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Dashboard root shows a compact Recent Runs section listing up to a fixed small number of guarded runs when valid runs exist.",
+        "Each recent-run item exposes only sanitized run ID label, status, provider or result label, evaluation state, timestamp label, and guarded links to existing run views.",
+        "Recent-run ordering is deterministic for missing, malformed, duplicated, or tied timestamps.",
+        "No-run, missing metadata, denied, malformed, partial, stale, hostile-label, token-like, or internally inconsistent run metadata renders deterministic none, unavailable, unknown, or denied states without server errors.",
+        "Recent Runs data is derived only from shared sanitized run DTO/helper output, with no handler-local raw manifest, artifact, command, environment, diff, validation output, or filesystem reads after route input parsing.",
+        "No Recent Runs response contains raw manifests, raw artifact bodies, raw command text, raw environment values, validation payloads, diff bodies, unsafe absolute paths, denied payloads, token-like values, configured secrets, private key blocks, or omission placeholders.",
+        "Existing dashboard TASK.md summary, latest-run summary, next-action summary, and Project Docs shortcut behavior remains unchanged.",
+        "Implementation does not add new dashboard pages, CLI flags, raw export endpoints, scanners, artifact upload behavior, broad file browsing, pagination, configurable recent-run limits, or unrelated feature surfaces.",
+        "Focused Go serve/dashboard tests cover multiple valid runs, no runs, missing or malformed metadata, denied or hostile run IDs, token-like run IDs, tied or malformed timestamps, partial or stale metadata, unchanged existing dashboard sections, and absence of raw unsafe payloads.",
+        "scripts/validate.sh passes with sanitized release-gate metadata."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t25",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T21:34:33Z",
+      "created_by_run": "autopilot-20260428-160202-t25",
+      "created_by_turn": null,
+      "id": "TASK-0046",
+      "mode": "feature",
+      "priority": "high",
+      "reason": "Auto mode resolves to feature because all 45 existing tasks are done, there are no runnable tasks, and there is no concrete release-gate, CI, validation, test, disclosure, boundary, provider, panic, fatal, or regression evidence that would justify security or bugfix work. A compact Recent Runs section is the best small user-facing next capability because it extends the dashboard-first workflow beyond the single latest-run summary while reusing existing guarded run views and sanitized DTO/helper boundaries.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Show sanitized recent runs on the dashboard",
+      "updated_at": "2026-04-28T21:47:15Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

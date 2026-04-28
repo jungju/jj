@@ -29,6 +29,8 @@ const displayWorkspace = "[workspace]"
 
 const workspaceEvalMarkdownPath = "docs/EVAL.md"
 
+const dashboardRecentRunsLimit = 5
+
 var allowedProjectDocPaths = []string{
 	"README.md",
 	"plan.md",
@@ -160,6 +162,25 @@ type latestRunSummary struct {
 	TimestampLabel   string
 	DetailURL        string
 	HistoryURL       string
+	AuditURL         string
+}
+
+type recentRunsSummary struct {
+	State      string
+	Message    string
+	HistoryURL string
+	Items      []recentRunItem
+}
+
+type recentRunItem struct {
+	State            string
+	Message          string
+	RunID            string
+	Status           string
+	ProviderOrResult string
+	EvaluationState  string
+	TimestampLabel   string
+	DetailURL        string
 	AuditURL         string
 }
 
@@ -534,6 +555,7 @@ type pageData struct {
 	SelectedRun      string
 	TaskQueue        taskQueueSummary
 	LatestRun        latestRunSummary
+	RecentRuns       recentRunsSummary
 	NextAction       nextActionSummary
 	Docs             []docLink
 	ProjectDocs      []projectDocShortcut
@@ -724,6 +746,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	runs = s.sanitizeRunHistoryLinks(runs)
 	latestRun := latestRunSummaryFromRuns(runs)
+	recentRuns := recentRunsSummaryFromRuns(runs)
 	readiness := s.workspaceReadiness()
 	taskQueue := s.taskQueueSummary()
 	nextAction := nextActionSummaryFromSummaries(taskQueue, latestRun)
@@ -734,6 +757,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		SelectedRun: s.runID,
 		TaskQueue:   taskQueue,
 		LatestRun:   latestRun,
+		RecentRuns:  recentRuns,
 		NextAction:  nextAction,
 		Docs:        docs,
 		ProjectDocs: projectDocs,
@@ -2966,6 +2990,64 @@ func latestRunSummaryFromRuns(runs []runLink) latestRunSummary {
 	return summary
 }
 
+func recentRunsSummaryFromRuns(runs []runLink) recentRunsSummary {
+	summary := recentRunsSummary{
+		State:      "none",
+		Message:    "No jj runs found.",
+		HistoryURL: "/runs",
+	}
+	candidates := sortedLatestRunCandidates(runs)
+	for _, run := range candidates {
+		if len(summary.Items) >= dashboardRecentRunsLimit {
+			break
+		}
+		item, ok := recentRunItemFromRun(run)
+		if !ok {
+			continue
+		}
+		summary.Items = append(summary.Items, item)
+	}
+	if len(summary.Items) == 0 {
+		return summary
+	}
+	summary.State = "available"
+	summary.Message = fmt.Sprintf("Showing up to %d recent guarded runs.", dashboardRecentRunsLimit)
+	return summary
+}
+
+func recentRunItemFromRun(run runLink) (recentRunItem, bool) {
+	runID := latestRunIDLabel(run.ID)
+	if runID == "" {
+		return recentRunItem{}, false
+	}
+	item := recentRunItem{
+		State:           "available",
+		RunID:           runID,
+		Status:          latestRunDisplayText(run.Status, "unknown"),
+		EvaluationState: latestRunDisplayText(run.Validation, "unknown"),
+		TimestampLabel:  latestRunTimestampLabel(run),
+		DetailURL:       guardedRunDetailURL(runID),
+	}
+	if run.Invalid {
+		item.State = "unavailable"
+		item.Status = "unavailable"
+		item.ProviderOrResult = "unavailable"
+		if strings.Contains(dashboardCategory(run.ErrorSummary, ""), "denied") {
+			item.State = "denied"
+			item.Status = "denied"
+			item.ProviderOrResult = "denied"
+		}
+		if item.EvaluationState == "unknown" {
+			item.EvaluationState = item.Status
+		}
+		item.Message = latestRunDisplayText(firstNonEmpty(run.ErrorSummary, "Run metadata unavailable."), "Run metadata unavailable.")
+		return item, true
+	}
+	item.ProviderOrResult = latestProviderOrResult(run)
+	item.AuditURL = guardedRunAuditURL(runID)
+	return item, true
+}
+
 func latestRunNoneSummary() latestRunSummary {
 	return latestRunSummary{
 		State:            "none",
@@ -2979,6 +3061,14 @@ func latestRunNoneSummary() latestRunSummary {
 }
 
 func selectLatestRun(runs []runLink) (runLink, bool) {
+	candidates := sortedLatestRunCandidates(runs)
+	if len(candidates) == 0 {
+		return runLink{}, false
+	}
+	return candidates[0], true
+}
+
+func sortedLatestRunCandidates(runs []runLink) []runLink {
 	candidates := make([]runLink, 0, len(runs))
 	for _, run := range runs {
 		if latestRunIDLabel(run.ID) == "" {
@@ -2986,21 +3076,22 @@ func selectLatestRun(runs []runLink) (runLink, bool) {
 		}
 		candidates = append(candidates, run)
 	}
-	if len(candidates) == 0 {
-		return runLink{}, false
-	}
 	sort.SliceStable(candidates, func(i, j int) bool {
-		leftTime, leftOK := latestRunSortTime(candidates[i])
-		rightTime, rightOK := latestRunSortTime(candidates[j])
-		if leftOK && rightOK && !leftTime.Equal(rightTime) {
-			return leftTime.After(rightTime)
-		}
-		if leftOK != rightOK {
-			return leftOK
-		}
-		return candidates[i].ID > candidates[j].ID
+		return latestRunBefore(candidates[i], candidates[j])
 	})
-	return candidates[0], true
+	return candidates
+}
+
+func latestRunBefore(left, right runLink) bool {
+	leftTime, leftOK := latestRunSortTime(left)
+	rightTime, rightOK := latestRunSortTime(right)
+	if leftOK && rightOK && !leftTime.Equal(rightTime) {
+		return leftTime.After(rightTime)
+	}
+	if leftOK != rightOK {
+		return leftOK
+	}
+	return left.ID > right.ID
 }
 
 func latestRunSortTime(run runLink) (time.Time, bool) {
@@ -5013,6 +5104,25 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          {{if .ErrorSummary}}<p class="error">{{.ErrorSummary}}</p>{{else if .RiskSummary}}<p>{{.RiskSummary}}</p>{{else}}<p class="muted">No recorded failures or risks in the latest run.</p>{{end}}
 	        {{end}}{{else}}
 	          <p class="muted">No runs available for risk review.</p>
+	        {{end}}
+	      </section>
+	      <section>
+	        <h2>Recent Runs</h2>
+	        {{if .RecentRuns.Items}}
+	          <ul>
+	          {{range .RecentRuns.Items}}
+	            <li>
+	              {{if .DetailURL}}<a href="{{.DetailURL}}">{{.RunID}}</a>{{else}}<strong>{{.RunID}}</strong>{{end}} <span class="muted">{{.State}} · {{.Status}} · {{.TimestampLabel}}</span>
+	              <div class="muted">provider/result {{.ProviderOrResult}} · evaluation {{.EvaluationState}}</div>
+	              <div><a href="{{.DetailURL}}">Run detail</a>{{if .AuditURL}} · <a href="{{.AuditURL}}">Audit export</a>{{end}}</div>
+	              {{if .Message}}<div class="error">{{.Message}}</div>{{end}}
+	            </li>
+	          {{end}}
+	          </ul>
+	          <p><a href="{{.RecentRuns.HistoryURL}}">Run history</a></p>
+	        {{else}}
+	          <p class="muted">{{.RecentRuns.Message}}</p>
+	          <p><a href="{{.RecentRuns.HistoryURL}}">Run history</a></p>
 	        {{end}}
 	      </section>
 	      <section>
