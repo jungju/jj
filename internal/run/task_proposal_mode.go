@@ -210,7 +210,7 @@ func TaskProposalTaskTitle(mode TaskProposalMode) string {
 }
 
 // TaskProposalPromptContext formats the mode context passed to providers.
-func TaskProposalPromptContext(resolution TaskProposalResolution) string {
+func TaskProposalPromptContext(resolution TaskProposalResolution, priorityTask ...string) string {
 	selected := resolution.Selected
 	resolved := resolution.Resolved
 	if !selected.Valid() {
@@ -229,6 +229,9 @@ func TaskProposalPromptContext(resolution TaskProposalResolution) string {
 	fmt.Fprintf(&b, "Instruction: %s", selected.PromptInstruction())
 	if selected != resolved {
 		fmt.Fprintf(&b, "\nConcrete Direction: %s", resolved.PromptInstruction())
+	}
+	if len(priorityTask) > 0 && strings.TrimSpace(priorityTask[0]) != "" {
+		fmt.Fprintf(&b, "\nPriority Task Intent Override: .jj/priority-task.md is active. The first proposed runnable task must be scoped to that free-form intent. Ignore task-proposal-mode, resolved mode, and auto/balanced detection when choosing the task. Use mode only after satisfying the intent as inferred category metadata or fallback guidance.")
 	}
 	return b.String()
 }

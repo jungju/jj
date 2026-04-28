@@ -293,12 +293,16 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	fmt.Fprintf(cfg.Stdout, "jj: reading %s\n", planInput.Path)
 	originalPlan := planInput.Content
 	continuationContext := strings.TrimSpace(redactSecrets(cfg.AdditionalPlanContext))
+	priorityTask, err := LoadPriorityTask(cfg.CWD)
+	if err != nil {
+		return nil, validationError(err)
+	}
 	stateBefore := loadStateSnapshot(cfg.CWD)
-	planningContext := buildPlanningContext(originalPlan, stateBefore.SpecBefore, stateBefore.TasksBefore, continuationContext)
+	planningContext := buildPlanningContext(originalPlan, stateBefore.SpecBefore, stateBefore.TasksBefore, continuationContext, priorityTask.Content)
 	providerPlan := redactSecrets(planningContext)
-	proposalEvidence := buildTaskProposalEvidence(stateBefore.SpecBefore, stateBefore.TasksBefore, continuationContext)
+	proposalEvidence := buildTaskProposalEvidence(stateBefore.SpecBefore, stateBefore.TasksBefore, continuationContext, priorityTask.Content)
 	proposal := ResolveTaskProposalMode(cfg.TaskProposalMode, proposalEvidence)
-	proposalPrompt := TaskProposalPromptContext(proposal)
+	proposalPrompt := TaskProposalPromptContext(proposal, priorityTask.Content)
 	fmt.Fprintln(cfg.Stdout, "jj: checking git workspace")
 	gitState, err := InspectGit(ctx, cfg.CWD, cfg.GitRunner)
 	if err != nil {
@@ -631,6 +635,13 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		return fail(StatusPartial, err)
 	} else {
 		record("input_plan", p)
+	}
+	if priorityTask.Active() {
+		if p, err := store.WriteString("input/priority-task.md", redactSecrets(priorityTask.Content)); err != nil {
+			return fail(StatusPartial, err)
+		} else {
+			record("input_priority_task", p)
+		}
 	}
 	writeManifest(StatusPlanning, false)
 	if p, err := writeRedactedJSON(store, "git/baseline.json", gitState); err != nil {
@@ -1046,6 +1057,16 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	} else if err := recordUntrackedEvidence(finalUntracked); err != nil {
 		return fail(StatusImplementationFailed, err)
 	}
+	if priorityTask.Active() && codexErr == nil && manifest.Validation.Status == validationStatusPassed {
+		if err := clearPriorityTask(cfg.CWD); err != nil {
+			return fail(StatusPartial, err)
+		}
+		if err := writeRunEvent("priority_task.cleared", map[string]string{
+			"path": DefaultPriorityTaskPath,
+		}); err != nil {
+			return fail(StatusPartial, err)
+		}
+	}
 	status := StatusCompleted
 	validationResultForCommit := strings.ToUpper(emptyFallback(manifest.Validation.Status, "unknown"))
 	if codexErr != nil {
@@ -1061,7 +1082,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			if gitState.Dirty {
 				manifest.Commit = ManifestCommit{Ran: false, Status: "skipped", Error: "skipped because workspace was dirty before run"}
 			} else {
-				commit := commitRepositoryTurn(ctx, cfg.CWD, proposal, cfg.RunID, validationResultForCommit)
+				commit := commitRepositoryTurn(ctx, cfg.CWD, proposal, selectedTask, cfg.RunID, validationResultForCommit)
 				manifest.Commit = commit
 				if repoRuntime != nil {
 					manifest.Repository.HeadAfter = strings.TrimSpace(mustGitOutput(ctx, cfg.CWD, "rev-parse", "HEAD"))

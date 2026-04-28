@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -327,6 +328,197 @@ func TestExecuteTaskProposalModeCriticalBlockerOverridesConcreteMode(t *testing.
 		t.Fatalf("tasks.json missing bugfix override metadata:\n%s", taskData)
 	}
 	assertNoFile(t, filepath.Join(dir, ".jj", "eval.json"))
+}
+
+func TestExecutePriorityTaskOverridePersistsContextAndClearsOnPassedValidation(t *testing.T) {
+	dir := initGit(t)
+	writePlan(t, dir, "plan.md")
+	secret := "sk-proj-prioritysecret1234567890"
+	writePriorityTask(t, dir, "Web UI About page feature only.\nOPENAI_API_KEY="+secret+"\n")
+	planner := &fakePlanner{}
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:         filepath.Join(dir, "plan.md"),
+		CWD:              dir,
+		RunID:            "priority-success",
+		PlanningAgents:   1,
+		OpenAIModel:      "test-model",
+		TaskProposalMode: TaskProposalModeSecurity,
+		Stdout:           io.Discard,
+		Planner:          planner,
+		CodexRunner:      &fakeCodexRunner{mutate: true},
+	})
+	if err != nil {
+		t.Fatalf("execute priority task run: %v", err)
+	}
+
+	runDir := filepath.Join(dir, ".jj", "runs", "priority-success")
+	if got := readFile(t, filepath.Join(dir, DefaultPriorityTaskPath)); got != "" {
+		t.Fatalf("priority task should be cleared after passed validation, got %q", got)
+	}
+	manifest := readManifest(t, filepath.Join(runDir, "manifest.json"))
+	if manifest.TaskProposalMode != TaskProposalModeSecurity || manifest.ResolvedTaskProposalMode != TaskProposalModeSecurity {
+		t.Fatalf("priority task intent should preserve mode metadata while overriding task choice guidance, got %#v", manifest)
+	}
+	if manifest.Artifacts["input_priority_task"] != "input/priority-task.md" {
+		t.Fatalf("manifest missing priority task artifact: %#v", manifest.Artifacts)
+	}
+	priorityArtifact := readFile(t, filepath.Join(runDir, "input", "priority-task.md"))
+	if !strings.Contains(priorityArtifact, "Web UI About page feature only.") || strings.Contains(priorityArtifact, secret) || !strings.Contains(priorityArtifact, "[jj-omitted]") {
+		t.Fatalf("priority task artifact should contain redacted priority content:\n%s", priorityArtifact)
+	}
+	input := readFile(t, filepath.Join(runDir, "input.md"))
+	if !strings.Contains(input, "# Priority Task Intent Override") || !strings.Contains(input, "Web UI About page feature only.") || strings.Contains(input, secret) {
+		t.Fatalf("planning input missing redacted priority override:\n%s", input)
+	}
+	if len(planner.draftRequests) != 1 {
+		t.Fatalf("expected one draft request, got %d", len(planner.draftRequests))
+	}
+	for _, req := range []struct {
+		name        string
+		plan        string
+		instruction string
+	}{
+		{"draft", planner.draftRequests[0].Plan, planner.draftRequests[0].TaskProposalInstruction},
+		{"merge", planner.lastMergeRequest.Plan, planner.lastMergeRequest.TaskProposalInstruction},
+	} {
+		if !strings.Contains(req.plan, "# Priority Task Intent Override") || !strings.Contains(req.plan, "Web UI About page feature only.") || strings.Contains(req.plan, secret) {
+			t.Fatalf("%s request missing redacted priority context:\n%s", req.name, req.plan)
+		}
+		if !strings.Contains(req.instruction, "Task Proposal Mode: security") || !strings.Contains(req.instruction, ".jj/priority-task.md is active") || !strings.Contains(req.instruction, "Ignore task-proposal-mode") || !strings.Contains(req.instruction, "Use mode only after satisfying the intent") {
+			t.Fatalf("%s request missing priority instruction:\n%s", req.name, req.instruction)
+		}
+	}
+	events := readFile(t, filepath.Join(runDir, "events.jsonl"))
+	if !strings.Contains(events, "priority_task.cleared") {
+		t.Fatalf("events should record priority task clearing:\n%s", events)
+	}
+}
+
+func TestExecutePriorityTaskDryRunDoesNotClear(t *testing.T) {
+	dir := t.TempDir()
+	writePlan(t, dir, "plan.md")
+	priority := "Keep priority task for full run.\n"
+	writePriorityTask(t, dir, priority)
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "priority-dry-run",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		AllowNoGit:     true,
+		DryRun:         true,
+		Stdout:         io.Discard,
+		Planner:        &fakePlanner{},
+	})
+	if err != nil {
+		t.Fatalf("execute priority dry-run: %v", err)
+	}
+	if got := readFile(t, filepath.Join(dir, DefaultPriorityTaskPath)); got != priority {
+		t.Fatalf("dry-run should preserve priority task, got %q", got)
+	}
+	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "priority-dry-run", "manifest.json"))
+	if manifest.Artifacts["input_priority_task"] != "input/priority-task.md" {
+		t.Fatalf("dry-run manifest missing priority artifact: %#v", manifest.Artifacts)
+	}
+}
+
+func TestExecutePriorityTaskKeptOnValidationFailure(t *testing.T) {
+	dir := initGit(t)
+	writePlan(t, dir, "plan.md")
+	writeValidationScript(t, dir, "exit 7")
+	priority := "Keep priority task after failed validation.\n"
+	writePriorityTask(t, dir, priority)
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "priority-validation-fail",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		Stdout:         io.Discard,
+		Planner:        &fakePlanner{},
+		CodexRunner:    &fakeCodexRunner{mutate: true},
+	})
+	if err != nil {
+		t.Fatalf("validation failure should not abort priority run: %v", err)
+	}
+	if got := readFile(t, filepath.Join(dir, DefaultPriorityTaskPath)); got != priority {
+		t.Fatalf("validation failure should preserve priority task, got %q", got)
+	}
+}
+
+func TestExecutePriorityTaskKeptOnPlanningFailure(t *testing.T) {
+	dir := t.TempDir()
+	writePlan(t, dir, "plan.md")
+	priority := "Keep priority task after planning failure.\n"
+	writePriorityTask(t, dir, priority)
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "priority-planning-fail",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		AllowNoGit:     true,
+		Stdout:         io.Discard,
+		Planner:        &fakePlanner{failAll: true},
+	})
+	if err == nil {
+		t.Fatal("expected planning failure")
+	}
+	if got := readFile(t, filepath.Join(dir, DefaultPriorityTaskPath)); got != priority {
+		t.Fatalf("planning failure should preserve priority task, got %q", got)
+	}
+}
+
+func TestExecutePriorityTaskKeptOnCodexFailure(t *testing.T) {
+	dir := initGit(t)
+	writePlan(t, dir, "plan.md")
+	priority := "Keep priority task after Codex failure.\n"
+	writePriorityTask(t, dir, priority)
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "priority-codex-fail",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		Stdout:         io.Discard,
+		Planner:        &fakePlanner{},
+		CodexRunner:    &fakeCodexRunner{err: errors.New("boom")},
+	})
+	if err == nil {
+		t.Fatal("expected codex failure")
+	}
+	if got := readFile(t, filepath.Join(dir, DefaultPriorityTaskPath)); got != priority {
+		t.Fatalf("codex failure should preserve priority task, got %q", got)
+	}
+}
+
+func TestExecutePriorityTaskKeptOnSpecReconcileFailure(t *testing.T) {
+	dir := initGit(t)
+	writePlan(t, dir, "plan.md")
+	priority := "Keep priority task after reconcile failure.\n"
+	writePriorityTask(t, dir, priority)
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "priority-reconcile-fail",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		Stdout:         io.Discard,
+		Planner:        &fakePlanner{reconcileErr: errors.New("reconcile failed")},
+		CodexRunner:    &fakeCodexRunner{mutate: true},
+	})
+	if err == nil {
+		t.Fatal("expected reconcile failure")
+	}
+	if got := readFile(t, filepath.Join(dir, DefaultPriorityTaskPath)); got != priority {
+		t.Fatalf("reconcile failure should preserve priority task, got %q", got)
+	}
 }
 
 func TestExecuteDryRunRecordsAlternateDocumentPathsWithoutWorkspaceWrites(t *testing.T) {
@@ -1062,6 +1254,7 @@ func TestExecuteNonDryRunCommitsCleanGitWorkspace(t *testing.T) {
 	runGit(t, dir, "add", "--all")
 	runGit(t, dir, "commit", "-m", "initial")
 	headBefore := strings.TrimSpace(runGitOutput(t, dir, "rev-parse", "HEAD"))
+	planner := &fakePlanner{mergeTask: plannedTaskJSON("Refresh dashboard controls")}
 
 	_, err := Execute(context.Background(), Config{
 		PlanPath:       filepath.Join(dir, "plan.md"),
@@ -1070,7 +1263,7 @@ func TestExecuteNonDryRunCommitsCleanGitWorkspace(t *testing.T) {
 		PlanningAgents: 1,
 		OpenAIModel:    "test-model",
 		Stdout:         io.Discard,
-		Planner:        &fakePlanner{},
+		Planner:        planner,
 		CodexRunner:    &fakeCodexRunner{mutate: true},
 	})
 	if err != nil {
@@ -1081,11 +1274,15 @@ func TestExecuteNonDryRunCommitsCleanGitWorkspace(t *testing.T) {
 		t.Fatalf("HEAD should advance after successful clean git run, before=%s after=%s", headBefore, headAfter)
 	}
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "local-commit-turn", "manifest.json"))
-	if !manifest.Commit.Ran || manifest.Commit.Status != "success" || manifest.Commit.SHA != headAfter || !strings.HasPrefix(manifest.Commit.Message, "jj: T-FEATURE-001") {
+	wantSubject := "jj: T-FEATURE-001 Refresh dashboard controls"
+	if !manifest.Commit.Ran || manifest.Commit.Status != "success" || manifest.Commit.SHA != headAfter || manifest.Commit.Message != wantSubject {
 		t.Fatalf("expected successful commit metadata, got %#v head=%s", manifest.Commit, headAfter)
 	}
+	if strings.Contains(manifest.Commit.Message, "Add the next useful user-facing capability") {
+		t.Fatalf("commit metadata should use selected task title, got %q", manifest.Commit.Message)
+	}
 	subject := strings.TrimSpace(runGitOutput(t, dir, "log", "-1", "--pretty=%s"))
-	if !strings.HasPrefix(subject, "jj: T-FEATURE-001") {
+	if subject != wantSubject {
 		t.Fatalf("unexpected commit subject: %q", subject)
 	}
 	committedFiles := runGitOutput(t, dir, "show", "--name-only", "--pretty=format:", "HEAD")
@@ -1939,6 +2136,7 @@ type fakePlanner struct {
 	whitespaceSpec    bool
 	emptyTask         bool
 	whitespaceTask    bool
+	mergeTask         string
 	draftRequests     []ai.DraftRequest
 	lastMergeRequest  ai.MergeRequest
 	reconcileRequests []ai.ReconcileSpecRequest
@@ -2011,6 +2209,9 @@ func (f *fakePlanner) Merge(_ context.Context, req ai.MergeRequest) (ai.MergeRes
 	}
 	if f.whitespaceTask {
 		merged.Task = " \n\t"
+	}
+	if strings.TrimSpace(f.mergeTask) != "" {
+		merged.Task = f.mergeTask
 	}
 	return merged, mustJSON(merged), nil
 }
@@ -2190,6 +2391,32 @@ func writePlan(t *testing.T, dir, name string) {
 	if err := os.WriteFile(filepath.Join(dir, name), []byte("Build a thing.\n"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
+}
+
+func writePriorityTask(t *testing.T, dir, content string) {
+	t.Helper()
+	path := filepath.Join(dir, DefaultPriorityTaskPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir priority task dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write priority task: %v", err)
+	}
+}
+
+func plannedTaskJSON(title string) string {
+	return fmt.Sprintf(`{
+		"version": 1,
+		"tasks": [{
+			"title": %q,
+			"mode": "feature",
+			"priority": "high",
+			"status": "queued",
+			"reason": "test proposal",
+			"acceptance_criteria": ["works"],
+			"validation_command": "./scripts/validate.sh"
+		}]
+	}`, title)
 }
 
 func writeValidationScript(t *testing.T, dir, body string) {

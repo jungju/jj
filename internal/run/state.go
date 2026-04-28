@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	DefaultSpecStatePath  = ".jj/spec.json"
-	DefaultTasksStatePath = ".jj/tasks.json"
+	DefaultSpecStatePath    = ".jj/spec.json"
+	DefaultTasksStatePath   = ".jj/tasks.json"
+	DefaultPriorityTaskPath = ".jj/priority-task.md"
 )
 
 type SpecState struct {
@@ -125,8 +126,14 @@ func writeSnapshotJSON(store artifact.Store, rel string, value any) (string, err
 	return writeRedactedJSON(store, rel, value)
 }
 
-func buildPlanningContext(plan string, spec SpecState, tasks TaskState, continuation string) string {
+func buildPlanningContext(plan string, spec SpecState, tasks TaskState, continuation string, priorityTask string) string {
 	var b strings.Builder
+	if strings.TrimSpace(priorityTask) != "" {
+		b.WriteString("# Priority Task Intent Override\n\n")
+		b.WriteString("The following local operator intent from .jj/priority-task.md is the highest-priority next-turn planning input. Scope the first proposed runnable task to this intent. Ignore task-proposal-mode, resolved mode, and auto/balanced detection when choosing what to plan; use mode only after the intent is satisfied as category metadata or fallback guidance.\n\n")
+		b.WriteString(truncateString(redactSecrets(priorityTask), 16000))
+		b.WriteString("\n\n")
+	}
 	if specHasContent(spec) {
 		b.WriteString("# Current SPEC State (source of truth)\n\n")
 		b.WriteString(mustCompactJSON(spec))
@@ -153,8 +160,21 @@ func buildPlanningContext(plan string, spec SpecState, tasks TaskState, continua
 	return redactSecrets(b.String())
 }
 
-func buildTaskProposalEvidence(spec SpecState, tasks TaskState, continuation string) string {
+func buildTaskProposalEvidence(spec SpecState, tasks TaskState, continuation string, priorityTask string) string {
 	var b strings.Builder
+	if strings.TrimSpace(priorityTask) != "" {
+		b.WriteString("Priority task intent override from .jj/priority-task.md:\n")
+		b.WriteString("- This free-form intent is the highest-priority next task input and should override task-proposal-mode, resolved mode, and auto/balanced detection when choosing what to plan.\n")
+		b.WriteString("- Scope the first proposed runnable task to this intent; use mode only afterward as category metadata or fallback guidance.\n")
+		for _, line := range strings.Split(truncateString(redactSecrets(priorityTask), 4000), "\n") {
+			if trimmed := strings.TrimSpace(line); trimmed != "" {
+				b.WriteString("- ")
+				b.WriteString(trimmed)
+				b.WriteByte('\n')
+			}
+		}
+		b.WriteByte('\n')
+	}
 	if specHasContent(spec) {
 		b.WriteString("Current SPEC requirements and open questions:\n")
 		for _, item := range append(append([]string{}, spec.Requirements...), spec.OpenQuestions...) {

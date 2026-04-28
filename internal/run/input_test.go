@@ -39,6 +39,96 @@ func TestLoadPlan(t *testing.T) {
 	}
 }
 
+func TestLoadPriorityTaskMissingOrEmptyIsInactive(t *testing.T) {
+	dir := t.TempDir()
+
+	missing, err := LoadPriorityTask(dir)
+	if err != nil {
+		t.Fatalf("missing priority task should be ignored: %v", err)
+	}
+	if missing.Active() {
+		t.Fatalf("missing priority task should be inactive: %#v", missing)
+	}
+
+	path := filepath.Join(dir, ".jj", "priority-task.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir .jj: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(" \n\t\n"), 0o644); err != nil {
+		t.Fatalf("write empty priority task: %v", err)
+	}
+	empty, err := LoadPriorityTask(dir)
+	if err != nil {
+		t.Fatalf("empty priority task should be ignored: %v", err)
+	}
+	if empty.Active() || empty.Content != "" {
+		t.Fatalf("empty priority task should be inactive: %#v", empty)
+	}
+}
+
+func TestLoadPriorityTaskLoadsMultilineRedactedMarkdown(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".jj", "priority-task.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir .jj: %v", err)
+	}
+	secret := "sk-proj-prioritysecret1234567890"
+	content := "# Next task\n\nImplement priority work.\nOPENAI_API_KEY=" + secret + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write priority task: %v", err)
+	}
+
+	priority, err := LoadPriorityTask(dir)
+	if err != nil {
+		t.Fatalf("load priority task: %v", err)
+	}
+	if !priority.Active() || !strings.Contains(priority.Content, "Implement priority work.") {
+		t.Fatalf("priority task content missing expected text: %#v", priority)
+	}
+	if strings.Contains(priority.Content, secret) || !strings.Contains(priority.Content, "[jj-omitted]") {
+		t.Fatalf("priority task content should be redacted:\n%s", priority.Content)
+	}
+}
+
+func TestLoadPriorityTaskRejectsSymlinkEscape(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".jj"), 0o755); err != nil {
+		t.Fatalf("mkdir .jj: %v", err)
+	}
+	outsidePath := filepath.Join(outside, "priority-task.md")
+	if err := os.WriteFile(outsidePath, []byte("outside\n"), 0o644); err != nil {
+		t.Fatalf("write outside priority task: %v", err)
+	}
+	if err := os.Symlink(outsidePath, filepath.Join(dir, ".jj", "priority-task.md")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	_, err := LoadPriorityTask(dir)
+	if err == nil || !strings.Contains(err.Error(), "symlinked path") {
+		t.Fatalf("expected priority task symlink rejection, got %v", err)
+	}
+	if strings.Contains(err.Error(), outsidePath) || strings.Contains(err.Error(), filepath.ToSlash(outsidePath)) {
+		t.Fatalf("priority task rejection leaked outside path: %v", err)
+	}
+}
+
+func TestLoadPriorityTaskRejectsUnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".jj", "priority-task.md")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("mkdir priority task path: %v", err)
+	}
+
+	_, err := LoadPriorityTask(dir)
+	if err == nil || !strings.Contains(err.Error(), "read .jj/priority-task.md") {
+		t.Fatalf("expected unreadable priority task rejection, got %v", err)
+	}
+	if strings.Contains(err.Error(), path) || strings.Contains(err.Error(), filepath.ToSlash(path)) {
+		t.Fatalf("priority task read error leaked absolute path: %v", err)
+	}
+}
+
 func TestLoadPlanRejectsInvocationPlanOutsideTargetCWD(t *testing.T) {
 	root := t.TempDir()
 	oldWD, err := os.Getwd()

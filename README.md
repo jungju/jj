@@ -159,6 +159,30 @@ Dry-run mode runs planning and writes artifacts only under `.jj/runs/<run-id>/`,
 
 Non-dry-run mode writes JSON state, runs the implementation provider, captures evidence, runs validation, and commits successful validated changes when `--cwd` is a clean git workspace. The commit includes source changes plus `.jj/spec.json` and `.jj/tasks.json`; `.jj/runs/` stays local and uncommitted. If the workspace was already dirty before the run, jj skips only the commit and leaves changes reviewable.
 
+## Next-Turn Intent
+
+For direct operator guidance, write free-form Markdown to `.jj/priority-task.md`. This is the preferred way to steer the next turn because it can express intent more naturally than a fixed mode:
+
+```bash
+cat > .jj/priority-task.md <<'EOF'
+웹 UI About 페이지 기능 추가
+Acceptance: About 페이지가 웹 UI에서 접근 가능하고 기본 레이아웃과 검증이 통과해야 한다.
+EOF
+
+jj run plan.md
+```
+
+Other useful intent examples:
+
+```text
+기능 추가
+웹 UI 기능 추가
+웹 UI About 페이지 추가
+UI만 개선해
+```
+
+When `.jj/priority-task.md` is non-empty, it is the highest-priority planning input. The first proposed runnable task must be scoped to that intent, and `task-proposal-mode`, resolved mode, and auto/balanced detection are ignored for choosing what to plan. Mode still remains useful afterward as inferred category metadata, task ID/title fallback guidance, stored task metadata, and compatibility behavior. A successful full run with passed validation empties the file; dry-runs, planning failures, Codex failures, validation failures, and reconciliation failures preserve it.
+
 ## Task Proposal Mode
 
 ```text
@@ -176,7 +200,13 @@ The selected and resolved modes are stored in `manifest.json`, `.jj/tasks.json`,
 
 Each run appends the proposed task batch to `.jj/tasks.json` instead of replacing existing task history. For full runs, previous `active` or `in_progress` tasks are returned to `queued`, the first newly proposed runnable task becomes `in_progress`, and validation updates only that selected task to `done`, `failed`, or `blocked`.
 
-Concrete modes are respected. For example, `--task-proposal-mode feature` keeps proposing feature work even when the current SPEC mentions security-related requirements. A concrete mode is only overridden to `bugfix` when a real blocker prevents progress, such as failing validation, failing tests, provider failure, a panic, fatal error, blocked state, or regression evidence. `auto` and `balanced` resolve from compact current evidence: SPEC requirements/open questions, non-terminal tasks, and recent validation or run failures. Old completed task reasons are not fed directly into auto mode, so historical security wording does not keep forcing security tasks by itself.
+When no next-turn intent is active, concrete modes are respected. For example, `--task-proposal-mode feature` keeps proposing feature work even when the current SPEC mentions security-related requirements. A concrete mode is only overridden to `bugfix` when a real blocker prevents progress, such as failing validation, failing tests, provider failure, a panic, fatal error, blocked state, or regression evidence. `auto` and `balanced` resolve from compact current evidence: SPEC requirements/open questions, non-terminal tasks, and recent validation or run failures. Old completed task reasons are not fed directly into auto mode, so historical security wording does not keep forcing security tasks by itself.
+
+Use `task-proposal-mode` as a category hint, fallback, or compatibility setting. Use `.jj/priority-task.md` when you want to say the actual next-turn intent.
+
+```bash
+jj run plan.md --task-proposal-mode docs
+```
 
 ## CLI Auto-Continue
 
@@ -190,13 +220,24 @@ CLI auto-continue keeps running turns by default, even when a turn passes valida
 
 For self-hosted autopilot development, `scripts/codex-autopilot.sh` runs fresh `go run ./cmd/jj run plan.md` turns forever by default, so each turn uses the latest local source. Set `MAX_TURNS` only when you want a bounded debugging run.
 
-Autopilot reads the task proposal mode before every turn. It uses `.jj/task-proposal-mode` when that file exists, then `TASK_PROPOSAL_MODE`, then `auto`. This file is an operator override, not canonical state, so it can be changed while autopilot is running:
+Autopilot reads the task proposal mode before every turn. It uses `.jj/task-proposal-mode` when that file exists, then `TASK_PROPOSAL_MODE`, then `auto`. This file is a category hint and compatibility override, not canonical state, so it can be changed while autopilot is running:
 
 ```bash
 TASK_PROPOSAL_MODE=feature scripts/codex-autopilot.sh plan.md
 
 printf 'feature\n' > .jj/task-proposal-mode
 printf 'quality\n' > .jj/task-proposal-mode
+```
+
+Autopilot does not need a separate intent setting because each fresh `jj run` reads `.jj/priority-task.md` through the core runner:
+
+```bash
+cat > .jj/priority-task.md <<'EOF'
+웹 UI About 페이지 기능 추가
+Acceptance: About 페이지가 웹 UI에서 접근 가능하고 기본 레이아웃과 검증이 통과해야 한다.
+EOF
+
+scripts/codex-autopilot.sh plan.md
 ```
 
 ## GitHub Workspace Mode

@@ -430,7 +430,7 @@ func isAncestor(ctx context.Context, repoDir, ancestor, descendant string) bool 
 	return cmd.Run() == nil
 }
 
-func commitRepositoryTurn(ctx context.Context, repoDir string, proposal TaskProposalResolution, runID, verdict string) ManifestCommit {
+func commitRepositoryTurn(ctx context.Context, repoDir string, proposal TaskProposalResolution, selectedTask TaskRecord, runID, verdict string) ManifestCommit {
 	commit := ManifestCommit{Ran: true, Status: "skipped"}
 	if err := stageCommitChanges(ctx, repoDir); err != nil {
 		commit.Status = "failed"
@@ -443,8 +443,12 @@ func commitRepositoryTurn(ctx context.Context, repoDir string, proposal TaskProp
 		commit.Error = "no changes to commit"
 		return commit
 	}
-	subject := fmt.Sprintf("jj: %s %s", proposal.SelectedTaskID, TaskProposalTaskTitle(proposal.Resolved))
-	body := fmt.Sprintf("- Mode: %s\n- Run: %s\n- Turn: %s\n- Verdict: %s", proposal.Resolved, runID, runID, strings.ToLower(strings.TrimSpace(verdict)))
+	subject := commitSubject(proposal, selectedTask)
+	mode := cleanCommitText(selectedTask.Mode)
+	if mode == "" {
+		mode = cleanCommitText(string(proposal.Resolved))
+	}
+	body := fmt.Sprintf("- Mode: %s\n- Run: %s\n- Turn: %s\n- Verdict: %s", mode, runID, runID, strings.ToLower(strings.TrimSpace(verdict)))
 	if _, err := runGitCommand(ctx, repoDir, nil, "commit", "-m", subject, "-m", body); err != nil {
 		commit.Status = "failed"
 		commit.Error = redactSecrets(err.Error())
@@ -455,6 +459,25 @@ func commitRepositoryTurn(ctx context.Context, repoDir string, proposal TaskProp
 	commit.SHA = sha
 	commit.Message = subject
 	return commit
+}
+
+func commitSubject(proposal TaskProposalResolution, selectedTask TaskRecord) string {
+	taskID := cleanCommitText(selectedTask.ID)
+	if taskID == "" {
+		taskID = cleanCommitText(proposal.SelectedTaskID)
+	}
+	if taskID == "" {
+		taskID = cleanCommitText(TaskProposalTaskID(proposal.Resolved))
+	}
+	title := cleanCommitText(selectedTask.Title)
+	if title == "" {
+		title = cleanCommitText(TaskProposalTaskTitle(proposal.Resolved))
+	}
+	return cleanCommitText(fmt.Sprintf("jj: %s %s", taskID, title))
+}
+
+func cleanCommitText(value string) string {
+	return strings.Join(strings.Fields(redactSecrets(value)), " ")
 }
 
 func stageCommitChanges(ctx context.Context, repoDir string) error {

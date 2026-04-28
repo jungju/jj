@@ -265,7 +265,7 @@ func TestBuildPlanningContextUsesExistingSpecBeforePlanSeed(t *testing.T) {
 		Requirements: []string{"Keep current requirement."},
 	}
 
-	context := buildPlanningContext("Old plan seed.", spec, TaskState{Version: 1}, "Recent validation passed.")
+	context := buildPlanningContext("Old plan seed.", spec, TaskState{Version: 1}, "Recent validation passed.", "")
 
 	specIndex := strings.Index(context, "# Current SPEC State (source of truth)")
 	planIndex := strings.Index(context, "# plan.md Seed (background product vision only)")
@@ -278,7 +278,7 @@ func TestBuildPlanningContextUsesExistingSpecBeforePlanSeed(t *testing.T) {
 }
 
 func TestBuildPlanningContextBootstrapsFromPlanWithoutSpec(t *testing.T) {
-	context := buildPlanningContext("Initial product vision.", SpecState{Version: 1}, TaskState{Version: 1}, "")
+	context := buildPlanningContext("Initial product vision.", SpecState{Version: 1}, TaskState{Version: 1}, "", "")
 
 	for _, want := range []string{
 		"No existing .jj/spec.json was found",
@@ -287,6 +287,31 @@ func TestBuildPlanningContextBootstrapsFromPlanWithoutSpec(t *testing.T) {
 	} {
 		if !strings.Contains(context, want) {
 			t.Fatalf("planning context missing %q:\n%s", want, context)
+		}
+	}
+}
+
+func TestBuildPlanningContextIncludesPriorityTaskIntentOverrideFirst(t *testing.T) {
+	context := buildPlanningContext("Initial product vision.", SpecState{Version: 1}, TaskState{Version: 1}, "", "Ship the priority task.\n")
+
+	priorityIndex := strings.Index(context, "# Priority Task Intent Override")
+	specIndex := strings.Index(context, "# Current SPEC State")
+	if priorityIndex < 0 || specIndex < 0 || priorityIndex > specIndex {
+		t.Fatalf("priority task intent override should appear before normal context:\n%s", context)
+	}
+	for _, want := range []string{"Ship the priority task.", "highest-priority next-turn planning input", "Scope the first proposed runnable task to this intent", "Ignore task-proposal-mode"} {
+		if !strings.Contains(context, want) {
+			t.Fatalf("priority task context missing %q:\n%s", want, context)
+		}
+	}
+}
+
+func TestTaskProposalEvidenceIncludesPriorityTaskIntentOverride(t *testing.T) {
+	evidence := buildTaskProposalEvidence(SpecState{Version: 1}, TaskState{Version: 1}, "", "Implement the priority override.")
+
+	for _, want := range []string{"Priority task intent override from .jj/priority-task.md", "override task-proposal-mode", "Implement the priority override."} {
+		if !strings.Contains(evidence, want) {
+			t.Fatalf("priority task evidence missing %q:\n%s", want, evidence)
 		}
 	}
 }
@@ -301,7 +326,7 @@ func TestTaskProposalEvidenceIgnoresCompletedSecurityHistoryForAutoMode(t *testi
 			Status: "done",
 			Reason: "secret redaction security work",
 		}},
-	}, "")
+	}, "", "")
 
 	resolution := ResolveTaskProposalMode(TaskProposalModeAuto, evidence)
 	if resolution.Resolved != TaskProposalModeFeature {
@@ -310,7 +335,7 @@ func TestTaskProposalEvidenceIgnoresCompletedSecurityHistoryForAutoMode(t *testi
 }
 
 func TestTaskProposalEvidenceFailedValidationResolvesBugfix(t *testing.T) {
-	evidence := buildTaskProposalEvidence(SpecState{Version: 1}, TaskState{Version: 1}, "Previous validation failed: tests fail.")
+	evidence := buildTaskProposalEvidence(SpecState{Version: 1}, TaskState{Version: 1}, "Previous validation failed: tests fail.", "")
 
 	resolution := ResolveTaskProposalMode(TaskProposalModeAuto, evidence)
 	if resolution.Resolved != TaskProposalModeBugfix {
@@ -324,7 +349,7 @@ func TestTaskProposalEvidenceCurrentSpecSecurityRiskResolvesSecurity(t *testing.
 		Title:         "SPEC",
 		Requirements:  []string{"Protect saved artifacts from secret exposure."},
 		OpenQuestions: []string{"Is there a remaining security risk in dashboard access?"},
-	}, TaskState{Version: 1}, "")
+	}, TaskState{Version: 1}, "", "")
 
 	resolution := ResolveTaskProposalMode(TaskProposalModeAuto, evidence)
 	if resolution.Resolved != TaskProposalModeSecurity {

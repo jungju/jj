@@ -55,6 +55,35 @@ func TestSanitizeRepositoryURLRemovesCredentials(t *testing.T) {
 	}
 }
 
+func TestCommitSubjectUsesSelectedTaskTitle(t *testing.T) {
+	proposal := TaskProposalResolution{
+		Selected:       TaskProposalModeAuto,
+		Resolved:       TaskProposalModeFeature,
+		SelectedTaskID: "T-FEATURE-001",
+	}
+
+	got := commitSubject(proposal, TaskRecord{ID: "T-FEATURE-009", Title: "Refresh dashboard controls"})
+	if got != "jj: T-FEATURE-009 Refresh dashboard controls" {
+		t.Fatalf("unexpected selected task subject: %q", got)
+	}
+
+	got = commitSubject(proposal, TaskRecord{ID: "T-FEATURE-009", Title: "Refresh\tdashboard\ncontrols"})
+	if got != "jj: T-FEATURE-009 Refresh dashboard controls" {
+		t.Fatalf("subject should collapse whitespace: %q", got)
+	}
+
+	got = commitSubject(proposal, TaskRecord{ID: "T-FEATURE-009"})
+	if got != "jj: T-FEATURE-009 Add the next useful user-facing capability" {
+		t.Fatalf("blank title should fall back to mode title: %q", got)
+	}
+
+	secret := "sk-proj-commitsubjectsecret1234567890"
+	got = commitSubject(proposal, TaskRecord{ID: "T-FEATURE-009", Title: "Use " + secret})
+	if strings.Contains(got, secret) || !strings.Contains(got, "[jj-omitted]") {
+		t.Fatalf("subject should redact secrets: %q", got)
+	}
+}
+
 func TestExecuteRepositoryWorkflowClonesBranchesAndCommitsWithoutPush(t *testing.T) {
 	origin := newBareRepository(t)
 	dir := t.TempDir()
@@ -66,6 +95,7 @@ func TestExecuteRepositoryWorkflowClonesBranchesAndCommitsWithoutPush(t *testing
 	setGitCommitterEnv(t)
 	t.Setenv("JJ_GITHUB_TOKEN", secret)
 	codexRunner := &fakeCodexRunner{mutate: true}
+	planner := &fakePlanner{mergeTask: plannedTaskJSON("Refresh repository dashboard")}
 
 	_, err := Execute(context.Background(), Config{
 		PlanPath:        filepath.Join(planDir, "plan.md"),
@@ -77,7 +107,7 @@ func TestExecuteRepositoryWorkflowClonesBranchesAndCommitsWithoutPush(t *testing
 		PlanningAgents:  1,
 		OpenAIModel:     "test-model",
 		Stdout:          io.Discard,
-		Planner:         &fakePlanner{},
+		Planner:         planner,
 		CodexRunner:     codexRunner,
 	})
 	if err != nil {
@@ -89,7 +119,7 @@ func TestExecuteRepositoryWorkflowClonesBranchesAndCommitsWithoutPush(t *testing
 	if branch := strings.TrimSpace(runGitOutput(t, repoDir, "branch", "--show-current")); branch != "jj/run-repo-run" {
 		t.Fatalf("unexpected current branch: %q", branch)
 	}
-	if subject := strings.TrimSpace(runGitOutput(t, repoDir, "log", "-1", "--pretty=%s")); !strings.HasPrefix(subject, "jj: T-FEATURE-001") {
+	if subject := strings.TrimSpace(runGitOutput(t, repoDir, "log", "-1", "--pretty=%s")); subject != "jj: T-FEATURE-001 Refresh repository dashboard" {
 		t.Fatalf("unexpected commit subject: %q", subject)
 	}
 	if gitRefExists(t, origin, "refs/heads/jj/run-repo-run") {

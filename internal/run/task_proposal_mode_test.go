@@ -90,3 +90,13 @@ func TestTaskProposalPromptContextIncludesInstruction(t *testing.T) {
 		}
 	}
 }
+
+func TestTaskProposalPromptContextIncludesPriorityTaskIntentOverride(t *testing.T) {
+	resolution := ResolveTaskProposalMode(TaskProposalModeFeature, "feature work")
+	got := TaskProposalPromptContext(resolution, "Implement priority task.")
+	for _, want := range []string{".jj/priority-task.md is active", "free-form intent", "Ignore task-proposal-mode", "Use mode only after satisfying the intent"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("prompt context missing %q:\n%s", want, got)
+		}
+	}
+}
