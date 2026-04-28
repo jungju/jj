@@ -76,7 +76,14 @@
     "No raw secrets, token-like values, private key blocks, raw command text, raw environment values, unsafe absolute paths, raw manifests, raw artifact bodies, raw diff bodies, validation payloads, planner handoff payloads, or attacker-controlled denied payloads are printed or persisted by the validation entry point.",
     "No completed task is reopened unless the validation entry point finds a concrete failing disclosure or boundary case.",
     "No new dashboard pages, CLI flags, raw export endpoints, broad file import behavior, scanners, redaction algorithm expansion, or unrelated user-facing behavior are added by the security validation follow-up.",
-    "go test ./internal/serve, go test ./internal/run, go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass."
+    "go test ./internal/serve, go test ./internal/run, go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass.",
+    "A CI job runs ./scripts/validate.sh for security-relevant pull request or push changes.",
+    "The CI job fails when ./scripts/validate.sh exits non-zero.",
+    "The CI configuration does not enable verbose shell tracing, child output passthrough, raw artifact upload, raw manifest upload, raw diff upload, secret/environment echoing, or continue-on-error for the release gate.",
+    "CI output remains limited to the sanitized release-gate metadata emitted by scripts/validate.sh plus standard CI step status.",
+    "Existing release validation documentation states that scripts/validate.sh is both the local and CI release gate.",
+    "No completed task is reopened and no unrelated user-facing feature is added by CI release gate enforcement.",
+    "No raw secrets, token-like values, private key blocks, raw command text, raw environment values, unsafe absolute paths, raw manifests, raw artifact bodies, raw diff bodies, validation payloads, planner handoff payloads, or attacker-controlled denied payloads are printed or persisted by the validation entry point or CI wrapper."
   ],
   "created_at": "2026-04-28",
   "goals": [
@@ -92,7 +99,8 @@
     "Treat stale, partial, malformed, manually edited, or internally inconsistent run metadata as untrusted on served run inspection surfaces unless fields are sanitized through guarded DTO helpers.",
     "Persist manifest and general JSON metadata using safe workspace, run, or path labels so raw workspace, plan, and external config paths are not stored.",
     "Treat needs_work web-run status as terminal so validation completion does not race against further status polling.",
-    "Use scripts/validate.sh as the single documented release validation entry point for completed security guardrails and standard release checks."
+    "Use scripts/validate.sh as the single documented release validation entry point for completed security guardrails and standard release checks.",
+    "Ensure the existing sanitized release validation entry point is enforced automatically by repository CI for security-relevant changes."
   ],
   "non_goals": [
     "Provide a hosted cloud service.",
@@ -109,7 +117,9 @@
     "Add new product features while fixing automatic task proposal blocker classification.",
     "Allow explicitly provided plan files outside the workspace by default.",
     "Reopen completed tasks without fresh failing validation, tests, or confirmed regression evidence.",
-    "Expose child command stdout or stderr from the release validation entry point; release validation reports sanitized release-gate metadata only."
+    "Expose child command stdout or stderr from the release validation entry point; release validation reports sanitized release-gate metadata only.",
+    "Add new security scanners or expand redaction algorithms as part of release gate automation.",
+    "Add new dashboard pages, CLI flags, raw export endpoints, raw artifact uploads, raw manifest uploads, raw diff uploads, or unrelated user-facing behavior as part of CI release gate enforcement."
   ],
   "open_questions": [],
   "requirements": [
@@ -179,10 +189,17 @@
     "The release validation entry point must suppress child command stdout and stderr, emit only deterministic sanitized metadata with fixed step labels, categories, booleans, counts, and exit codes, and exit non-zero when any step fails.",
     "Release validation regression coverage must prove hostile child output is not reflected while the required validation steps are invoked.",
     "Release-gate assertions must check rendered HTML, audit JSON, manifests, persisted checked artifacts, validation artifacts, events, summaries, planner/fallback metadata, and git diff artifacts for absence of raw secrets, token-like values, private key blocks, raw command text, raw environment values, unsafe absolute paths, omission placeholders, raw artifact bodies, raw manifests, raw diff bodies, and attacker-controlled denied path payloads.",
-    "Release-gate failure output must expose only sanitized categories, counts, booleans, and safe relative labels."
+    "Release-gate failure output must expose only sanitized categories, counts, booleans, and safe relative labels.",
+    "CI configuration must invoke scripts/validate.sh for pull requests or pushes that affect Go code, scripts, docs/spec/task metadata, security fixtures, or release validation behavior.",
+    "CI must fail when scripts/validate.sh exits non-zero and must not mask the gate with continue-on-error behavior.",
+    "CI wrappers must not enable verbose shell tracing, child output passthrough, raw artifact upload, raw manifest upload, raw diff upload, secret echoing, or environment dumps.",
+    "CI output must remain limited to sanitized scripts/validate.sh release-gate metadata plus standard CI step status.",
+    "Existing release validation documentation must state that scripts/validate.sh is both the local and CI release gate.",
+    "Completed security guardrails must remain closed unless scripts/validate.sh, focused Go security suites, full tests, vet, build, diff-check, or the CI release gate produce a concrete disclosure, path-boundary, artifact, dashboard, planner handoff, validation output, git diff, command metadata, or release-gate output regression.",
+    "Task proposal reasons, events, manifests, planning context, and CI diagnostics must remain sanitized and must not echo raw logs, paths, commands, environment values, secrets, token-like values, omission placeholders, manifests, artifacts, diffs, validation payloads, or attacker-controlled payloads."
   ],
-  "summary": "jj is a CLI that turns a planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains the core constraint: generated artifacts, served run-inspection surfaces, explicit plan inputs, command metadata, manifests, validation outputs, git diff artifacts, planner and Codex handoff metadata, and run metadata are guarded, redacted, and kept inside the configured workspace or allowed run artifact roots. jj serve includes guarded dashboard, run detail, run history, run comparison, and sanitized audit export flows, while automatic task proposal resolution selects bugfix only from positive current blocker evidence. TASK-0035 added validated persistence hardening so manifest and general JSON writes use safe path labels, validation command text is stripped from persisted manifests, git baseline text is sanitized before artifact writes, and dry-run and non-dry-run fixtures prove raw workspace, plan, and external config paths are not persisted. Git diff evidence policy is resolved as redacted-in-place persisted diff artifacts plus optional sanitized metadata containing only booleans, counts, categories, and safe relative labels. Release-gate regression coverage locks accepted and denied guarded plan input behavior across dry-run and full-run flows, sanitized validation failure artifacts, disclosure-safe validation metadata, stale or tampered run metadata, planner/Codex handoff payload boundaries, guarded duplicate-query serve route parsing for run and path inputs, and TASK-0036 release validation. scripts/validate.sh is the documented single release validation entry point: it runs the focused serve and run security boundary suites, the full Go test suite, vet, CLI build, and diff-check; suppresses child output; emits only fixed sanitized release-gate metadata; and exits non-zero when any step fails. TASK-0037 ran the release validation entry point successfully with no confirmed disclosure or boundary regression, so no code changes or completed-task reopen were required.",
+  "summary": "jj is a CLI that turns a planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains the core constraint: generated artifacts, served run-inspection surfaces, explicit plan inputs, command metadata, manifests, validation outputs, git diff artifacts, planner and Codex handoff metadata, and run metadata are guarded, redacted, and kept inside the configured workspace or allowed run artifact roots. jj serve includes guarded dashboard, run detail, run history, run comparison, and sanitized audit export flows, while automatic task proposal resolution selects bugfix only from positive current blocker evidence. TASK-0035 added validated persistence hardening so manifest and general JSON writes use safe path labels, validation command text is stripped from persisted manifests, git baseline text is sanitized before artifact writes, and dry-run and non-dry-run fixtures prove raw workspace, plan, and external config paths are not persisted. Git diff evidence policy is resolved as redacted-in-place persisted diff artifacts plus optional sanitized metadata containing only booleans, counts, categories, and safe relative labels. Release-gate regression coverage locks accepted and denied guarded plan input behavior across dry-run and full-run flows, sanitized validation failure artifacts, disclosure-safe validation metadata, stale or tampered run metadata, planner/Codex handoff payload boundaries, guarded duplicate-query serve route parsing for run and path inputs, and TASK-0036 release validation. scripts/validate.sh is the documented single local and CI release validation gate: it runs the focused serve and run security boundary suites, the full Go test suite, vet, CLI build, and diff-check; suppresses child output; emits only fixed sanitized release-gate metadata; and exits non-zero when any step fails. TASK-0037 ran the release validation entry point successfully with no confirmed disclosure or boundary regression. TASK-0038 configured repository CI to invoke the sanitized release gate for security-relevant pull request and push changes, without continue-on-error, verbose shell tracing, child output passthrough, raw artifact, manifest, or diff uploads, secret echoing, or environment dumps, and updated release validation documentation to identify scripts/validate.sh as both the local and CI gate.",
   "title": "jj Security Boundary and Dashboard Run Inspection",
-  "updated_at": "2026-04-28T19:45:22Z",
+  "updated_at": "2026-04-28T19:56:45Z",
   "version": 1
 }

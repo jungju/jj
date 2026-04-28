@@ -1,0 +1,55 @@
+name: Release Validation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "scripts/**"
+      - "docs/**"
+      - "README.md"
+      - "plan.md"
+      - ".jj/spec.json"
+      - ".jj/tasks.json"
+      - ".jjrc"
+      - "**/testdata/**"
+      - "**/fixtures/**"
+  push:
+    paths:
+      - ".github/workflows/**"
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "scripts/**"
+      - "docs/**"
+      - "README.md"
+      - "plan.md"
+      - ".jj/spec.json"
+      - ".jj/tasks.json"
+      - ".jjrc"
+      - "**/testdata/**"
+      - "**/fixtures/**"
+
+permissions:
+  contents: read
+
+jobs:
+  release-gate:
+    name: Sanitized release gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Run validation
+        run: ./scripts/validate.sh
