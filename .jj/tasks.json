@@ -704,6 +704,34 @@
       "updated_at": "2026-04-28T16:08:50Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Run detail, run history, run comparison, and audit export handlers obtain run metadata through one shared sanitized DTO construction path or clearly factored shared helpers.",
+        "No handler reads raw manifests, raw artifacts, raw commands, raw environment values, or filesystem paths directly after route input parsing except through guarded helper APIs.",
+        "Invalid, missing, malformed, partial, older, traversal, absolute, encoded, symlinked, secret-looking, token-like, and identical compare inputs produce deterministic denied or unavailable states without echoing rejected values.",
+        "Safe links are generated only from validated run IDs and guarded route helpers.",
+        "Existing security guarantees for redaction, low-information literal filtering, command metadata sanitization, diagnostics safety, and dry-run parity are preserved.",
+        "Focused Go regression tests prove consistent sanitized fields and denial semantics across detail, history, compare, and audit export for valid and unsafe inputs.",
+        "go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t04",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T16:27:18Z",
+      "created_by_run": "autopilot-20260428-160202-t04",
+      "created_by_turn": null,
+      "id": "TASK-0025",
+      "mode": "bugfix",
+      "priority": "high",
+      "reason": "The active next intent asks for internal code consistency, correctness, and stronger internal behavior. All prior tasks are complete, and the broad guarded run detail, history, comparison, and audit export work creates regression risk if each route validates run IDs, normalizes manifests, sanitizes fields, or reports unavailable states differently. This bugfix hardens existing behavior without adding a new user-facing feature.",
+      "resolved_task_proposal_mode": "bugfix",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Fix internal consistency gaps in guarded run metadata handling",
+      "updated_at": "2026-04-28T16:42:35Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

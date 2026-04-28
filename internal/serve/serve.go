@@ -174,6 +174,24 @@ type dashboardManifestLoad struct {
 	Error    string
 }
 
+type runInspection struct {
+	ID              string
+	rawID           string
+	RunDir          string
+	Roots           []security.CommandPathRoot
+	ValidID         bool
+	State           string
+	HTTPStatus      int
+	ManifestState   string
+	Error           string
+	TrustedManifest bool
+	ManifestLoaded  bool
+	manifest        dashboardManifest
+	Detail          runDetail
+	History         runLink
+	AuditSecurity   runAuditSecurity
+}
+
 type artifactLink struct {
 	Path string
 }
@@ -1046,36 +1064,40 @@ func (s *Server) webRunView(runID string) (webRunView, error) {
 
 func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 	rel := r.URL.Query().Get("path")
-	if strings.TrimSpace(rel) == "" {
-		s.renderError(w, http.StatusBadRequest, errors.New("path is required"))
+	data, status, err := s.loadDocPage(rel)
+	if err != nil {
+		s.renderError(w, status, err)
 		return
+	}
+	s.render(w, data)
+}
+
+func (s *Server) loadDocPage(rel string) (pageData, int, error) {
+	if strings.TrimSpace(rel) == "" {
+		return pageData{}, http.StatusBadRequest, errors.New("path is required")
 	}
 	if !isMarkdown(rel) && strings.ToLower(filepath.Ext(rel)) != ".json" {
-		s.renderError(w, http.StatusBadRequest, errors.New("only allowlisted markdown and json state files are supported"))
-		return
+		return pageData{}, http.StatusBadRequest, errors.New("only allowlisted markdown and json state files are supported")
 	}
 	if !isAllowedDocPath(rel) {
-		s.renderError(w, http.StatusForbidden, errors.New("state path is not allowed"))
-		return
+		return pageData{}, http.StatusForbidden, errors.New("state path is not allowed")
 	}
 	path, err := safeJoinProject(s.cwd, rel)
 	if err != nil {
-		s.renderError(w, http.StatusForbidden, err)
-		return
+		return pageData{}, http.StatusForbidden, err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		s.renderError(w, http.StatusNotFound, errors.New("state file unavailable"))
-		return
+		return pageData{}, http.StatusNotFound, errors.New("state file unavailable")
 	}
 	content, rendered := presentContent(rel, data, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace})
-	s.render(w, pageData{
+	return pageData{
 		Title:    rel,
 		CWD:      displayWorkspace,
 		Path:     filepath.ToSlash(rel),
 		Content:  content,
 		Rendered: rendered,
-	})
+	}, http.StatusOK, nil
 }
 
 func (s *Server) handleRunsIndex(w http.ResponseWriter, r *http.Request) {
@@ -1175,25 +1197,12 @@ func (s *Server) renderRunDetail(w http.ResponseWriter, runID string) {
 		s.renderError(w, http.StatusBadRequest, errors.New("run id is required"))
 		return
 	}
-	runDir, err := s.runDir(runID)
-	if err != nil {
-		s.renderError(w, http.StatusForbidden, errors.New("run id is not allowed"))
+	inspection := s.loadRunInspection(runID)
+	if inspection.HTTPStatus != http.StatusOK {
+		s.renderError(w, inspection.HTTPStatus, errors.New(firstNonEmpty(inspection.Error, "run unavailable")))
 		return
 	}
-	info, err := os.Stat(runDir)
-	if errors.Is(err, os.ErrNotExist) {
-		s.renderError(w, http.StatusNotFound, errors.New("run unavailable"))
-		return
-	}
-	if err != nil {
-		s.renderError(w, http.StatusForbidden, errors.New("run unavailable"))
-		return
-	}
-	if !info.IsDir() {
-		s.renderError(w, http.StatusNotFound, errors.New("run unavailable"))
-		return
-	}
-	detail := s.loadRunDetail(runID, runDir)
+	detail := inspection.Detail
 	s.render(w, pageData{
 		Title:     "run " + detail.ID,
 		CWD:       displayWorkspace,
@@ -1223,30 +1232,18 @@ func (s *Server) loadRunAuditExport(runID string) (runAuditExport, int) {
 	if runID == "" {
 		return unavailableRunAuditExport("", "run id unavailable", "run id is required"), http.StatusBadRequest
 	}
-	if err := artifact.ValidateRunID(runID); err != nil || !safeDisplayRunID(runID) {
-		return deniedRunAuditExport("", "run id denied", "run id is not allowed"), http.StatusForbidden
+	inspection := s.loadRunInspection(runID)
+	if inspection.State == "denied" {
+		return deniedRunAuditExport("", firstNonEmpty(inspection.ManifestState, "run id denied"), firstNonEmpty(inspection.Error, "run id is not allowed")), http.StatusForbidden
 	}
-	runDir, err := s.runDir(runID)
-	if err != nil {
-		return deniedRunAuditExport("", "run id denied", "run id is not allowed"), http.StatusForbidden
+	if inspection.HTTPStatus == http.StatusBadRequest {
+		return unavailableRunAuditExport("", firstNonEmpty(inspection.ManifestState, "run id unavailable"), firstNonEmpty(inspection.Error, "run id is required")), http.StatusBadRequest
 	}
-	roots := []security.CommandPathRoot{
-		{Path: s.cwd, Label: displayWorkspace},
-		{Path: runDir, Label: ".jj/runs/" + runID},
-	}
-	safeID := sanitizeRunAuditString(runID, roots...)
-	info, err := os.Stat(runDir)
-	if errors.Is(err, os.ErrNotExist) {
-		return unavailableRunAuditExport(safeID, "run unavailable", "run unavailable"), http.StatusNotFound
-	}
-	if err != nil {
-		return deniedRunAuditExport(safeID, "run unavailable", "run unavailable"), http.StatusForbidden
-	}
-	if !info.IsDir() {
-		return unavailableRunAuditExport(safeID, "run unavailable", "run unavailable"), http.StatusNotFound
+	if inspection.HTTPStatus == http.StatusNotFound {
+		return unavailableRunAuditExport(inspection.ID, firstNonEmpty(inspection.ManifestState, "run unavailable"), firstNonEmpty(inspection.Error, "run unavailable")), http.StatusNotFound
 	}
 
-	detail := s.loadRunDetail(runID, runDir)
+	detail := inspection.Detail
 	export := runAuditExportFromDetail(detail)
 	if detail.ManifestState == "manifest available" {
 		export.State = "available"
@@ -1256,16 +1253,11 @@ func (s *Server) loadRunAuditExport(runID string) (runAuditExport, int) {
 			export.Error = detail.ManifestState
 		}
 	}
-	if data, err := readRunFile(runDir, "manifest.json"); err == nil {
-		var manifest dashboardManifest
-		if err := json.Unmarshal(data, &manifest); err == nil {
-			export.Security = runAuditSecurityFromManifest(manifest.Security)
-			if export.Security.Summary == "" {
-				export.Security = runAuditSecurityFromDetail(detail)
-			}
-		}
+	export.Security = inspection.AuditSecurity
+	if export.Security.Summary == "" {
+		export.Security = runAuditSecurityFromDetail(detail)
 	}
-	return sanitizeRunAuditExport(export, roots...), http.StatusOK
+	return sanitizeRunAuditExport(export, inspection.Roots...), http.StatusOK
 }
 
 func unavailableRunAuditExport(runID, manifestState, message string) runAuditExport {
@@ -1717,79 +1709,7 @@ func (s *Server) loadRunCompareSide(label, queryName string, query url.Values) r
 		return state
 	}
 	runID := strings.TrimSpace(rawRunID)
-	if err := artifact.ValidateRunID(runID); err != nil || !safeDisplayRunID(runID) {
-		return deniedRunCompareSide(label, "", "run id denied", "run id is not allowed")
-	}
-	runDir, err := s.runDir(runID)
-	if err != nil {
-		return deniedRunCompareSide(label, "", "run id denied", "run id is not allowed")
-	}
-	roots := []security.CommandPathRoot{
-		{Path: s.cwd, Label: displayWorkspace},
-		{Path: runDir, Label: ".jj/runs/" + runID},
-	}
-	side := unavailableRunCompareSide(label, sanitizeRunDetailText(runID, roots...), "manifest unavailable", "manifest unavailable")
-	side.validID = true
-
-	info, err := os.Stat(runDir)
-	if errors.Is(err, os.ErrNotExist) {
-		side.ManifestState = "run unavailable"
-		side.Error = "run unavailable"
-		return side
-	}
-	if err != nil {
-		return deniedRunCompareSide(label, side.ID, "run unavailable", "run unavailable")
-	}
-	if !info.IsDir() {
-		side.ManifestState = "run unavailable"
-		side.Error = "run unavailable"
-		return side
-	}
-
-	data, err := readRunFile(runDir, "manifest.json")
-	if errors.Is(err, os.ErrNotExist) {
-		return side
-	}
-	if err != nil {
-		return deniedRunCompareSide(label, side.ID, "manifest unavailable", "manifest unavailable")
-	}
-	var manifest dashboardManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		side.ManifestState = "manifest is malformed"
-		side.Error = "manifest is malformed"
-		return side
-	}
-
-	if state, ok := compareManifestState(runID, manifest); !ok {
-		side.ManifestState = state
-		side.Error = state
-		return side
-	}
-
-	side.State = "available"
-	side.ManifestState = "manifest available"
-	side.Error = ""
-	side.Status = sanitizeRunDetailText(firstNonEmpty(manifest.Status, "unknown"), roots...)
-	side.StartedAt = sanitizeRunDetailText(manifest.StartedAt, roots...)
-	side.FinishedAt = sanitizeRunDetailText(firstNonEmpty(manifest.FinishedAt, manifest.EndedAt), roots...)
-	side.Duration = formatDurationMS(manifest.DurationMS)
-	side.DryRun = manifest.DryRun
-	side.PlannerProvider = sanitizeRunDetailText(firstNonEmpty(manifest.PlannerProvider, manifest.Planner.Provider), roots...)
-	side.PlannerModel = sanitizeRunDetailText(manifest.Planner.Model, roots...)
-	side.TaskProposalMode = sanitizeRunDetailText(manifest.TaskProposalMode, roots...)
-	side.ResolvedTaskProposalMode = sanitizeRunDetailText(manifest.ResolvedTaskProposalMode, roots...)
-	side.SelectedTaskID = sanitizeRunDetailText(manifest.SelectedTaskID, roots...)
-	side.Docs = s.runCompareDocs(manifest, runDir, runID, roots...)
-	side.Artifacts = s.runArtifactStatuses(manifest, runDir, runID, roots...)
-	side.Validation = s.runValidationDetail(manifest, runDir, runID, true, roots...)
-	side.Codex = s.runCodexDetail(manifest, runDir, runID, roots...)
-	side.Commands = runCompareCommandDetails(manifest, runDir, runID, roots...)
-	side.SecuritySummary, side.SecurityDetails = runDetailSecurityDiagnostics(manifest.Security)
-	if side.SecuritySummary == "" {
-		side.SecuritySummary = "security diagnostics unavailable"
-		side.SecurityDetails = []string{"diagnostics unknown"}
-	}
-	return side
+	return s.runCompareSideFromInspection(label, s.loadRunInspection(runID))
 }
 
 func compareQueryRunID(query url.Values, name string) (string, bool, runCompareSide) {
@@ -1805,21 +1725,6 @@ func compareQueryRunID(query url.Values, name string) (string, bool, runCompareS
 		return "", false, deniedRunCompareSide(label, "", "run id denied", "exactly one run id is required")
 	}
 	return values[0], true, runCompareSide{}
-}
-
-func compareManifestState(runID string, manifest dashboardManifest) (string, bool) {
-	switch {
-	case strings.TrimSpace(manifest.RunID) == "":
-		return "manifest is incomplete: missing run_id", false
-	case manifest.RunID != runID:
-		return "manifest is incomplete: run_id mismatch", false
-	case strings.TrimSpace(manifest.Status) == "":
-		return "manifest is incomplete: missing status", false
-	case manifest.Artifacts == nil:
-		return "manifest is incomplete: missing artifacts", false
-	default:
-		return "manifest available", true
-	}
 }
 
 func unavailableRunCompareSide(label, id, manifestState, message string) runCompareSide {
@@ -1844,6 +1749,46 @@ func deniedRunCompareSide(label, id, manifestState, message string) runCompareSi
 	side := unavailableRunCompareSide(label, id, manifestState, message)
 	side.State = "denied"
 	return side
+}
+
+func (s *Server) runCompareSideFromInspection(label string, inspection runInspection) runCompareSide {
+	if inspection.State != "available" {
+		side := unavailableRunCompareSide(
+			label,
+			inspection.ID,
+			firstNonEmpty(inspection.ManifestState, "manifest unavailable"),
+			firstNonEmpty(inspection.Error, "manifest unavailable"),
+		)
+		side.State = firstNonEmpty(inspection.State, "unavailable")
+		side.validID = inspection.ValidID
+		return side
+	}
+	detail := inspection.Detail
+	manifest := inspection.manifest
+	return runCompareSide{
+		Label:                    label,
+		ID:                       detail.ID,
+		State:                    "available",
+		ManifestState:            detail.ManifestState,
+		Status:                   detail.Status,
+		StartedAt:                detail.StartedAt,
+		FinishedAt:               detail.FinishedAt,
+		Duration:                 detail.Duration,
+		DryRun:                   detail.DryRun,
+		PlannerProvider:          detail.PlannerProvider,
+		PlannerModel:             detail.PlannerModel,
+		TaskProposalMode:         detail.TaskProposalMode,
+		ResolvedTaskProposalMode: detail.ResolvedTaskProposalMode,
+		SelectedTaskID:           detail.SelectedTaskID,
+		Docs:                     s.runCompareDocs(manifest, inspection.RunDir, inspection.rawID, inspection.Roots...),
+		Artifacts:                detail.Artifacts,
+		Validation:               detail.Validation,
+		Codex:                    detail.Codex,
+		Commands:                 runCompareCommandDetails(manifest, inspection.RunDir, inspection.rawID, inspection.Roots...),
+		SecuritySummary:          detail.SecuritySummary,
+		SecurityDetails:          detail.SecurityDetails,
+		validID:                  true,
+	}
 }
 
 func runCompareCommandDetails(manifest dashboardManifest, runDir, runID string, roots ...security.CommandPathRoot) []runCommandDetail {
@@ -1923,26 +1868,36 @@ func (s *Server) runCompareDocs(manifest dashboardManifest, runDir, runID string
 }
 
 func (s *Server) handleRunManifest(w http.ResponseWriter, runID string) {
-	runDir, err := s.runDir(runID)
+	data, status, err := s.loadRunManifestResponse(runID)
 	if err != nil {
-		s.renderError(w, http.StatusBadRequest, err)
-		return
-	}
-	data, err := readRunFile(runDir, "manifest.json")
-	if err != nil {
-		s.renderError(w, http.StatusNotFound, errors.New("manifest unavailable"))
+		s.renderError(w, status, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(data)
+}
+
+func (s *Server) loadRunManifestResponse(runID string) ([]byte, int, error) {
+	runDir, err := s.runDir(runID)
+	if err != nil {
+		return nil, http.StatusBadRequest, err
+	}
+	data, err := readRunFile(runDir, "manifest.json")
+	if err != nil {
+		return nil, http.StatusNotFound, errors.New("manifest unavailable")
+	}
 	var decoded any
 	if err := json.Unmarshal(data, &decoded); err != nil {
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]string{
+		data, err := json.Marshal(map[string]string{
 			"run_id": runID,
 			"status": "unknown",
 			"error":  "manifest is malformed",
 		})
-		return
+		if err != nil {
+			return nil, http.StatusInternalServerError, errors.New("manifest unavailable")
+		}
+		return append(data, '\n'), http.StatusOK, nil
 	}
 	sanitized := sanitizeDashboardValue(
 		security.RedactJSONValue(decoded),
@@ -1951,46 +1906,47 @@ func (s *Server) handleRunManifest(w http.ResponseWriter, runID string) {
 	)
 	redacted, err := json.MarshalIndent(sanitized, "", "  ")
 	if err != nil {
-		s.renderError(w, http.StatusInternalServerError, errors.New("manifest unavailable"))
-		return
+		return nil, http.StatusInternalServerError, errors.New("manifest unavailable")
 	}
 	redacted = append(redacted, '\n')
-	_, _ = w.Write(redacted)
+	return redacted, http.StatusOK, nil
 }
 
 func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
 	runID := r.URL.Query().Get("run")
 	rawRel := r.URL.Query().Get("path")
-	if strings.TrimSpace(runID) == "" || strings.TrimSpace(rawRel) == "" {
-		s.renderError(w, http.StatusBadRequest, errors.New("run and path are required"))
+	data, status, err := s.loadArtifactPage(runID, rawRel)
+	if err != nil {
+		s.renderError(w, status, err)
 		return
+	}
+	s.render(w, data)
+}
+
+func (s *Server) loadArtifactPage(runID, rawRel string) (pageData, int, error) {
+	if strings.TrimSpace(runID) == "" || strings.TrimSpace(rawRel) == "" {
+		return pageData{}, http.StatusBadRequest, errors.New("run and path are required")
 	}
 	rel, err := cleanAllowedArtifactPath(rawRel)
 	if err != nil {
-		s.renderError(w, http.StatusForbidden, err)
-		return
+		return pageData{}, http.StatusForbidden, err
 	}
 	runDir, err := s.runDir(runID)
 	if err != nil {
-		s.renderError(w, http.StatusBadRequest, err)
-		return
+		return pageData{}, http.StatusBadRequest, err
 	}
 	if ok, err := isManifestListedArtifact(runDir, rel); err != nil {
-		s.renderError(w, http.StatusBadRequest, err)
-		return
+		return pageData{}, http.StatusBadRequest, err
 	} else if !ok {
-		s.renderError(w, http.StatusForbidden, errors.New("artifact path is not listed in manifest"))
-		return
+		return pageData{}, http.StatusForbidden, errors.New("artifact path is not listed in manifest")
 	}
 	path, err := safeJoin(runDir, rel)
 	if err != nil {
-		s.renderError(w, http.StatusForbidden, err)
-		return
+		return pageData{}, http.StatusForbidden, err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		s.renderError(w, http.StatusNotFound, errors.New("artifact unavailable"))
-		return
+		return pageData{}, http.StatusNotFound, errors.New("artifact unavailable")
 	}
 	content, rendered := presentContent(
 		rel,
@@ -1998,14 +1954,14 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
 		security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace},
 		security.CommandPathRoot{Path: runDir, Label: ".jj/runs/" + runID},
 	)
-	s.render(w, pageData{
+	return pageData{
 		Title:    runID + "/" + rel,
 		CWD:      displayWorkspace,
 		RunID:    runID,
 		Path:     filepath.ToSlash(rel),
 		Content:  content,
 		Rendered: rendered,
-	})
+	}, http.StatusOK, nil
 }
 
 func (s *Server) runDir(runID string) (string, error) {
@@ -2292,66 +2248,11 @@ func (s *Server) discoverRuns() ([]runLink, error) {
 		if !safeDisplayRunID(entry.Name()) {
 			continue
 		}
-		runDir := filepath.Join(runsDir, entry.Name())
-		loaded := loadDashboardManifest(entry.Name(), runDir)
-		run := runLink{ID: entry.Name()}
-		if !loaded.Valid {
-			run.Invalid = true
-			run.Status = "unavailable"
-			run.ErrorSummary = unavailableRunError(loaded.Error)
-			run.Failures = []string{run.ErrorSummary}
-			runs = append(runs, run)
+		inspection := s.loadRunInspection(entry.Name())
+		if inspection.History.ID == "" {
 			continue
 		}
-		manifest := loaded.Manifest
-		safeText := func(value string) string {
-			return sanitizeDashboardText(value, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}, security.CommandPathRoot{Path: runDir, Label: ".jj/runs/" + entry.Name()})
-		}
-		run.Status = safeText(manifest.Status)
-		run.StartedAt = safeText(manifest.StartedAt)
-		run.FinishedAt = safeText(manifest.FinishedAt)
-		if run.FinishedAt == "" {
-			run.FinishedAt = safeText(manifest.EndedAt)
-		}
-		run.PlannerProvider = safeText(manifest.PlannerProvider)
-		if run.PlannerProvider == "" {
-			run.PlannerProvider = safeText(manifest.Planner.Provider)
-		}
-		run.TaskProposalMode = safeText(manifest.TaskProposalMode)
-		run.ResolvedTaskProposalMode = safeText(manifest.ResolvedTaskProposalMode)
-		run.SelectedTaskID = safeText(manifest.SelectedTaskID)
-		if manifest.Repository.Enabled {
-			run.RepositoryURL = safeText(firstNonEmpty(manifest.Repository.SanitizedRepoURL, manifest.Repository.RepoURL))
-			run.BaseBranch = safeText(manifest.Repository.BaseBranch)
-			run.WorkBranch = safeText(manifest.Repository.WorkBranch)
-			run.PushEnabled = manifest.Repository.PushEnabled
-			run.PushStatus = safeText(manifest.Repository.PushStatus)
-			run.PushedRef = safeText(manifest.Repository.PushedRef)
-		}
-		run.DryRun = manifest.DryRun
-		run.Validation = dashboardValidationStatus(manifest)
-		run.ValidationArtifact = listedArtifactPath(manifest.Artifacts, "validation_summary", "validation_results")
-		if run.ValidationArtifact == "" {
-			run.ValidationArtifact = artifactPathByValue(manifest.Artifacts, manifest.Validation.SummaryPath)
-		}
-		if len(manifest.Errors) > 0 {
-			run.ErrorSummary = safeText(manifest.Errors[0])
-			run.Failures = sanitizeDashboardList(manifest.Errors, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}, security.CommandPathRoot{Path: runDir, Label: ".jj/runs/" + entry.Name()})
-		}
-		if len(manifest.Risks) > 0 {
-			run.RiskSummary = safeText(manifest.Risks[0])
-			run.Risks = sanitizeDashboardList(manifest.Risks, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}, security.CommandPathRoot{Path: runDir, Label: ".jj/runs/" + entry.Name()})
-		}
-		run.SecuritySummary, run.SecurityDetails = dashboardSecurityDiagnostics(manifest.Security)
-		if isHistoricalCommitSuccess(manifest) {
-			note := "Legacy commit-success metadata is historical; current jj runs do not auto-commit by default."
-			run.Risks = appendUnique(run.Risks, note)
-			if run.RiskSummary == "" {
-				run.RiskSummary = note
-			}
-			run.NextActions = appendUnique(run.NextActions, "Review working tree changes; do not infer current auto-commit behavior from this legacy manifest.")
-		}
-		runs = append(runs, run)
+		runs = append(runs, inspection.History)
 	}
 	sort.Slice(runs, func(i, j int) bool {
 		return runs[i].ID > runs[j].ID
@@ -2861,63 +2762,247 @@ func loadDashboardManifest(runID, runDir string) dashboardManifestLoad {
 	return dashboardManifestLoad{Manifest: manifest, Valid: true}
 }
 
-func (s *Server) loadRunDetail(runID, runDir string) runDetail {
-	roots := []security.CommandPathRoot{
-		{Path: s.cwd, Label: displayWorkspace},
-		{Path: runDir, Label: ".jj/runs/" + runID},
+func (s *Server) loadRunInspection(runID string) runInspection {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return s.finalizeRunInspection(runInspection{
+			State:         "unavailable",
+			HTTPStatus:    http.StatusBadRequest,
+			ManifestState: "run id unavailable",
+			Error:         "run id is required",
+		})
 	}
+	if err := artifact.ValidateRunID(runID); err != nil || !safeDisplayRunID(runID) {
+		return s.finalizeRunInspection(runInspection{
+			State:         "denied",
+			HTTPStatus:    http.StatusForbidden,
+			ManifestState: "run id denied",
+			Error:         "run id is not allowed",
+		})
+	}
+	runDir, err := s.runDir(runID)
+	if err != nil {
+		return s.finalizeRunInspection(runInspection{
+			State:         "denied",
+			HTTPStatus:    http.StatusForbidden,
+			ManifestState: "run id denied",
+			Error:         "run id is not allowed",
+		})
+	}
+	roots := runInspectionRoots(s.cwd, runDir, runID)
+	inspection := runInspection{
+		ID:            sanitizeRunDetailText(runID, roots...),
+		rawID:         runID,
+		RunDir:        runDir,
+		Roots:         roots,
+		ValidID:       true,
+		State:         "unavailable",
+		HTTPStatus:    http.StatusOK,
+		ManifestState: "manifest unavailable",
+		Error:         "manifest unavailable",
+	}
+	info, err := os.Stat(runDir)
+	if errors.Is(err, os.ErrNotExist) {
+		inspection.ManifestState = "run unavailable"
+		inspection.Error = "run unavailable"
+		inspection.HTTPStatus = http.StatusNotFound
+		return s.finalizeRunInspection(inspection)
+	}
+	if err != nil {
+		inspection.State = "denied"
+		inspection.ManifestState = "run unavailable"
+		inspection.Error = "run unavailable"
+		inspection.HTTPStatus = http.StatusForbidden
+		return s.finalizeRunInspection(inspection)
+	}
+	if !info.IsDir() {
+		inspection.ManifestState = "run unavailable"
+		inspection.Error = "run unavailable"
+		inspection.HTTPStatus = http.StatusNotFound
+		return s.finalizeRunInspection(inspection)
+	}
+	data, err := readRunFile(runDir, "manifest.json")
+	if errors.Is(err, os.ErrNotExist) {
+		return s.finalizeRunInspection(inspection)
+	}
+	if err != nil {
+		inspection.State = "denied"
+		inspection.ManifestState = "manifest unavailable"
+		inspection.Error = "manifest unavailable"
+		inspection.HTTPStatus = http.StatusForbidden
+		return s.finalizeRunInspection(inspection)
+	}
+	var manifest dashboardManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		inspection.ManifestState = "manifest is malformed"
+		inspection.Error = "manifest is malformed"
+		return s.finalizeRunInspection(inspection)
+	}
+	inspection.ManifestLoaded = true
+	inspection.manifest = manifest
+	inspection.ManifestState, inspection.TrustedManifest = runManifestState(runID, manifest)
+	if inspection.TrustedManifest {
+		inspection.State = "available"
+		inspection.Error = ""
+	} else {
+		inspection.State = "unavailable"
+		inspection.Error = inspection.ManifestState
+	}
+	return s.finalizeRunInspection(inspection)
+}
+
+func runInspectionRoots(cwd, runDir, runID string) []security.CommandPathRoot {
+	roots := []security.CommandPathRoot{{Path: cwd, Label: displayWorkspace}}
+	if strings.TrimSpace(runDir) != "" && strings.TrimSpace(runID) != "" {
+		roots = append(roots, security.CommandPathRoot{Path: runDir, Label: ".jj/runs/" + runID})
+	}
+	return roots
+}
+
+func (s *Server) finalizeRunInspection(inspection runInspection) runInspection {
+	if inspection.State == "" {
+		inspection.State = "unavailable"
+	}
+	if inspection.HTTPStatus == 0 {
+		inspection.HTTPStatus = http.StatusOK
+	}
+	if strings.TrimSpace(inspection.ManifestState) == "" {
+		inspection.ManifestState = "manifest unavailable"
+	}
+	if inspection.State != "available" && strings.TrimSpace(inspection.Error) == "" {
+		inspection.Error = inspection.ManifestState
+	}
+	inspection.Detail = s.runDetailFromInspection(inspection)
+	inspection.History = s.runHistoryLinkFromInspection(inspection)
+	if inspection.ManifestLoaded {
+		inspection.AuditSecurity = runAuditSecurityFromManifest(inspection.manifest.Security)
+	} else {
+		inspection.AuditSecurity = unavailableRunAuditSecurity()
+	}
+	return inspection
+}
+
+func runManifestState(runID string, manifest dashboardManifest) (string, bool) {
+	switch {
+	case strings.TrimSpace(manifest.RunID) == "":
+		return "manifest is incomplete: missing run_id", false
+	case manifest.RunID != runID:
+		return "manifest is incomplete: run_id mismatch", false
+	case strings.TrimSpace(manifest.Status) == "":
+		return "manifest is incomplete: missing status", false
+	case manifest.Artifacts == nil:
+		return "manifest is incomplete: missing artifacts", false
+	default:
+		return "manifest available", true
+	}
+}
+
+func (s *Server) runHistoryLinkFromInspection(inspection runInspection) runLink {
+	run := runLink{ID: inspection.ID}
+	if !inspection.ValidID || strings.TrimSpace(inspection.ID) == "" {
+		return run
+	}
+	if !inspection.TrustedManifest {
+		run.Invalid = true
+		run.Status = "unavailable"
+		run.ErrorSummary = unavailableRunError(inspection.ManifestState)
+		run.Failures = []string{run.ErrorSummary}
+		return run
+	}
+	manifest := inspection.manifest
+	safeText := func(value string) string {
+		return sanitizeDashboardText(value, inspection.Roots...)
+	}
+	run.Status = safeText(manifest.Status)
+	run.StartedAt = safeText(manifest.StartedAt)
+	run.FinishedAt = safeText(manifest.FinishedAt)
+	if run.FinishedAt == "" {
+		run.FinishedAt = safeText(manifest.EndedAt)
+	}
+	run.PlannerProvider = safeText(manifest.PlannerProvider)
+	if run.PlannerProvider == "" {
+		run.PlannerProvider = safeText(manifest.Planner.Provider)
+	}
+	run.TaskProposalMode = safeText(manifest.TaskProposalMode)
+	run.ResolvedTaskProposalMode = safeText(manifest.ResolvedTaskProposalMode)
+	run.SelectedTaskID = safeText(manifest.SelectedTaskID)
+	if manifest.Repository.Enabled {
+		run.RepositoryURL = safeText(firstNonEmpty(manifest.Repository.SanitizedRepoURL, manifest.Repository.RepoURL))
+		run.BaseBranch = safeText(manifest.Repository.BaseBranch)
+		run.WorkBranch = safeText(manifest.Repository.WorkBranch)
+		run.PushEnabled = manifest.Repository.PushEnabled
+		run.PushStatus = safeText(manifest.Repository.PushStatus)
+		run.PushedRef = safeText(manifest.Repository.PushedRef)
+	}
+	run.DryRun = manifest.DryRun
+	run.Validation = dashboardValidationStatus(manifest)
+	run.ValidationArtifact = listedArtifactPath(manifest.Artifacts, "validation_summary", "validation_results")
+	if run.ValidationArtifact == "" {
+		run.ValidationArtifact = artifactPathByValue(manifest.Artifacts, manifest.Validation.SummaryPath)
+	}
+	if len(manifest.Errors) > 0 {
+		run.ErrorSummary = safeText(manifest.Errors[0])
+		run.Failures = sanitizeDashboardList(manifest.Errors, inspection.Roots...)
+	}
+	if len(manifest.Risks) > 0 {
+		run.RiskSummary = safeText(manifest.Risks[0])
+		run.Risks = sanitizeDashboardList(manifest.Risks, inspection.Roots...)
+	}
+	run.SecuritySummary, run.SecurityDetails = dashboardSecurityDiagnostics(manifest.Security)
+	if isHistoricalCommitSuccess(manifest) {
+		note := "Legacy commit-success metadata is historical; current jj runs do not auto-commit by default."
+		run.Risks = appendUnique(run.Risks, note)
+		if run.RiskSummary == "" {
+			run.RiskSummary = note
+		}
+		run.NextActions = appendUnique(run.NextActions, "Review working tree changes; do not infer current auto-commit behavior from this legacy manifest.")
+	}
+	return run
+}
+
+func (s *Server) loadRunDetail(runID, runDir string) runDetail {
+	inspection := s.loadRunInspection(runID)
+	if inspection.RunDir != "" && runDir != "" && filepath.Clean(inspection.RunDir) != filepath.Clean(runDir) {
+		inspection.State = "denied"
+		inspection.ManifestState = "run id denied"
+		inspection.Error = "run id is not allowed"
+		inspection.HTTPStatus = http.StatusForbidden
+		inspection = s.finalizeRunInspection(inspection)
+	}
+	return inspection.Detail
+}
+
+func (s *Server) runDetailFromInspection(inspection runInspection) runDetail {
+	roots := inspection.Roots
 	safeText := func(value string) string {
 		return sanitizeRunDetailText(value, roots...)
 	}
 	detail := runDetail{
-		ID:              safeText(runID),
+		ID:              safeText(inspection.ID),
 		Status:          "unknown",
-		ManifestState:   "manifest unavailable",
-		ArtifactNote:    unavailableRunError("manifest unavailable"),
+		ManifestState:   safeText(inspection.ManifestState),
+		Error:           safeText(inspection.Error),
+		ArtifactNote:    unavailableRunError(inspection.ManifestState),
 		SecuritySummary: "security diagnostics unavailable",
+		SecurityDetails: []string{"diagnostics unknown"},
+		Validation: runValidationDetail{
+			Status:         "unknown",
+			EvidenceStatus: "unknown",
+		},
+		Codex: runCodexDetail{Status: "unknown"},
 	}
-
-	data, err := readRunFile(runDir, "manifest.json")
-	if err != nil {
-		detail.Error = "manifest unavailable"
-		detail.NextActions = append(detail.NextActions, "Run manifest is unavailable; start a new run to produce fresh guarded metadata.")
+	if !inspection.ManifestLoaded {
+		detail.NextActions = runDetailNextActions(detail, dashboardManifest{}, false)
 		return detail
 	}
-	var manifest dashboardManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		detail.ManifestState = "manifest is malformed"
-		detail.Error = "manifest is malformed"
-		detail.ArtifactNote = unavailableRunError(detail.Error)
-		detail.NextActions = append(detail.NextActions, "Manifest JSON is malformed; artifact links are disabled for this run.")
-		return detail
-	}
-
-	trustedManifest := true
-	switch {
-	case strings.TrimSpace(manifest.RunID) == "":
-		trustedManifest = false
-		detail.ManifestState = "manifest is incomplete: missing run_id"
-	case manifest.RunID != runID:
-		trustedManifest = false
-		detail.ManifestState = "manifest is incomplete: run_id mismatch"
-	default:
-		detail.ManifestState = "manifest available"
-	}
+	manifest := inspection.manifest
+	trustedManifest := inspection.TrustedManifest
 	if strings.TrimSpace(manifest.Status) == "" {
 		detail.Status = "unknown"
-		if detail.ManifestState == "manifest available" {
-			detail.ManifestState = "manifest is incomplete: missing status"
-		}
 	} else {
 		detail.Status = safeText(manifest.Status)
 	}
-	if manifest.Artifacts == nil {
-		trustedManifest = false
-		if detail.ManifestState == "manifest available" {
-			detail.ManifestState = "manifest is incomplete: missing artifacts"
-		}
-		detail.ArtifactNote = unavailableRunError("manifest is incomplete: missing artifacts")
-	} else {
+	if trustedManifest {
 		detail.ArtifactNote = ""
 	}
 
@@ -2939,14 +3024,14 @@ func (s *Server) loadRunDetail(runID, runDir string) runDetail {
 	}
 
 	if trustedManifest {
-		detail.Artifacts = s.runArtifactStatuses(manifest, runDir, runID, roots...)
-		detail.Docs = s.runDetailDocs(manifest, runDir, runID, roots...)
-		detail.Codex = s.runCodexDetail(manifest, runDir, runID, roots...)
-		detail.Commands = s.runCommandDetails(manifest, runDir, runID, roots...)
+		detail.Artifacts = s.runArtifactStatuses(manifest, inspection.RunDir, inspection.rawID, roots...)
+		detail.Docs = s.runDetailDocs(manifest, inspection.RunDir, inspection.rawID, roots...)
+		detail.Codex = s.runCodexDetail(manifest, inspection.RunDir, inspection.rawID, roots...)
+		detail.Commands = s.runCommandDetails(manifest, inspection.RunDir, inspection.rawID, roots...)
 	} else if detail.ArtifactNote == "" {
 		detail.ArtifactNote = unavailableRunError(detail.ManifestState)
 	}
-	detail.Validation = s.runValidationDetail(manifest, runDir, runID, trustedManifest, roots...)
+	detail.Validation = s.runValidationDetail(manifest, inspection.RunDir, inspection.rawID, trustedManifest, roots...)
 	detail.SecuritySummary, detail.SecurityDetails = runDetailSecurityDiagnostics(manifest.Security)
 	if detail.SecuritySummary == "" {
 		detail.SecuritySummary = "security diagnostics unavailable"

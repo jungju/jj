@@ -1371,6 +1371,74 @@ func TestRunAuditExportDeniesUnsafeRunInputs(t *testing.T) {
 	}
 }
 
+func TestRunInspectionUnavailableStatesAreConsistentAcrossGuardedSurfaces(t *testing.T) {
+	dir := newTestWorkspace(t)
+	secret := "sk-proj-inspectionstate1234567890"
+	cases := []struct {
+		id       string
+		manifest string
+		want     string
+	}{
+		{
+			id:       "20260428-151000-missingstatus",
+			manifest: `{"run_id":"20260428-151000-missingstatus","started_at":"2026-04-28T15:10:00Z","artifacts":{"manifest":"manifest.json"},"errors":["token=` + secret + `"]}`,
+			want:     "manifest is incomplete: missing status",
+		},
+		{
+			id:       "20260428-152000-missingrunid",
+			manifest: `{"status":"complete","started_at":"2026-04-28T15:20:00Z","artifacts":{"manifest":"manifest.json"},"errors":["token=` + secret + `"]}`,
+			want:     "manifest is incomplete: missing run_id",
+		},
+		{
+			id:       "20260428-153000-mismatch",
+			manifest: `{"run_id":"sk-proj-mismatchsecret1234567890","status":"complete","started_at":"2026-04-28T15:30:00Z","artifacts":{"manifest":"manifest.json"},"errors":["token=` + secret + `"]}`,
+			want:     "manifest is incomplete: run_id mismatch",
+		},
+	}
+	for _, tc := range cases {
+		writeFile(t, dir, ".jj/runs/"+tc.id+"/manifest.json", tc.manifest)
+	}
+	server := newTestServer(t, dir, "")
+	validID := "20260425-120000-bbbbbb"
+
+	for _, tc := range cases {
+		t.Run(tc.id, func(t *testing.T) {
+			targets := []string{
+				"/runs/" + tc.id,
+				"/runs",
+				"/runs/compare?left=" + tc.id + "&right=" + validID,
+			}
+			for _, target := range targets {
+				rec := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodGet, target, nil)
+				server.Handler().ServeHTTP(rec, req)
+				body := rec.Body.String()
+				if rec.Code != http.StatusOK {
+					t.Fatalf("%s status = %d body=%s", target, rec.Code, body)
+				}
+				if !strings.Contains(body, tc.want) {
+					t.Fatalf("%s missing shared unavailable state %q:\n%s", target, tc.want, body)
+				}
+				for _, leaked := range []string{secret, "sk-proj-mismatchsecret1234567890", dir, filepath.ToSlash(dir)} {
+					if strings.Contains(body, leaked) {
+						t.Fatalf("%s leaked %q:\n%s", target, leaked, body)
+					}
+				}
+			}
+
+			export, body := getRunAuditExport(t, server, "/runs/audit?run="+tc.id, http.StatusOK)
+			if export.State != "unavailable" || export.ManifestState != tc.want {
+				t.Fatalf("audit export state mismatch: %#v\n%s", export, body)
+			}
+			for _, leaked := range []string{secret, "sk-proj-mismatchsecret1234567890", dir, filepath.ToSlash(dir)} {
+				if strings.Contains(body, leaked) {
+					t.Fatalf("audit export leaked %q:\n%s", leaked, body)
+				}
+			}
+		})
+	}
+}
+
 func TestRunDetailRendersSafeStatesForMalformedMissingAndLegacyManifests(t *testing.T) {
 	dir := newTestWorkspace(t)
 	secret := "sk-proj-detailbad1234567890"
@@ -1831,38 +1899,46 @@ func TestPathTraversalRejected(t *testing.T) {
 func TestServeRejectsSecretLookingRunIDsWithoutReflection(t *testing.T) {
 	dir := newTestWorkspace(t)
 	server := newTestServer(t, dir, "")
-	runID := "sk-proj-serverunid1234567890"
-
-	probes := []struct {
-		method string
-		target string
-		body   string
-	}{
-		{method: http.MethodGet, target: "/runs/" + runID},
-		{method: http.MethodGet, target: "/runs/" + runID + "/manifest"},
-		{method: http.MethodGet, target: "/artifact?run=" + runID + "&path=snapshots/tasks.after.json"},
-		{method: http.MethodGet, target: "/run/status?id=" + runID},
-		{method: http.MethodPost, target: "/run/start", body: runStartPromptForm(runID, "Build from prompt.\n", true, false, false, 0)},
-	}
-	for _, probe := range probes {
-		t.Run(probe.method+" "+probe.target, func(t *testing.T) {
-			reqBody := strings.NewReader(probe.body)
-			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(probe.method, probe.target, reqBody)
-			if probe.body != "" {
-				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			}
-			server.Handler().ServeHTTP(rec, req)
-			body := rec.Body.String()
-			if rec.Code < 400 {
-				t.Fatalf("expected rejection, got %d body=%s", rec.Code, body)
-			}
-			for _, leaked := range []string{runID, "sk-proj", security.RedactionMarker, dir, filepath.ToSlash(dir)} {
-				if strings.Contains(body, leaked) {
-					t.Fatalf("secret-looking run id rejection leaked %q:\n%s", leaked, body)
+	for _, runID := range []string{
+		"sk-proj-serverunid1234567890",
+		"AbCdEfGhIjKlMnOpQrStUvWxYz12345678901234",
+	} {
+		probes := []struct {
+			method string
+			target string
+			body   string
+		}{
+			{method: http.MethodGet, target: "/runs/" + runID},
+			{method: http.MethodGet, target: "/runs/" + runID + "/manifest"},
+			{method: http.MethodGet, target: "/artifact?run=" + runID + "&path=snapshots/tasks.after.json"},
+			{method: http.MethodGet, target: "/run/status?id=" + runID},
+			{method: http.MethodGet, target: "/runs/audit?run=" + runID},
+			{method: http.MethodGet, target: "/runs/compare?left=" + runID + "&right=20260425-120000-bbbbbb"},
+			{method: http.MethodPost, target: "/run/start", body: runStartPromptForm(runID, "Build from prompt.\n", true, false, false, 0)},
+		}
+		for _, probe := range probes {
+			t.Run(probe.method+" "+probe.target, func(t *testing.T) {
+				reqBody := strings.NewReader(probe.body)
+				rec := httptest.NewRecorder()
+				req := httptest.NewRequest(probe.method, probe.target, reqBody)
+				if probe.body != "" {
+					req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 				}
-			}
-		})
+				server.Handler().ServeHTTP(rec, req)
+				body := rec.Body.String()
+				if rec.Code < 400 && !strings.Contains(probe.target, "/runs/compare") {
+					t.Fatalf("expected rejection, got %d body=%s", rec.Code, body)
+				}
+				if strings.Contains(probe.target, "/runs/compare") && (!strings.Contains(body, "denied") || !strings.Contains(body, "run id is not allowed")) {
+					t.Fatalf("expected compare denial, got %d body=%s", rec.Code, body)
+				}
+				for _, leaked := range []string{runID, "sk-proj", "AbCdEf", security.RedactionMarker, dir, filepath.ToSlash(dir)} {
+					if strings.Contains(body, leaked) {
+						t.Fatalf("secret-looking run id rejection leaked %q:\n%s", leaked, body)
+					}
+				}
+			})
+		}
 	}
 }
 
