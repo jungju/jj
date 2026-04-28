@@ -1185,6 +1185,33 @@
       "updated_at": "2026-04-28T20:24:43Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Dashboard root shows TASK.md summary counts for done, in-progress, pending, blocked, and total when a valid in-workspace docs/TASK.md exists.",
+        "Dashboard root shows the first actionable pending or in-progress task with sanitized ID, category, status, and title.",
+        "When all tasks are done, dashboard shows no runnable tasks without opening a new task or implying failure.",
+        "Missing, unreadable, malformed, or denied TASK.md renders deterministic unavailable or unknown states without server errors and without reflecting unsafe paths or raw parse payloads.",
+        "No raw TASK.md body, unsafe absolute path, secret-looking value, omission placeholder, raw artifact body, manifest body, command text, or environment value is persisted or rendered.",
+        "Focused tests cover TASK.md parsing, all-done state, missing or malformed state, sanitizer behavior, and dashboard DTO/render output."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t21",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T20:27:05Z",
+      "created_by_run": "autopilot-20260428-160202-t21",
+      "created_by_turn": null,
+      "id": "TASK-0042",
+      "mode": "feature",
+      "priority": "high",
+      "reason": "All 41 existing tasks are done, no runnable task remains, and the current evidence contains no failing validation, blocker, or concrete security/privacy regression. A dashboard TASK.md summary is the most useful small user-facing feature because it strengthens the dashboard-first workflow without adding new routes, CLI flags, raw exports, or reopening completed security guardrails.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Show sanitized TASK.md work-queue summary on the dashboard",
+      "updated_at": "2026-04-28T20:40:43Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

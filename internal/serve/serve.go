@@ -483,7 +483,7 @@ type pageData struct {
 	Title            string
 	CWD              string
 	SelectedRun      string
-	TaskSummary      string
+	TaskQueue        taskQueueSummary
 	Docs             []docLink
 	Runs             []runLink
 	Readiness        []readinessItem
@@ -671,11 +671,12 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	readiness := s.workspaceReadiness()
+	taskQueue := s.taskQueueSummary()
 	s.render(w, pageData{
 		Title:       "jj dashboard",
 		CWD:         displayWorkspace,
 		SelectedRun: s.runID,
-		TaskSummary: s.taskSummary(),
+		TaskQueue:   taskQueue,
 		Docs:        docs,
 		Runs:        runs,
 		Readiness:   readiness,
@@ -2131,46 +2132,6 @@ func (s *Server) workspaceReadiness() []readinessItem {
 		items[i].Ready = err == nil && !info.IsDir()
 	}
 	return items
-}
-
-func (s *Server) taskSummary() string {
-	path, err := safeJoinProject(s.cwd, runpkg.DefaultTasksStatePath)
-	if err != nil {
-		return ".jj/tasks.json is missing."
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ".jj/tasks.json is missing."
-	}
-	var state struct {
-		ActiveTaskID *string `json:"active_task_id"`
-		Tasks        []struct {
-			ID     string `json:"id"`
-			Title  string `json:"title"`
-			Mode   string `json:"mode"`
-			Status string `json:"status"`
-		} `json:"tasks"`
-	}
-	if err := json.Unmarshal(data, &state); err != nil {
-		return ".jj/tasks.json is unreadable."
-	}
-	if len(state.Tasks) == 0 {
-		return ".jj/tasks.json has no tasks."
-	}
-	counts := map[string]int{}
-	for _, task := range state.Tasks {
-		counts[task.Status]++
-	}
-	current := state.Tasks[0]
-	if state.ActiveTaskID != nil {
-		for _, task := range state.Tasks {
-			if task.ID == *state.ActiveTaskID {
-				current = task
-				break
-			}
-		}
-	}
-	return fmt.Sprintf("Tasks: %d total, %d queued, %d in progress, %d done. Current: %s %s (%s).", len(state.Tasks), counts["queued"], counts["in_progress"]+counts["active"], counts["done"], sanitizeDashboardText(current.ID, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}), sanitizeDashboardText(current.Title, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}), sanitizeDashboardText(current.Mode, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}))
 }
 
 func taskChecklistProgress(markdown string) string {
@@ -4482,7 +4443,16 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	    {{else}}
 	      <section>
 	        <h2>Current TASK</h2>
-	        <p>{{.TaskSummary}}</p>
+	        {{if .TaskQueue.Available}}
+	          <p>{{.TaskQueue.Message}}</p>
+	          {{if .TaskQueue.Next}}
+	            <p>Next: <strong>{{.TaskQueue.Next.ID}}</strong> <span class="muted">{{.TaskQueue.Next.Category}} · {{.TaskQueue.Next.Status}}</span> {{.TaskQueue.Next.Title}}</p>
+	          {{else}}
+	            <p class="muted">No runnable tasks.</p>
+	          {{end}}
+	        {{else}}
+	          <p class="muted">{{.TaskQueue.Message}}</p>
+	        {{end}}
 	      </section>
 	      <section>
 	        <h2>Latest Run</h2>

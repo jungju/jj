@@ -75,6 +75,225 @@ func TestIndexShowsMissingReadiness(t *testing.T) {
 	}
 }
 
+func TestDashboardShowsTaskMarkdownQueueSummary(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "docs/TASK.md", `# Work Queue
+
+## Current Task
+
+### TASK-0042: Show sanitized TASK.md work queue
+
+- Mode: feature
+- Status: in_progress
+
+## Pending
+
+- TASK-0043 [docs/pending] Refresh dashboard copy
+
+## Blocked
+
+- TASK-0044 [security/blocked] Recheck blocked release gate
+
+## Done
+
+- [x] TASK-0041: Keep completed guardrails closed
+`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{
+		"Current TASK",
+		"TASK.md: 4 total, 1 done, 1 in progress, 1 pending, 1 blocked.",
+		"Next:",
+		"TASK-0042",
+		"feature",
+		"in-progress",
+		"Show sanitized TASK.md work queue",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard task summary missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestTaskQueueSummaryParsesCommonTaskMarkdownFormats(t *testing.T) {
+	summary := parseTaskQueueSummary(`# Tasks
+
+## Pending Tasks
+
+1. TASK-0042 [feature/queued] Build the visible queue
+2. [~] TASK-0043 [docs] Document the queue
+
+## Done
+
+- **TASK-0041**: Finish the release gate
+- TASK-0040 (mode: security, status: blocked) Verify boundary state
+`)
+	if !summary.Available || summary.State != "available" {
+		t.Fatalf("summary should be available: %#v", summary)
+	}
+	if summary.Counts.Total != 4 || summary.Counts.Pending != 1 || summary.Counts.InProgress != 1 || summary.Counts.Done != 1 || summary.Counts.Blocked != 1 {
+		t.Fatalf("unexpected counts: %#v", summary.Counts)
+	}
+	if summary.Next == nil || summary.Next.ID != "TASK-0042" || summary.Next.Category != "feature" || summary.Next.Status != "pending" || summary.Next.Title != "Build the visible queue" {
+		t.Fatalf("unexpected next task: %#v", summary.Next)
+	}
+}
+
+func TestDashboardTaskMarkdownAllDoneShowsNoRunnableTasks(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "docs/TASK.md", `# Work Queue
+
+## Done
+
+- [x] TASK-0041: Release validation gate
+- TASK-0040 [security/done] Harden run inspection
+`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{
+		"TASK.md: 2 total, 2 done, 0 in progress, 0 pending, 0 blocked. All TASK.md tasks are done. No runnable tasks.",
+		"No runnable tasks.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("all-done task summary missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "Next:") || strings.Contains(body, "TASK-0040 [security/done]") {
+		t.Fatalf("all-done summary should not expose a runnable next task or raw body:\n%s", body)
+	}
+}
+
+func TestDashboardTaskMarkdownMissingMalformedAndDeniedStatesAreSafe(t *testing.T) {
+	secret := "sk-proj-tasksummary1234567890"
+	t.Run("missing", func(t *testing.T) {
+		dir := t.TempDir()
+		server := newTestServer(t, dir, "")
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		server.Handler().ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, body)
+		}
+		if !strings.Contains(body, "TASK.md unavailable.") {
+			t.Fatalf("missing TASK.md state not shown:\n%s", body)
+		}
+	})
+
+	t.Run("malformed", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "docs/TASK.md", "# Task Doc\n\nraw artifact body\nAuthorization: Bearer "+secret+"\n")
+		server := newTestServer(t, dir, "")
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		server.Handler().ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, body)
+		}
+		if !strings.Contains(body, "TASK.md task summary unknown.") {
+			t.Fatalf("malformed TASK.md state not shown:\n%s", body)
+		}
+		for _, leaked := range []string{secret, "raw artifact body", "Authorization: Bearer", security.RedactionMarker} {
+			if strings.Contains(body, leaked) {
+				t.Fatalf("malformed TASK.md leaked %q:\n%s", leaked, body)
+			}
+		}
+	})
+
+	t.Run("denied symlink", func(t *testing.T) {
+		dir := t.TempDir()
+		outside := t.TempDir()
+		writeFile(t, outside, "TASK.md", "# Tasks\n\n- [ ] TASK-0042: "+secret+"\n")
+		if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+			t.Fatalf("mkdir docs: %v", err)
+		}
+		if err := os.Symlink(filepath.Join(outside, "TASK.md"), filepath.Join(dir, "docs", "TASK.md")); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		server := newTestServer(t, dir, "")
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		server.Handler().ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, body)
+		}
+		if !strings.Contains(body, "TASK.md unavailable.") {
+			t.Fatalf("denied TASK.md state not shown:\n%s", body)
+		}
+		for _, leaked := range []string{secret, outside, filepath.ToSlash(outside), filepath.Join(outside, "TASK.md"), filepath.ToSlash(filepath.Join(outside, "TASK.md"))} {
+			if strings.Contains(body, leaked) {
+				t.Fatalf("denied TASK.md leaked %q:\n%s", leaked, body)
+			}
+		}
+	})
+}
+
+func TestDashboardTaskMarkdownSanitizesRenderedFields(t *testing.T) {
+	dir := t.TempDir()
+	secret := "sk-proj-taskfields1234567890"
+	rawPath := filepath.Join(dir, "outside", "token.txt")
+	writeFile(t, dir, "docs/TASK.md", fmt.Sprintf(`# Tasks
+
+## Current Task
+
+### TASK-0042: Fix token=%s raw artifact body %s
+
+- Mode: token=%s
+- Status: in_progress
+- Title: OPENAI_API_KEY=%s private key leaked %s
+`, secret, rawPath, secret, secret, rawPath))
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{"TASK-0042", "unknown", "in-progress", "unsafe value removed"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("sanitized task summary missing %q:\n%s", want, body)
+		}
+	}
+	for _, leaked := range []string{
+		secret,
+		"token=",
+		"OPENAI_API_KEY",
+		"private key",
+		"raw artifact body",
+		rawPath,
+		filepath.ToSlash(rawPath),
+		security.RedactionMarker,
+		"[omitted]",
+	} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("task summary leaked %q:\n%s", leaked, body)
+		}
+	}
+}
+
 func TestDashboardUsesSafeWorkspaceDisplayPath(t *testing.T) {
 	dir := newTestWorkspace(t)
 	server := newTestServer(t, dir, "")
