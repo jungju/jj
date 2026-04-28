@@ -486,7 +486,7 @@
         "go test ./..., go vet ./..., and go build -o jj ./cmd/jj pass."
       ],
       "commit": null,
-      "completed_by_run": null,
+      "completed_by_run": "autopilot-20260428-160202-t03",
       "completed_by_turn": null,
       "created_at": "2026-04-28T13:22:17Z",
       "created_by_run": "autopilot-20260428-130849-t02",
@@ -497,11 +497,11 @@
       "reason": "Security is the required next category because jj reads user files, writes persistent artifacts, invokes commands, records logs and manifests, and exposes artifacts through jj serve. The highest-value next task is preventing secret leakage and filesystem escape before adding unrelated workflow features.",
       "resolved_task_proposal_mode": "security",
       "selected_task_proposal_mode": "auto",
-      "status": "queued",
+      "status": "done",
       "title": "Harden secret redaction and workspace boundaries",
-      "updated_at": "2026-04-28T13:44:19Z",
+      "updated_at": "2026-04-28T16:26:11Z",
       "validation_command": "./scripts/validate.sh",
-      "verdict": null
+      "verdict": "passed"
     },
     {
       "acceptance_criteria": [

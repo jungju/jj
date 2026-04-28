@@ -2,7 +2,7 @@
 
 ## Current Task
 
-### TASK-0015: Harden jj secret, workspace, command, artifact, and dashboard boundaries
+### TASK-0017: Harden secret redaction and workspace boundaries
 
 - Mode: security
 - Status: done
@@ -17,7 +17,7 @@
 - Workspace, plan, state, run, artifact, and dashboard paths use symlink-aware containment checks with `--cwd` as the workspace trust boundary.
 - Relative plan paths continue to resolve from the invocation directory, but the resolved plan file must remain inside the resolved target workspace; absolute plan paths must also resolve inside `--cwd`.
 - Artifact writes reject absolute paths, traversal, unsafe segments, Windows drive prefixes, hidden artifact names, and symlink escapes.
-- Codex output artifacts must resolve under `.jj/runs/<run-id>/` and may not traverse symlinked output parents.
+- Codex output artifacts must resolve under `.jj/runs/<run-id>/`, may not traverse symlinked output parents, and are revalidated before post-run fallback creation, redaction, or readback.
 - Run IDs reject traversal-like values, invalid characters, configured secret values, and common token patterns without echoing the rejected value in validation errors.
 - `jj run --dry-run` writes planning artifacts and state snapshots only under `.jj/runs/<run-id>/`; it does not write or update `.jj/spec.json`, `.jj/tasks.json`, `docs/SPEC.md`, or `docs/TASK.md`.
 - `jj serve` defaults to a local-only bind, serves only approved project docs/state and manifest-listed run artifacts, blocks traversal and dotfile browsing, escapes rendered content, and sends `Cache-Control: no-store`.
@@ -31,6 +31,7 @@
 
 - Redaction lives in `internal/security` and is re-exported by `internal/secrets`.
 - Central helper APIs include `RedactString`, `RedactBytes`, `RedactMap`, `NewSafeConfig`, `SafeJoin`, and `SafeJoinNoSymlinks`.
+- Configured sensitive literals use the same low-information filtering as environment-derived secrets so values such as `true`, `false`, `null`, and `none` do not become global redaction traps.
 - Artifact safety lives in `internal/artifact.Store` and `security.SafeJoin`.
 - `plan.md` bootstraps the first product direction. After `.jj/spec.json` exists, planning treats it as source of truth and keeps `plan.md` as background product vision.
 - Full run orchestration appends `.jj/tasks.json` during planning, runs implementation and validation, then writes `.jj/spec.json` only when validation passes through result-based SPEC reconciliation. A successful run in a clean git workspace commits source changes plus `.jj/spec.json` and `.jj/tasks.json`, while leaving `.jj/runs/` uncommitted; dirty-before-run workspaces skip commit. Dry-runs keep the planned after-state in run snapshots without mutating workspace state.

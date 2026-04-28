@@ -59,6 +59,8 @@ Artifact relative paths are rejected when they:
 
 Artifact writes use private run permissions and atomic writes. Artifact reads through `jj serve` require the path to be present in the run manifest.
 
+Codex event and summary outputs are resolved under `.jj/runs/<run-id>/` before launch and re-resolved through the run artifact store before fallback creation, redaction, or readback. If a runner replaces either output with a symlink, jj rejects the artifact before reading it and records only a sanitized symlink-path diagnostic.
+
 ## Dashboard Policy
 
 `jj serve` binds to `127.0.0.1:7331` by default. External binding requires explicit `--host` or `--addr`.

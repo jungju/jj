@@ -314,7 +314,7 @@ func RegisterSensitiveLiterals(values ...string) {
 		registeredSensitiveLiterals.values = map[string]struct{}{}
 	}
 	for _, value := range values {
-		if len(strings.TrimSpace(value)) < 4 || value == RedactionMarker {
+		if len(strings.TrimSpace(value)) < 4 || lowInformationLiteral(value) || value == RedactionMarker || value == legacyRedactionMarker {
 			continue
 		}
 		registeredSensitiveLiterals.values[value] = struct{}{}

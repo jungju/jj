@@ -306,6 +306,8 @@ When unstructured text needs an omission marker, jj uses the fixed `[jj-omitted]
 
 Artifact writes are resolved through the run directory and fail closed when a path is absolute, traverses with `..`, contains encoded traversal, uses hidden artifact segments, or follows a symlink outside the run root. `jj serve` applies the same style of resolver for reads and serves only allowlisted workspace state plus manifest-listed run artifacts for the selected workspace.
 
+Codex event and summary artifacts are checked again through the run artifact store before jj creates fallback files, redacts output, or reads summaries, so a runner cannot swap those outputs for symlinks after launch.
+
 Run IDs may contain only letters, numbers, dots, underscores, and dashes, must not use traversal-like reserved forms, and are rejected if they match configured secrets or common token patterns.
 
 The dashboard binds to localhost by default, sends `Cache-Control: no-store`, escapes rendered content, redacts artifact bodies before display, and returns sanitized errors for rejected artifact or document paths. External commands are launched with explicit binaries and args, resolved working directories, timeouts, context cancellation, filtered environments, and sanitized stdout/stderr capture.

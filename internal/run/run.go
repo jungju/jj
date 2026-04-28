@@ -848,11 +848,14 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	if runner == nil {
 		runner = codex.Runner{}
 	}
-	eventsPath, err := store.Path("codex/events.jsonl")
+	const codexEventsRel = "codex/events.jsonl"
+	const codexSummaryRel = "codex/summary.md"
+
+	eventsPath, err := store.Path(codexEventsRel)
 	if err != nil {
 		return fail(StatusImplementationFailed, err)
 	}
-	summaryPath, err := store.Path("codex/summary.md")
+	summaryPath, err := store.Path(codexSummaryRel)
 	if err != nil {
 		return fail(StatusImplementationFailed, err)
 	}
@@ -867,13 +870,13 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		AllowNoGit:        cfg.AllowNoGit,
 	}
 	codexResult, codexErr := runner.Run(ctx, codexRequest)
-	if err := ensureCodexArtifacts(eventsPath, summaryPath, codexResult, codexErr); err != nil {
+	if err := ensureCodexArtifacts(store, codexResult, codexErr); err != nil {
 		return fail(StatusImplementationFailed, err)
 	}
-	if err := redactFile(eventsPath); err != nil {
+	if err := redactArtifactFile(store, codexEventsRel); err != nil {
 		return fail(StatusImplementationFailed, err)
 	}
-	if err := redactFile(summaryPath); err != nil {
+	if err := redactArtifactFile(store, codexSummaryRel); err != nil {
 		return fail(StatusImplementationFailed, err)
 	}
 	codexStatus := "success"
@@ -1267,9 +1270,13 @@ func dirtyFromGitStatus(status string) bool {
 	return status != "" && status != "git unavailable"
 }
 
-func redactFile(path string) error {
-	if strings.TrimSpace(path) == "" {
+func redactArtifactFile(store artifact.Store, rel string) error {
+	if strings.TrimSpace(rel) == "" {
 		return nil
+	}
+	path, err := store.Path(rel)
+	if err != nil {
+		return err
 	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -1278,15 +1285,19 @@ func redactFile(path string) error {
 	if err != nil {
 		return err
 	}
-	redacted := security.RedactContent(path, data)
+	redacted := security.RedactContent(rel, data)
 	if string(redacted) == string(data) {
 		return nil
+	}
+	path, err = store.Path(rel)
+	if err != nil {
+		return err
 	}
 	return artifact.AtomicWriteFile(path, redacted, artifact.PrivateFileMode)
 }
 
-func ensureCodexArtifacts(eventsPath, summaryPath string, result codex.Result, runErr error) error {
-	if err := ensureFileIfMissing(eventsPath, `{"type":"notice","message":"codex produced no event log"}`+"\n"); err != nil {
+func ensureCodexArtifacts(store artifact.Store, result codex.Result, runErr error) error {
+	if err := ensureArtifactFileIfMissing(store, "codex/events.jsonl", `{"type":"notice","message":"codex produced no event log"}`+"\n"); err != nil {
 		return err
 	}
 	summary := strings.TrimSpace(result.Summary)
@@ -1302,19 +1313,31 @@ func ensureCodexArtifacts(eventsPath, summaryPath string, result codex.Result, r
 	if summary == "" {
 		summary = "Codex completed without producing a summary."
 	}
-	return ensureFileIfMissing(summaryPath, redactSecrets(summary)+"\n")
+	return ensureArtifactFileIfMissing(store, "codex/summary.md", redactSecrets(summary)+"\n")
 }
 
-func ensureFileIfMissing(path, content string) error {
-	if strings.TrimSpace(path) == "" {
+func ensureArtifactFileIfMissing(store artifact.Store, rel, content string) error {
+	if strings.TrimSpace(rel) == "" {
 		return nil
 	}
-	if _, err := os.Stat(path); err == nil {
+	path, err := store.Path(rel)
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return security.ErrSymlinkPath
+		}
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), artifact.PrivateDirMode); err != nil {
+		return err
+	}
+	path, err = store.Path(rel)
+	if err != nil {
 		return err
 	}
 	return artifact.AtomicWriteFile(path, []byte(redactSecrets(content)), artifact.PrivateFileMode)

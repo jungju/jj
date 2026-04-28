@@ -231,6 +231,81 @@ func TestSecurityRegressionValidationRecordsOmitCommandText(t *testing.T) {
 	}
 }
 
+func TestSecurityRegressionCodexArtifactSymlinkRejectedBeforeRead(t *testing.T) {
+	dir := t.TempDir()
+	runID := "codex-artifact-symlink"
+	writePlan(t, dir, "plan.md")
+	outside := t.TempDir()
+	secret := "codex-artifact-symlink-secret"
+	outsideEvents := filepath.Join(outside, "events.jsonl")
+	if err := os.WriteFile(outsideEvents, []byte("outside "+secret+"\n"), 0o644); err != nil {
+		t.Fatalf("write outside events: %v", err)
+	}
+	probeLink := filepath.Join(outside, "probe-link")
+	if err := os.Symlink(outsideEvents, probeLink); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	_ = os.Remove(probeLink)
+
+	result, err := Execute(context.Background(), Config{
+		PlanPath:               filepath.Join(dir, "plan.md"),
+		CWD:                    dir,
+		RunID:                  runID,
+		PlanningAgents:         1,
+		PlanningAgentsExplicit: true,
+		OpenAIModel:            "test-model",
+		AllowNoGit:             true,
+		AllowNoGitExplicit:     true,
+		Stdout:                 io.Discard,
+		Stderr:                 io.Discard,
+		Planner:                &fakePlanner{},
+		CodexRunner: maliciousCodexSymlinkRunner{
+			eventsTarget: outsideEvents,
+		},
+	})
+	if err == nil {
+		t.Fatal("expected symlinked Codex artifact to fail")
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), outside) || strings.Contains(err.Error(), filepath.ToSlash(outside)) {
+		t.Fatalf("codex symlink rejection leaked unsafe value: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected partial result with run directory")
+	}
+
+	manifestPath := filepath.Join(result.RunDir, "manifest.json")
+	manifestData := readFile(t, manifestPath)
+	for _, leaked := range []string{secret, outside, filepath.ToSlash(outside), outsideEvents, filepath.ToSlash(outsideEvents)} {
+		if strings.Contains(manifestData, leaked) {
+			t.Fatalf("manifest leaked symlink target data %q:\n%s", leaked, manifestData)
+		}
+	}
+	manifest := readManifest(t, manifestPath)
+	if manifest.Security.Diagnostics.DeniedPathCategoryCounts["symlink_path"] == 0 {
+		t.Fatalf("expected symlink_path diagnostic, got %#v", manifest.Security.Diagnostics)
+	}
+}
+
+type maliciousCodexSymlinkRunner struct {
+	eventsTarget string
+}
+
+func (m maliciousCodexSymlinkRunner) Run(_ context.Context, req codex.Request) (codex.Result, error) {
+	if err := os.MkdirAll(filepath.Dir(req.EventsPath), 0o755); err != nil {
+		return codex.Result{}, err
+	}
+	if err := os.Remove(req.EventsPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return codex.Result{}, err
+	}
+	if err := os.Symlink(m.eventsTarget, req.EventsPath); err != nil {
+		return codex.Result{}, err
+	}
+	if err := os.WriteFile(req.OutputLastMessage, []byte("summary\n"), 0o644); err != nil {
+		return codex.Result{}, err
+	}
+	return codex.Result{Summary: "summary", ExitCode: 0, DurationMS: 1}, nil
+}
+
 func writeSecurityRegressionPlan(t *testing.T, dir, secret, openAIKey, privateKeyBody string) {
 	t.Helper()
 	privateKey := "-----BEGIN PRIVATE KEY-----\n" + privateKeyBody + "\n-----END PRIVATE KEY-----"

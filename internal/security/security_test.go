@@ -397,6 +397,20 @@ func TestNewRedactorPreservesEnvNameReferencesAndLowInformationValues(t *testing
 	}
 }
 
+func TestRegisterSensitiveLiteralsIgnoresLowInformationValues(t *testing.T) {
+	RegisterSensitiveLiterals("true", "false", "null", "none", "literal-config-secret")
+
+	got := RedactString("flags true false null none literal-config-secret")
+	for _, want := range []string{"true", "false", "null", "none"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("low-information literal %q should remain visible:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "literal-config-secret") || !strings.Contains(got, RedactionMarker) {
+		t.Fatalf("configured secret literal was not redacted:\n%s", got)
+	}
+}
+
 func TestSanitizeCommandArgvRedactsSecretsAndRewritesKnownRoots(t *testing.T) {
 	root := t.TempDir()
 	runDir := filepath.Join(root, ".jj", "runs", "run-1")
