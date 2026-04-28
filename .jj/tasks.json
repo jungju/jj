@@ -818,6 +818,34 @@
       "updated_at": "2026-04-28T17:29:54Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Git diff artifacts are redacted in place before persistence and contain no raw secrets, token-like values, private key blocks, raw commands, raw environment values, unsafe absolute paths, omission placeholders, raw manifests, raw artifact bodies, raw diff bodies, or attacker-controlled denied payloads.",
+        "Any supplemental git diff redaction evidence report or manifest fields contain only booleans, counts, sanitized categories, and safe relative artifact labels.",
+        "Dry-run and non-dry-run produce equivalent git diff capture, redaction, diagnostics, manifest metadata, and serve-visible behavior.",
+        "jj serve detail, history, compare, and audit export derive diff availability and redaction evidence through shared sanitized DTO/helper paths and never render raw diff bodies or unsafe paths.",
+        "Focused Go regression fixtures cover secret-looking diff content, unsafe absolute paths, private key blocks, command-looking strings, token-like values, denied path payloads, and dry-run/non-dry-run parity.",
+        "No new dashboard pages, CLI flags, raw artifact export, raw manifest export, raw diff export, new scanner, redaction algorithm expansion, or unrelated user-facing features are added.",
+        "go test ./internal/serve, go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t08",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T17:31:32Z",
+      "created_by_run": "autopilot-20260428-160202-t08",
+      "created_by_turn": null,
+      "id": "TASK-0029",
+      "mode": "security",
+      "priority": "high",
+      "reason": "Auto mode resolves to security because the remaining actionable risk is privacy-sensitive git diff artifact evidence. All existing tasks are done and there is no positive current blocker evidence such as failed validation, failed tests, provider failure, panic, fatal error, or regression, so this should not be bugfix and should not duplicate the completed release-gate task.",
+      "resolved_task_proposal_mode": "security",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Finalize git diff redaction evidence policy",
+      "updated_at": "2026-04-28T17:49:43Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

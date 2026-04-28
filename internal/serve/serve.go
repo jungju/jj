@@ -156,6 +156,7 @@ type dashboardManifest struct {
 	} `json:"planner"`
 	DryRun     bool                      `json:"dry_run"`
 	Workspace  runpkg.ManifestWorkspace  `json:"workspace"`
+	Git        runpkg.ManifestGit        `json:"git"`
 	Codex      runpkg.ManifestCodex      `json:"codex"`
 	Validation runpkg.ManifestValidation `json:"validation"`
 	Commit     struct {
@@ -303,29 +304,35 @@ type runAuditCommand struct {
 }
 
 type runAuditSecurity struct {
-	Available                  bool                   `json:"available"`
-	Summary                    string                 `json:"summary"`
-	Details                    []string               `json:"details,omitempty"`
-	RedactionApplied           bool                   `json:"redaction_applied"`
-	WorkspaceGuardrailsApplied bool                   `json:"workspace_guardrails_applied"`
-	RedactionCount             int64                  `json:"redaction_count"`
-	SecretMaterialPresent      bool                   `json:"secret_material_present"`
-	RootLabels                 []string               `json:"root_labels,omitempty"`
-	GuardedRoots               []runAuditSecurityRoot `json:"guarded_roots,omitempty"`
-	DeniedPathCount            int                    `json:"denied_path_count"`
-	DeniedPathCategories       []string               `json:"denied_path_categories,omitempty"`
-	DeniedPathCategoryCounts   map[string]int         `json:"denied_path_category_counts,omitempty"`
-	FailureCategories          []string               `json:"failure_categories,omitempty"`
-	FailureCategoryCounts      map[string]int         `json:"failure_category_counts,omitempty"`
-	CommandRecordCount         int                    `json:"command_record_count"`
-	CommandMetadataSanitized   bool                   `json:"command_metadata_sanitized"`
-	CommandArgvSanitized       bool                   `json:"command_argv_sanitized"`
-	CommandCWDLabel            string                 `json:"command_cwd_label,omitempty"`
-	CommandSanitizationStatus  string                 `json:"command_sanitization_status,omitempty"`
-	RawCommandTextPersisted    bool                   `json:"raw_command_text_persisted"`
-	RawEnvironmentPersisted    bool                   `json:"raw_environment_persisted"`
-	DryRunParityApplied        bool                   `json:"dry_run_parity_applied"`
-	DryRunParityStatus         string                 `json:"dry_run_parity_status,omitempty"`
+	Available                      bool                   `json:"available"`
+	Summary                        string                 `json:"summary"`
+	Details                        []string               `json:"details,omitempty"`
+	RedactionApplied               bool                   `json:"redaction_applied"`
+	WorkspaceGuardrailsApplied     bool                   `json:"workspace_guardrails_applied"`
+	RedactionCount                 int64                  `json:"redaction_count"`
+	SecretMaterialPresent          bool                   `json:"secret_material_present"`
+	RootLabels                     []string               `json:"root_labels,omitempty"`
+	GuardedRoots                   []runAuditSecurityRoot `json:"guarded_roots,omitempty"`
+	DeniedPathCount                int                    `json:"denied_path_count"`
+	DeniedPathCategories           []string               `json:"denied_path_categories,omitempty"`
+	DeniedPathCategoryCounts       map[string]int         `json:"denied_path_category_counts,omitempty"`
+	FailureCategories              []string               `json:"failure_categories,omitempty"`
+	FailureCategoryCounts          map[string]int         `json:"failure_category_counts,omitempty"`
+	CommandRecordCount             int                    `json:"command_record_count"`
+	CommandMetadataSanitized       bool                   `json:"command_metadata_sanitized"`
+	CommandArgvSanitized           bool                   `json:"command_argv_sanitized"`
+	CommandCWDLabel                string                 `json:"command_cwd_label,omitempty"`
+	CommandSanitizationStatus      string                 `json:"command_sanitization_status,omitempty"`
+	RawCommandTextPersisted        bool                   `json:"raw_command_text_persisted"`
+	RawEnvironmentPersisted        bool                   `json:"raw_environment_persisted"`
+	DryRunParityApplied            bool                   `json:"dry_run_parity_applied"`
+	DryRunParityStatus             string                 `json:"dry_run_parity_status,omitempty"`
+	GitDiffArtifactsAvailable      bool                   `json:"git_diff_artifacts_available"`
+	GitDiffRedactionApplied        bool                   `json:"git_diff_redaction_applied"`
+	GitDiffRedactionCount          int                    `json:"git_diff_redaction_count,omitempty"`
+	GitDiffRedactionCategories     []string               `json:"git_diff_redaction_categories,omitempty"`
+	GitDiffRedactionCategoryCounts map[string]int         `json:"git_diff_redaction_category_counts,omitempty"`
+	GitDiffArtifactLabels          []string               `json:"git_diff_artifact_labels,omitempty"`
 }
 
 type runAuditSecurityRoot struct {
@@ -1455,29 +1462,35 @@ func runAuditSecurityFromManifest(securityMeta runpkg.ManifestSecurity) runAudit
 		deniedPathCount = 0
 	}
 	return runAuditSecurity{
-		Available:                  true,
-		Summary:                    summary,
-		Details:                    details,
-		RedactionApplied:           securityMeta.RedactionApplied,
-		WorkspaceGuardrailsApplied: securityMeta.WorkspaceGuardrailsApplied,
-		RedactionCount:             redactionCount,
-		SecretMaterialPresent:      diag.SecretMaterialPresent,
-		RootLabels:                 dashboardCategoryList(diag.RootLabels, "root"),
-		GuardedRoots:               runAuditSecurityRoots(diag.GuardedRoots),
-		DeniedPathCount:            deniedPathCount,
-		DeniedPathCategories:       dashboardCategoryList(diag.DeniedPathCategories, "path_denied"),
-		DeniedPathCategoryCounts:   runAuditCategoryCounts(diag.DeniedPathCategoryCounts, "path_denied"),
-		FailureCategories:          dashboardCategoryList(diag.FailureCategories, "security_failure"),
-		FailureCategoryCounts:      runAuditCategoryCounts(diag.FailureCategoryCounts, "security_failure"),
-		CommandRecordCount:         maxInt(diag.CommandRecordCount, 0),
-		CommandMetadataSanitized:   diag.CommandMetadataSanitized,
-		CommandArgvSanitized:       diag.CommandArgvSanitized,
-		CommandCWDLabel:            runAuditSecurityLabel(diag.CommandCWDLabel, "[workspace]"),
-		CommandSanitizationStatus:  dashboardCategory(diag.CommandSanitizationStatus, "unknown"),
-		RawCommandTextPersisted:    diag.RawCommandTextPersisted,
-		RawEnvironmentPersisted:    diag.RawEnvironmentPersisted,
-		DryRunParityApplied:        diag.DryRunParityApplied,
-		DryRunParityStatus:         dashboardCategory(diag.DryRunParityStatus, "unknown"),
+		Available:                      true,
+		Summary:                        summary,
+		Details:                        details,
+		RedactionApplied:               securityMeta.RedactionApplied,
+		WorkspaceGuardrailsApplied:     securityMeta.WorkspaceGuardrailsApplied,
+		RedactionCount:                 redactionCount,
+		SecretMaterialPresent:          diag.SecretMaterialPresent,
+		RootLabels:                     dashboardCategoryList(diag.RootLabels, "root"),
+		GuardedRoots:                   runAuditSecurityRoots(diag.GuardedRoots),
+		DeniedPathCount:                deniedPathCount,
+		DeniedPathCategories:           dashboardCategoryList(diag.DeniedPathCategories, "path_denied"),
+		DeniedPathCategoryCounts:       runAuditCategoryCounts(diag.DeniedPathCategoryCounts, "path_denied"),
+		FailureCategories:              dashboardCategoryList(diag.FailureCategories, "security_failure"),
+		FailureCategoryCounts:          runAuditCategoryCounts(diag.FailureCategoryCounts, "security_failure"),
+		CommandRecordCount:             maxInt(diag.CommandRecordCount, 0),
+		CommandMetadataSanitized:       diag.CommandMetadataSanitized,
+		CommandArgvSanitized:           diag.CommandArgvSanitized,
+		CommandCWDLabel:                runAuditSecurityLabel(diag.CommandCWDLabel, "[workspace]"),
+		CommandSanitizationStatus:      dashboardCategory(diag.CommandSanitizationStatus, "unknown"),
+		RawCommandTextPersisted:        diag.RawCommandTextPersisted,
+		RawEnvironmentPersisted:        diag.RawEnvironmentPersisted,
+		DryRunParityApplied:            diag.DryRunParityApplied,
+		DryRunParityStatus:             dashboardCategory(diag.DryRunParityStatus, "unknown"),
+		GitDiffArtifactsAvailable:      diag.GitDiffArtifactsAvailable,
+		GitDiffRedactionApplied:        diag.GitDiffRedactionApplied,
+		GitDiffRedactionCount:          maxInt(diag.GitDiffRedactionCount, 0),
+		GitDiffRedactionCategories:     dashboardCategoryList(diag.GitDiffRedactionCategories, "redaction"),
+		GitDiffRedactionCategoryCounts: runAuditCategoryCounts(diag.GitDiffRedactionCategoryCounts, "redaction"),
+		GitDiffArtifactLabels:          dashboardCategoryList(diag.GitDiffArtifactLabels, "artifact"),
 	}
 }
 
@@ -1654,6 +1667,9 @@ func sanitizeRunAuditSecurity(securityMeta runAuditSecurity, roots ...security.C
 	securityMeta.CommandCWDLabel = runAuditSecurityLabel(securityMeta.CommandCWDLabel, "")
 	securityMeta.CommandSanitizationStatus = dashboardCategory(securityMeta.CommandSanitizationStatus, "")
 	securityMeta.DryRunParityStatus = dashboardCategory(securityMeta.DryRunParityStatus, "")
+	securityMeta.GitDiffRedactionCategories = dashboardCategoryList(securityMeta.GitDiffRedactionCategories, "redaction")
+	securityMeta.GitDiffRedactionCategoryCounts = runAuditCategoryCounts(securityMeta.GitDiffRedactionCategoryCounts, "redaction")
+	securityMeta.GitDiffArtifactLabels = dashboardCategoryList(securityMeta.GitDiffArtifactLabels, "artifact")
 	if securityMeta.RedactionCount < 0 {
 		securityMeta.RedactionCount = 0
 	}
@@ -1662,6 +1678,9 @@ func sanitizeRunAuditSecurity(securityMeta runAuditSecurity, roots ...security.C
 	}
 	if securityMeta.CommandRecordCount < 0 {
 		securityMeta.CommandRecordCount = 0
+	}
+	if securityMeta.GitDiffRedactionCount < 0 {
+		securityMeta.GitDiffRedactionCount = 0
 	}
 	return securityMeta
 }
@@ -2685,6 +2704,9 @@ func dashboardSecurityDiagnostics(securityMeta runpkg.ManifestSecurity) (string,
 		commandStatus,
 		parityStatus,
 	)
+	if diag.GitDiffRedactionApplied || diag.GitDiffArtifactsAvailable {
+		summary += fmt.Sprintf(" · git diff redactions %d", maxInt(diag.GitDiffRedactionCount, 0))
+	}
 	var details []string
 	if roots := dashboardCategoryList(diag.RootLabels, "root"); len(roots) > 0 {
 		details = append(details, "roots "+strings.Join(roots, ", "))
@@ -2694,6 +2716,15 @@ func dashboardSecurityDiagnostics(securityMeta runpkg.ManifestSecurity) (string,
 	}
 	if categories := dashboardCategoryList(diag.FailureCategories, "security_failure"); len(categories) > 0 {
 		details = append(details, "failure categories "+strings.Join(categories, ", "))
+	}
+	if diag.GitDiffRedactionApplied || diag.GitDiffArtifactsAvailable {
+		details = append(details, fmt.Sprintf("git diff artifacts available %t", diag.GitDiffArtifactsAvailable))
+		if categories := dashboardCategoryList(diag.GitDiffRedactionCategories, "redaction"); len(categories) > 0 {
+			details = append(details, "git diff categories "+strings.Join(categories, ", "))
+		}
+		if labels := dashboardCategoryList(diag.GitDiffArtifactLabels, "artifact"); len(labels) > 0 {
+			details = append(details, "git diff artifacts "+strings.Join(labels, ", "))
+		}
 	}
 	return summary, details
 }

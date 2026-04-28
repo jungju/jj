@@ -66,6 +66,12 @@ func refreshManifestSecurityDiagnostics(manifest *Manifest, redactionCount int64
 	diag.CommandCWDLabel = "[workspace]"
 	diag.DryRunParityApplied = true
 	diag.DryRunParityStatus = "equivalent"
+	diag.GitDiffArtifactsAvailable = manifestGitDiffArtifactsAvailable(manifest.Git)
+	diag.GitDiffRedactionApplied = manifest.Git.DiffRedactionApplied
+	diag.GitDiffRedactionCount = manifest.Git.DiffRedactionCount
+	diag.GitDiffRedactionCategoryCounts = manifest.Git.DiffRedactionCategoryCounts
+	diag.GitDiffRedactionCategories = manifest.Git.DiffRedactionCategories
+	diag.GitDiffArtifactLabels = manifest.Git.DiffArtifactLabels
 	manifest.Security.Diagnostics = sanitizeManifestSecurityDiagnostics(diag)
 }
 
@@ -90,7 +96,21 @@ func sanitizeManifestSecurityDiagnostics(diag ManifestSecurityDiagnostics) Manif
 	diag.DeniedPathCount = sumSecurityCounts(diag.DeniedPathCategoryCounts)
 	diag.FailureCategoryCounts = sanitizeSecurityCategoryCounts(diag.FailureCategoryCounts, "security_failure")
 	diag.FailureCategories = sortedSecurityCategories(diag.FailureCategoryCounts)
+	if diag.GitDiffRedactionCount < 0 {
+		diag.GitDiffRedactionCount = 0
+	}
+	diag.GitDiffRedactionCategoryCounts = sanitizeSecurityCategoryCounts(diag.GitDiffRedactionCategoryCounts, "redaction")
+	diag.GitDiffRedactionCategories = sortedSecurityCategories(diag.GitDiffRedactionCategoryCounts)
+	diag.GitDiffArtifactLabels = sanitizeSecurityLabels(diag.GitDiffArtifactLabels)
 	return diag
+}
+
+func manifestGitDiffArtifactsAvailable(git ManifestGit) bool {
+	return strings.TrimSpace(git.DiffPath) != "" ||
+		strings.TrimSpace(git.DiffStatPath) != "" ||
+		strings.TrimSpace(git.DiffSummaryPath) != "" ||
+		strings.TrimSpace(git.StatusPath) != "" ||
+		strings.TrimSpace(git.StatusAfterPath) != ""
 }
 
 func manifestCommandRecordCount(manifest Manifest) int {

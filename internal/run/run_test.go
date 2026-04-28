@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/jungju/jj/internal/codex"
 	ai "github.com/jungju/jj/internal/openai"
+	"github.com/jungju/jj/internal/security"
 )
 
 func TestExecuteRejectsInvalidPlanningAgents(t *testing.T) {
@@ -1933,6 +1935,9 @@ func TestExecuteRedactsGitBaselineArtifact(t *testing.T) {
 				"rev-parse HEAD":            "abc123",
 				"branch --show-current":     "feature/super-secret-value",
 				"status --short":            "",
+				"diff --stat":               "",
+				"diff --name-status":        "",
+				"diff --binary":             "",
 			},
 		},
 	})
@@ -2296,6 +2301,118 @@ func TestExecuteValidationFailureCapturesFinalGitDiff(t *testing.T) {
 	assertNoFile(t, filepath.Join(dir, ".jj", "runs", "validation-fail-final-diff", "snapshots", "eval.json"))
 }
 
+func TestExecuteGitDiffArtifactsPersistRedactedEvidenceInDryRunAndFullRun(t *testing.T) {
+	secret := "diff-redaction-secret-value"
+	openAIKey := "sk-proj-diffredaction1234567890"
+	privateKeyBody := "diff-redaction-private-key-body"
+	tokenLike := "AbCdEfGhIjKlMnOpQrStUvWxYz1234567890QwErTy"
+	t.Setenv("JJ_DIFF_REDACTION_TOKEN", secret)
+
+	type diffEvidence struct {
+		count  int
+		kinds  map[string]int
+		labels []string
+	}
+	var baseline *diffEvidence
+	for _, tc := range []struct {
+		name   string
+		dryRun bool
+	}{
+		{name: "dry-run", dryRun: true},
+		{name: "full-run", dryRun: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writePlan(t, dir, "plan.md")
+			if !tc.dryRun {
+				writeValidationScript(t, dir, "printf 'ok\\n'")
+			}
+			unsafeAbs := filepath.Join(t.TempDir(), "unsafe", "secret.txt")
+			outputs := hostileGitDiffOutputs(dir, unsafeAbs, secret, openAIKey, privateKeyBody, tokenLike)
+
+			result, err := Execute(context.Background(), Config{
+				PlanPath:       filepath.Join(dir, "plan.md"),
+				CWD:            dir,
+				RunID:          "diff-redaction-" + strings.ReplaceAll(tc.name, "-", ""),
+				PlanningAgents: 1,
+				OpenAIModel:    "test-model",
+				DryRun:         tc.dryRun,
+				DryRunExplicit: true,
+				Stdout:         io.Discard,
+				Stderr:         io.Discard,
+				Planner:        &fakePlanner{},
+				CodexRunner:    &fakeCodexRunner{},
+				GitRunner:      fakeGitRunner{outputs: outputs},
+			})
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+
+			for _, rel := range []string{
+				"git/diff.patch",
+				"git/diff-summary.txt",
+				"git/diff.stat.txt",
+				"git/status.txt",
+				"git/status.after.txt",
+			} {
+				body := readFile(t, filepath.Join(result.RunDir, filepath.FromSlash(rel)))
+				for _, leaked := range []string{
+					secret,
+					openAIKey,
+					privateKeyBody,
+					tokenLike,
+					"-----BEGIN PRIVATE KEY-----",
+					"-----END PRIVATE KEY-----",
+					unsafeAbs,
+					filepath.ToSlash(unsafeAbs),
+					"[omitted]",
+					"../denied/" + secret,
+				} {
+					if strings.Contains(body, leaked) {
+						t.Fatalf("%s leaked %q:\n%s", rel, leaked, body)
+					}
+				}
+			}
+			diffBody := readFile(t, filepath.Join(result.RunDir, "git", "diff.patch"))
+			if !strings.Contains(diffBody, security.RedactionMarker) || !strings.Contains(diffBody, "[path]") {
+				t.Fatalf("diff artifact should retain sanitized redaction evidence:\n%s", diffBody)
+			}
+
+			manifest := readManifest(t, filepath.Join(result.RunDir, "manifest.json"))
+			if manifest.Git.DiffPath != "git/diff.patch" ||
+				manifest.Git.DiffSummaryPath != "git/diff-summary.txt" ||
+				manifest.Git.DiffStatPath != "git/diff.stat.txt" ||
+				!manifest.Git.DiffRedactionApplied ||
+				manifest.Git.DiffRedactionCount == 0 {
+				t.Fatalf("manifest missing git diff redaction evidence: %#v", manifest.Git)
+			}
+			diag := manifest.Security.Diagnostics
+			if !diag.GitDiffArtifactsAvailable ||
+				!diag.GitDiffRedactionApplied ||
+				diag.GitDiffRedactionCount != manifest.Git.DiffRedactionCount ||
+				!reflect.DeepEqual(diag.GitDiffRedactionCategoryCounts, manifest.Git.DiffRedactionCategoryCounts) ||
+				!reflect.DeepEqual(diag.GitDiffArtifactLabels, manifest.Git.DiffArtifactLabels) {
+				t.Fatalf("security diagnostics did not mirror sanitized diff evidence:\ngit=%#v\ndiag=%#v", manifest.Git, diag)
+			}
+			for _, want := range []string{"absolute_path", "private_key", "openai_key", "token_like"} {
+				if diag.GitDiffRedactionCategoryCounts[want] == 0 {
+					t.Fatalf("diff redaction categories missing %q: %#v", want, diag.GitDiffRedactionCategoryCounts)
+				}
+			}
+			got := diffEvidence{
+				count:  manifest.Git.DiffRedactionCount,
+				kinds:  manifest.Git.DiffRedactionCategoryCounts,
+				labels: manifest.Git.DiffArtifactLabels,
+			}
+			if baseline == nil {
+				baseline = &got
+			} else if baseline.count != got.count || !reflect.DeepEqual(baseline.kinds, got.kinds) || !reflect.DeepEqual(baseline.labels, got.labels) {
+				t.Fatalf("dry-run/full-run diff evidence diverged:\nbase=%#v\ngot=%#v", baseline, got)
+			}
+		})
+	}
+}
+
 type fakePlanner struct {
 	mu                sync.Mutex
 	draftIDs          []string
@@ -2495,6 +2612,33 @@ func (f fakeGitRunner) Output(_ context.Context, _ string, args ...string) (stri
 		return value, nil
 	}
 	return value + "\n", nil
+}
+
+func hostileGitDiffOutputs(root, unsafeAbs, secret, openAIKey, privateKeyBody, tokenLike string) map[string]string {
+	privateKey := "-----BEGIN PRIVATE KEY-----\n" + privateKeyBody + "\n-----END PRIVATE KEY-----"
+	full := fmt.Sprintf(`diff --git a/config.txt b/config.txt
+--- a/config.txt
++++ b/config.txt
+@@ -1 +1,10 @@
++api_key=%s
++Authorization: Bearer %s
++%s
++%s
++path=%s
++command=./scripts/deploy --token %s
++opaque=%s
++placeholder=[omitted]
++secret_path=../denied/%s
+`, secret, openAIKey, openAIKey, privateKey, unsafeAbs, secret, tokenLike, secret)
+	return map[string]string{
+		"rev-parse --show-toplevel": root,
+		"rev-parse HEAD":            "abc123",
+		"branch --show-current":     "main",
+		"status --short":            "M config.txt",
+		"diff --stat":               " " + unsafeAbs + " | 10 ++++++++++",
+		"diff --name-status":        "M\t" + unsafeAbs,
+		"diff --binary":             full,
+	}
 }
 
 func (s *scriptedCodexPlannerRunner) Run(_ context.Context, req codex.Request) (codex.Result, error) {

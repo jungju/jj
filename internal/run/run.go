@@ -124,25 +124,31 @@ type ManifestSecurity struct {
 }
 
 type ManifestSecurityDiagnostics struct {
-	Version                   string                 `json:"version"`
-	Redacted                  bool                   `json:"redacted"`
-	SecretMaterialPresent     bool                   `json:"secret_material_present"`
-	GuardedRoots              []ManifestSecurityRoot `json:"guarded_roots"`
-	RootLabels                []string               `json:"root_labels"`
-	DeniedPathCount           int                    `json:"denied_path_count"`
-	DeniedPathCategories      []string               `json:"denied_path_categories"`
-	DeniedPathCategoryCounts  map[string]int         `json:"denied_path_category_counts"`
-	FailureCategories         []string               `json:"failure_categories"`
-	FailureCategoryCounts     map[string]int         `json:"failure_category_counts"`
-	CommandRecordCount        int                    `json:"command_record_count"`
-	CommandMetadataSanitized  bool                   `json:"command_metadata_sanitized"`
-	CommandArgvSanitized      bool                   `json:"command_argv_sanitized"`
-	CommandCWDLabel           string                 `json:"command_cwd_label"`
-	CommandSanitizationStatus string                 `json:"command_sanitization_status"`
-	RawCommandTextPersisted   bool                   `json:"raw_command_text_persisted"`
-	RawEnvironmentPersisted   bool                   `json:"raw_environment_persisted"`
-	DryRunParityApplied       bool                   `json:"dry_run_parity_applied"`
-	DryRunParityStatus        string                 `json:"dry_run_parity_status"`
+	Version                        string                 `json:"version"`
+	Redacted                       bool                   `json:"redacted"`
+	SecretMaterialPresent          bool                   `json:"secret_material_present"`
+	GuardedRoots                   []ManifestSecurityRoot `json:"guarded_roots"`
+	RootLabels                     []string               `json:"root_labels"`
+	DeniedPathCount                int                    `json:"denied_path_count"`
+	DeniedPathCategories           []string               `json:"denied_path_categories"`
+	DeniedPathCategoryCounts       map[string]int         `json:"denied_path_category_counts"`
+	FailureCategories              []string               `json:"failure_categories"`
+	FailureCategoryCounts          map[string]int         `json:"failure_category_counts"`
+	CommandRecordCount             int                    `json:"command_record_count"`
+	CommandMetadataSanitized       bool                   `json:"command_metadata_sanitized"`
+	CommandArgvSanitized           bool                   `json:"command_argv_sanitized"`
+	CommandCWDLabel                string                 `json:"command_cwd_label"`
+	CommandSanitizationStatus      string                 `json:"command_sanitization_status"`
+	RawCommandTextPersisted        bool                   `json:"raw_command_text_persisted"`
+	RawEnvironmentPersisted        bool                   `json:"raw_environment_persisted"`
+	DryRunParityApplied            bool                   `json:"dry_run_parity_applied"`
+	DryRunParityStatus             string                 `json:"dry_run_parity_status"`
+	GitDiffArtifactsAvailable      bool                   `json:"git_diff_artifacts_available"`
+	GitDiffRedactionApplied        bool                   `json:"git_diff_redaction_applied"`
+	GitDiffRedactionCount          int                    `json:"git_diff_redaction_count,omitempty"`
+	GitDiffRedactionCategories     []string               `json:"git_diff_redaction_categories,omitempty"`
+	GitDiffRedactionCategoryCounts map[string]int         `json:"git_diff_redaction_category_counts,omitempty"`
+	GitDiffArtifactLabels          []string               `json:"git_diff_artifact_labels,omitempty"`
 }
 
 type ManifestSecurityRoot struct {
@@ -151,33 +157,38 @@ type ManifestSecurityRoot struct {
 }
 
 type ManifestGit struct {
-	Available              bool     `json:"available"`
-	IsRepo                 bool     `json:"is_repo"`
-	Root                   string   `json:"root,omitempty"`
-	Branch                 string   `json:"branch,omitempty"`
-	Head                   string   `json:"head,omitempty"`
-	InitialStatus          string   `json:"initial_status,omitempty"`
-	FinalStatus            string   `json:"final_status,omitempty"`
-	DirtyBefore            bool     `json:"dirty_before"`
-	DirtyAfter             bool     `json:"dirty_after"`
-	Dirty                  bool     `json:"dirty"`
-	NoGit                  bool     `json:"no_git"`
-	BaselinePath           string   `json:"baseline_path,omitempty"`
-	BaselineTextPath       string   `json:"baseline_text_path,omitempty"`
-	StatusBeforePath       string   `json:"status_before_path,omitempty"`
-	StatusAfterPath        string   `json:"status_after_path,omitempty"`
-	StatusPath             string   `json:"status_path,omitempty"`
-	DiffPath               string   `json:"diff_path,omitempty"`
-	DiffStatPath           string   `json:"diff_stat_path,omitempty"`
-	DiffSummaryPath        string   `json:"diff_summary_path,omitempty"`
-	UntrackedAvailable     bool     `json:"untracked_available"`
-	UntrackedCount         int      `json:"untracked_count,omitempty"`
-	UntrackedCapturedCount int      `json:"untracked_captured_count,omitempty"`
-	UntrackedSkippedCount  int      `json:"untracked_skipped_count,omitempty"`
-	UntrackedFilesPath     string   `json:"untracked_files_path,omitempty"`
-	UntrackedPatchPath     string   `json:"untracked_patch_path,omitempty"`
-	UntrackedSummaryPath   string   `json:"untracked_summary_path,omitempty"`
-	Warnings               []string `json:"warnings,omitempty"`
+	Available                   bool           `json:"available"`
+	IsRepo                      bool           `json:"is_repo"`
+	Root                        string         `json:"root,omitempty"`
+	Branch                      string         `json:"branch,omitempty"`
+	Head                        string         `json:"head,omitempty"`
+	InitialStatus               string         `json:"initial_status,omitempty"`
+	FinalStatus                 string         `json:"final_status,omitempty"`
+	DirtyBefore                 bool           `json:"dirty_before"`
+	DirtyAfter                  bool           `json:"dirty_after"`
+	Dirty                       bool           `json:"dirty"`
+	NoGit                       bool           `json:"no_git"`
+	BaselinePath                string         `json:"baseline_path,omitempty"`
+	BaselineTextPath            string         `json:"baseline_text_path,omitempty"`
+	StatusBeforePath            string         `json:"status_before_path,omitempty"`
+	StatusAfterPath             string         `json:"status_after_path,omitempty"`
+	StatusPath                  string         `json:"status_path,omitempty"`
+	DiffPath                    string         `json:"diff_path,omitempty"`
+	DiffStatPath                string         `json:"diff_stat_path,omitempty"`
+	DiffSummaryPath             string         `json:"diff_summary_path,omitempty"`
+	DiffRedactionApplied        bool           `json:"diff_redaction_applied"`
+	DiffRedactionCount          int            `json:"diff_redaction_count,omitempty"`
+	DiffRedactionCategories     []string       `json:"diff_redaction_categories,omitempty"`
+	DiffRedactionCategoryCounts map[string]int `json:"diff_redaction_category_counts,omitempty"`
+	DiffArtifactLabels          []string       `json:"diff_artifact_labels,omitempty"`
+	UntrackedAvailable          bool           `json:"untracked_available"`
+	UntrackedCount              int            `json:"untracked_count,omitempty"`
+	UntrackedCapturedCount      int            `json:"untracked_captured_count,omitempty"`
+	UntrackedSkippedCount       int            `json:"untracked_skipped_count,omitempty"`
+	UntrackedFilesPath          string         `json:"untracked_files_path,omitempty"`
+	UntrackedPatchPath          string         `json:"untracked_patch_path,omitempty"`
+	UntrackedSummaryPath        string         `json:"untracked_summary_path,omitempty"`
+	Warnings                    []string       `json:"warnings,omitempty"`
 }
 
 type ManifestPlanner struct {
@@ -812,12 +823,76 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	record("tasks_state", filepath.Join(store.RunDir, "snapshots", "tasks.after.json"))
 	writeManifest(StatusPlanning, false)
 
+	recordGitDiff := func(diff GitDiff, report security.RedactionReport) error {
+		manifest.Git.FinalStatus = diff.Status
+		manifest.Git.DirtyAfter = dirtyFromGitStatus(diff.Status)
+		manifest.Git.Dirty = manifest.Git.DirtyAfter
+		manifest.Git.DiffRedactionApplied = true
+		manifest.Git.DiffRedactionCount = report.Count
+		manifest.Git.DiffRedactionCategoryCounts = redactionCategoryCounts(report.Kinds)
+		manifest.Git.DiffRedactionCategories = sortedSecurityCategories(manifest.Git.DiffRedactionCategoryCounts)
+		manifest.Git.DiffArtifactLabels = gitDiffArtifactLabels()
+		if p, err := store.WriteString("git/diff.patch", diff.Full+"\n"); err != nil {
+			return err
+		} else {
+			record("git_diff", p)
+			manifest.Git.DiffPath = "git/diff.patch"
+		}
+		if p, err := store.WriteString("git/status.txt", diff.Status+"\n"); err != nil {
+			return err
+		} else {
+			record("git_status", p)
+			manifest.Git.StatusPath = "git/status.txt"
+		}
+		if p, err := store.WriteString("git/status.after.txt", diff.Status+"\n"); err != nil {
+			return err
+		} else {
+			record("git_status_after", p)
+			manifest.Git.StatusAfterPath = "git/status.after.txt"
+		}
+		if p, err := store.WriteString("git/diff-summary.txt", diff.Markdown()); err != nil {
+			return err
+		} else {
+			record("git_diff_summary", p)
+			manifest.Git.DiffSummaryPath = "git/diff-summary.txt"
+		}
+		if p, err := store.WriteString("git/diff.stat.txt", emptyAsNone(diff.Stat)+"\n"); err != nil {
+			return err
+		} else {
+			record("git_diff_stat", p)
+			manifest.Git.DiffStatPath = "git/diff.stat.txt"
+		}
+		manifest.Security.Diagnostics.GitDiffArtifactsAvailable = true
+		manifest.Security.Diagnostics.GitDiffRedactionApplied = true
+		manifest.Security.Diagnostics.GitDiffRedactionCount = report.Count
+		manifest.Security.Diagnostics.GitDiffRedactionCategoryCounts = manifest.Git.DiffRedactionCategoryCounts
+		manifest.Security.Diagnostics.GitDiffRedactionCategories = manifest.Git.DiffRedactionCategories
+		manifest.Security.Diagnostics.GitDiffArtifactLabels = manifest.Git.DiffArtifactLabels
+		return nil
+	}
+	captureAndRecordGitDiff := func(label string) (GitDiff, error) {
+		diff, err := CaptureGitDiff(ctx, cfg.CWD, gitState.Available, cfg.GitRunner)
+		if err != nil {
+			return GitDiff{}, fmt.Errorf("capture %s git diff: %w", label, err)
+		}
+		redacted, report := redactGitDiff(diff, cfg.CWD, store.RunDir)
+		store.RecordRedactionReport(report)
+		if err := recordGitDiff(redacted, report); err != nil {
+			return GitDiff{}, err
+		}
+		return redacted, nil
+	}
+
 	if cfg.DryRun {
 		if p, err := writeSnapshotJSON(store, "snapshots/spec.after.json", plannedSpecState); err != nil {
 			return fail(StatusPlanningFailed, err)
 		} else {
 			record("snapshot_spec_after", p)
 			record("spec_state", filepath.Join(store.RunDir, "snapshots", "spec.after.json"))
+		}
+		fmt.Fprintln(cfg.Stdout, "jj: capturing git diff")
+		if _, err := captureAndRecordGitDiff("dry-run"); err != nil {
+			return fail(StatusPlanningFailed, err)
 		}
 		manifest.Codex = ManifestCodex{Ran: false, Skipped: true, Status: "skipped", Model: cfg.CodexModel}
 		manifest.Validation = ManifestValidation{
@@ -950,42 +1025,6 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		addRisks("Raw validation evidence unavailable: " + emptyFallback(validation.Reason, validation.Summary))
 	}
 	writeManifest(StatusImplementing, false)
-
-	recordGitDiff := func(diff GitDiff) error {
-		manifest.Git.FinalStatus = diff.Status
-		manifest.Git.DirtyAfter = dirtyFromGitStatus(diff.Status)
-		if p, err := store.WriteString("git/diff.patch", diff.Full+"\n"); err != nil {
-			return err
-		} else {
-			record("git_diff", p)
-			manifest.Git.DiffPath = "git/diff.patch"
-		}
-		if p, err := store.WriteString("git/status.txt", diff.Status+"\n"); err != nil {
-			return err
-		} else {
-			record("git_status", p)
-			manifest.Git.StatusPath = "git/status.txt"
-		}
-		if p, err := store.WriteString("git/status.after.txt", diff.Status+"\n"); err != nil {
-			return err
-		} else {
-			record("git_status_after", p)
-			manifest.Git.StatusAfterPath = "git/status.after.txt"
-		}
-		if p, err := store.WriteString("git/diff-summary.txt", diff.Markdown()); err != nil {
-			return err
-		} else {
-			record("git_diff_summary", p)
-			manifest.Git.DiffSummaryPath = "git/diff-summary.txt"
-		}
-		if p, err := store.WriteString("git/diff.stat.txt", emptyAsNone(diff.Stat)+"\n"); err != nil {
-			return err
-		} else {
-			record("git_diff_stat", p)
-			manifest.Git.DiffStatPath = "git/diff.stat.txt"
-		}
-		return nil
-	}
 	recordUntrackedEvidence := func(evidence UntrackedEvidence) error {
 		manifest.Git.UntrackedAvailable = evidence.Available
 		manifest.Git.UntrackedCount = len(evidence.Files)
@@ -1018,12 +1057,8 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	}
 
 	fmt.Fprintln(cfg.Stdout, "jj: capturing git diff")
-	diff, err := CaptureGitDiff(ctx, cfg.CWD, gitState.Available, cfg.GitRunner)
+	diff, err := captureAndRecordGitDiff("current")
 	if err != nil {
-		return fail(StatusImplementationFailed, fmt.Errorf("capture git diff: %w", err))
-	}
-	diff = redactGitDiff(diff)
-	if err := recordGitDiff(diff); err != nil {
 		return fail(StatusImplementationFailed, err)
 	}
 	untracked, err := CaptureUntrackedEvidence(ctx, cfg.CWD, gitState.Available, cfg.GitRunner)
@@ -1082,13 +1117,8 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		record("snapshot_spec_after", p)
 		record("spec_state", filepath.Join(store.RunDir, "snapshots", "spec.after.json"))
 	}
-	if finalDiff, err := CaptureGitDiff(ctx, cfg.CWD, gitState.Available, cfg.GitRunner); err != nil {
-		return fail(StatusImplementationFailed, fmt.Errorf("capture final git diff: %w", err))
-	} else {
-		finalDiff = redactGitDiff(finalDiff)
-		if err := recordGitDiff(finalDiff); err != nil {
-			return fail(StatusImplementationFailed, err)
-		}
+	if _, err := captureAndRecordGitDiff("final"); err != nil {
+		return fail(StatusImplementationFailed, err)
 	}
 	if finalUntracked, err := CaptureUntrackedEvidence(ctx, cfg.CWD, gitState.Available, cfg.GitRunner); err != nil {
 		return fail(StatusImplementationFailed, fmt.Errorf("capture final untracked evidence: %w", err))
@@ -1437,12 +1467,61 @@ func appendUniquePlanning(dst []string, seen map[string]bool, items ...string) [
 	return dst
 }
 
-func redactGitDiff(diff GitDiff) GitDiff {
-	diff.Status = redactSecrets(diff.Status)
-	diff.Stat = redactSecrets(diff.Stat)
-	diff.NameStatus = redactSecrets(diff.NameStatus)
-	diff.Full = redactSecrets(diff.Full)
-	return diff
+func redactGitDiff(diff GitDiff, roots ...string) (GitDiff, security.RedactionReport) {
+	commandRoots := make([]security.CommandPathRoot, 0, len(roots))
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		label := "[path]"
+		switch len(commandRoots) {
+		case 0:
+			label = "[workspace]"
+		case 1:
+			label = "[run]"
+		}
+		commandRoots = append(commandRoots, security.CommandPathRoot{Path: root, Label: label})
+	}
+	report := security.RedactionReport{}
+	diff.Status = sanitizeGitDiffText(diff.Status, &report, commandRoots...)
+	diff.Stat = sanitizeGitDiffText(diff.Stat, &report, commandRoots...)
+	diff.NameStatus = sanitizeGitDiffText(diff.NameStatus, &report, commandRoots...)
+	diff.Full = sanitizeGitDiffText(diff.Full, &report, commandRoots...)
+	return diff, report
+}
+
+func sanitizeGitDiffText(text string, report *security.RedactionReport, roots ...security.CommandPathRoot) string {
+	redacted, textReport := security.SanitizeDisplayStringWithReport(text, roots...)
+	if report != nil {
+		report.Merge(textReport)
+	}
+	return redacted
+}
+
+func redactionCategoryCounts(kinds map[string]int) map[string]int {
+	out := map[string]int{}
+	for kind, count := range kinds {
+		if count <= 0 {
+			continue
+		}
+		category := safeSecurityCategory(kind, "redaction")
+		if category == "" {
+			category = "redaction"
+		}
+		out[category] += count
+	}
+	return out
+}
+
+func gitDiffArtifactLabels() []string {
+	return []string{
+		"git_diff",
+		"git_diff_stat",
+		"git_diff_summary",
+		"git_status",
+		"git_status_after",
+	}
 }
 
 func validateCWD(cwd string) error {

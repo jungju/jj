@@ -437,6 +437,29 @@ func TestSanitizeCommandArgvRedactsSecretsAndRewritesKnownRoots(t *testing.T) {
 	}
 }
 
+func TestSanitizeDisplayStringWithReportLabelsPathsAndCountsRedactions(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside-secret.txt")
+	secret := "display-report-secret"
+	t.Setenv("JJ_DISPLAY_REPORT_TOKEN", secret)
+
+	got, report := SanitizeDisplayStringWithReport(
+		"workspace="+filepath.Join(root, "config.json")+" outside="+outside+" token="+secret,
+		CommandPathRoot{Path: root, Label: "[workspace]"},
+	)
+	for _, leaked := range []string{root, filepath.ToSlash(root), outside, filepath.ToSlash(outside), secret} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("display string leaked %q:\n%s", leaked, got)
+		}
+	}
+	if !strings.Contains(got, "[workspace]/config.json") || !strings.Contains(got, "[path]") || !strings.Contains(got, RedactionMarker) {
+		t.Fatalf("display string missing sanitized path/redaction evidence:\n%s", got)
+	}
+	if report.Kinds["path_label"] == 0 || report.Kinds["absolute_path"] == 0 || report.Kinds["configured_secret"] == 0 {
+		t.Fatalf("display redaction report missing expected safe categories: %#v", report)
+	}
+}
+
 func TestRedactTokenLikePreservesHexCommit(t *testing.T) {
 	sha := "0123456789abcdef0123456789abcdef01234567"
 	got := RedactString("commit " + sha)

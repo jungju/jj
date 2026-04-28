@@ -134,11 +134,11 @@ func TestSecurityReleaseGateGuardedArtifactsAndRunInspectionSurfaces(t *testing.
 		{name: "dashboard", target: "/", status: http.StatusOK, want: []string{fullID, "security redactions 6"}},
 		{name: "history", target: "/runs", status: http.StatusOK, want: []string{fullID, dryID, "compare"}},
 		{name: "history filtered dry", target: "/runs?dry_run=true&q=release", status: http.StatusOK, want: []string{dryID, "Filtered run history."}},
-		{name: "detail dry", target: "/runs/" + dryID, status: http.StatusOK, want: []string{dryID, "dry-run true", "security redactions 6", "dry-run parity equivalent"}},
+		{name: "detail dry", target: "/runs/" + dryID, status: http.StatusOK, want: []string{dryID, "dry-run true", "security redactions 6", "dry-run parity equivalent", "git diff redactions 3"}},
 		{name: "detail full", target: "/runs/" + fullID, status: http.StatusOK, want: []string{fullID, "dry-run false", "Codex command metadata", "Command Metadata"}},
 		{name: "legacy run query", target: "/run?id=" + fullID, status: http.StatusOK, want: []string{fullID, "manifest available"}},
 		{name: "compare", target: "/runs/compare?left=" + fullID + "&right=" + dryID, status: http.StatusOK, want: []string{"Left Run", "Right Run", fullID, dryID, "security redactions 6"}},
-		{name: "audit full", target: "/runs/audit?run=" + fullID, status: http.StatusOK, want: []string{`"state":"available"`, `"command_metadata_sanitized":true`, `"dry_run_parity_status":"equivalent"`}},
+		{name: "audit full", target: "/runs/audit?run=" + fullID, status: http.StatusOK, want: []string{`"state":"available"`, `"command_metadata_sanitized":true`, `"dry_run_parity_status":"equivalent"`, `"git_diff_redaction_applied":true`}},
 		{name: "audit path alias", target: "/runs/" + dryID + "/audit.json", status: http.StatusOK, want: []string{`"run_id":"` + dryID + `"`, `"state":"available"`}},
 		{name: "manifest sanitized", target: "/runs/" + fullID + "/manifest", status: http.StatusOK, want: []string{`"run_id": "` + fullID + `"`, `"raw_command_text_persisted": false`}},
 		{name: "validation artifact", target: "/artifact?run=" + fullID + "&path=validation/summary.md", status: http.StatusOK, want: []string{"validation passed"}},
@@ -306,7 +306,27 @@ func writeSecurityReleaseGateRun(t *testing.T, dir, runID string, dryRun bool, s
 			"validation_stdout": "validation/001-validate.stdout.txt",
 			"validation_stderr": "validation/001-validate.stderr.txt",
 			%s
+			"git_diff": "git/diff.patch",
+			"git_diff_stat": "git/diff.stat.txt",
+			"git_status": "git/status.txt",
+			"git_status_after": "git/status.after.txt",
 			"git_diff_summary": "git/diff-summary.txt"
+		},
+		"git": {
+			"available": true,
+			"is_repo": true,
+			"dirty_after": true,
+			"dirty": true,
+			"status_path": "git/status.txt",
+			"status_after_path": "git/status.after.txt",
+			"diff_path": "git/diff.patch",
+			"diff_stat_path": "git/diff.stat.txt",
+			"diff_summary_path": "git/diff-summary.txt",
+			"diff_redaction_applied": true,
+			"diff_redaction_count": 3,
+			"diff_redaction_categories": ["absolute_path", "openai_key", "private_key"],
+			"diff_redaction_category_counts": {"absolute_path": 1, "openai_key": 1, "private_key": 1},
+			"diff_artifact_labels": ["git_diff", "git_diff_stat", "git_diff_summary", "git_status", "git_status_after"]
 		},
 		"validation": {
 			"ran": true,
@@ -370,7 +390,13 @@ func writeSecurityReleaseGateRun(t *testing.T, dir, runID string, dryRun bool, s
 				"raw_command_text_persisted": false,
 				"raw_environment_persisted": false,
 				"dry_run_parity_applied": true,
-				"dry_run_parity_status": "equivalent"
+				"dry_run_parity_status": "equivalent",
+				"git_diff_artifacts_available": true,
+				"git_diff_redaction_applied": true,
+				"git_diff_redaction_count": 3,
+				"git_diff_redaction_categories": ["absolute_path", "openai_key", "private_key"],
+				"git_diff_redaction_category_counts": {"absolute_path": 1, "openai_key": 1, "private_key": 1},
+				"git_diff_artifact_labels": ["git_diff", "git_diff_stat", "git_diff_summary", "git_status", "git_status_after"]
 			}
 		}
 	}`, runID, status, dryRun, !dryRun, !dryRun, codexArtifacts, runID, codexRan, codexSkipped, codexStatus))
@@ -381,6 +407,10 @@ func writeSecurityReleaseGateRun(t *testing.T, dir, runID string, dryRun bool, s
 	writeFile(t, dir, ".jj/runs/"+runID+"/validation/results.json", `{"status":"passed","passed_count":1,"failed_count":0}`)
 	writeFile(t, dir, ".jj/runs/"+runID+"/validation/001-validate.stdout.txt", "category=security\n")
 	writeFile(t, dir, ".jj/runs/"+runID+"/validation/001-validate.stderr.txt", "\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/git/diff.patch", "diff redacted before persistence\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/git/diff.stat.txt", "diff stat redacted\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/git/status.txt", "M safe.txt\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/git/status.after.txt", "M safe.txt\n")
 	writeFile(t, dir, ".jj/runs/"+runID+"/git/diff-summary.txt", "no unsafe diff\n")
 	writeFile(t, dir, ".jj/runs/"+runID+"/codex/summary.md", "codex summary sanitized\n")
 	writeFile(t, dir, ".jj/runs/"+runID+"/codex/events.jsonl", `{"type":"done","status":"success"}`+"\n")
@@ -425,7 +455,10 @@ func assertSecurityReleaseGateParity(t *testing.T, dry, full runInspection) {
 		drySecurity.CommandMetadataSanitized != fullSecurity.CommandMetadataSanitized ||
 		drySecurity.CommandArgvSanitized != fullSecurity.CommandArgvSanitized ||
 		drySecurity.DryRunParityStatus != "equivalent" ||
-		fullSecurity.DryRunParityStatus != "equivalent" {
+		fullSecurity.DryRunParityStatus != "equivalent" ||
+		drySecurity.GitDiffArtifactsAvailable != fullSecurity.GitDiffArtifactsAvailable ||
+		drySecurity.GitDiffRedactionApplied != fullSecurity.GitDiffRedactionApplied ||
+		drySecurity.GitDiffRedactionCount != fullSecurity.GitDiffRedactionCount {
 		t.Fatalf("dry-run and non-dry-run security diagnostics diverged:\ndry=%#v\nfull=%#v", drySecurity, fullSecurity)
 	}
 }

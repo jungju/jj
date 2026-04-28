@@ -44,6 +44,7 @@ var (
 	secretKVQuotedPattern = regexp.MustCompile(`(?i)(["']?)([A-Za-z0-9_.-]*(?:api[_-]?key|[_.-]key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|password|secret|authorization|credential|cookie)[A-Za-z0-9_.-]*)(["']?\s*[:=]\s*)(["'])([^"'\r\n]+)(["'])`)
 	secretKVPattern       = regexp.MustCompile(`(?i)(["']?)([A-Za-z0-9_.-]*(?:api[_-]?key|[_.-]key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|password|secret|authorization|credential|cookie)[A-Za-z0-9_.-]*)(["']?\s*[:=]\s*)(["']?)([^"'\s,}&;#\r\n]+)(["']?)`)
 	tokenLikePattern      = regexp.MustCompile(`\b[A-Za-z0-9][A-Za-z0-9._~+=-]{31,}[A-Za-z0-9=]\b`)
+	absolutePathPattern   = regexp.MustCompile(`(^|[\s="'(])(/[^\s"'<>),}]+)`)
 )
 
 var (
@@ -464,7 +465,20 @@ func (r RedactionReport) KindNames() []string {
 }
 
 func SanitizeDisplayString(s string, roots ...CommandPathRoot) string {
-	return Redact(replaceCommandPaths(s, commandPathReplacements(roots...)))
+	redacted, _ := SanitizeDisplayStringWithReport(s, roots...)
+	return redacted
+}
+
+func SanitizeDisplayStringWithReport(s string, roots ...CommandPathRoot) (string, RedactionReport) {
+	report := RedactionReport{}
+	replaced := replaceCommandPaths(s, commandPathReplacements(roots...))
+	if replaced != s {
+		report.Add("path_label", 1)
+	}
+	replaced = redactAbsolutePathsWithReport(replaced, &report)
+	redacted, redactionReport := RedactStringWithReport(replaced)
+	report.Merge(redactionReport)
+	return redacted, report
 }
 
 func FilterEnv(env []string, allowNames ...string) []string {
@@ -699,6 +713,15 @@ func replacePatternWithReport(s string, pattern *regexp.Regexp, replacement stri
 	}
 	report.Add(kind, len(matches))
 	return pattern.ReplaceAllString(s, replacement)
+}
+
+func redactAbsolutePathsWithReport(s string, report *RedactionReport) string {
+	matches := absolutePathPattern.FindAllStringIndex(s, -1)
+	if len(matches) == 0 {
+		return s
+	}
+	report.Add("absolute_path", len(matches))
+	return absolutePathPattern.ReplaceAllString(s, "${1}[path]")
 }
 
 func redactSensitiveLinesWithReport(s string, report *RedactionReport) string {
@@ -979,7 +1002,10 @@ func isSecretPresenceKey(key string) bool {
 
 func isRedactionMetadataKey(key string) bool {
 	key = strings.ToLower(strings.TrimSpace(key))
-	return key == "redaction_kinds" || key == "redaction_kind_counts"
+	return key == "redaction_kinds" ||
+		key == "redaction_kind_counts" ||
+		strings.HasSuffix(key, "redaction_categories") ||
+		strings.HasSuffix(key, "redaction_category_counts")
 }
 
 func isJSONPrimitive(value string) bool {
