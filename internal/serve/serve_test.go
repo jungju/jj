@@ -2872,6 +2872,230 @@ func TestRunDetailShowsManifestMetadataAndGuardedLinks(t *testing.T) {
 	}
 }
 
+func TestRunDetailValidationEvidenceShowsSanitizedCompletedRun(t *testing.T) {
+	dir := t.TempDir()
+	runID := "20260429-140000-evidence"
+	secret := "sk-proj-rundetailevidence1234567890"
+	t.Setenv("JJ_RUN_DETAIL_EVIDENCE_SECRET", secret)
+	writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{
+		"run_id":"`+runID+`",
+		"status":"complete",
+		"started_at":"2026-04-29T14:00:00Z",
+		"artifacts":{"manifest":"manifest.json","validation_summary":"validation/summary.md","validation_results":"validation/results.json"},
+		"validation":{
+			"ran":true,
+			"status":"failed",
+			"evidence_status":"recorded",
+			"summary":"raw validation payload token=`+secret+` [omitted]",
+			"reason":"raw command text OPENAI_API_KEY=`+secret+` ./scripts/validate.sh",
+			"summary_path":"validation/summary.md",
+			"results_path":"validation/results.json",
+			"command_count":2,
+			"passed_count":1,
+			"failed_count":1,
+			"commands":[
+				{"label":"unit tests","status":"passed","stdout_path":"validation/stdout.txt","stderr_path":"validation/stderr.txt"},
+				{"label":"`+secret+`","name":"OPENAI_API_KEY=`+secret+` ./scripts/validate.sh","status":"failed","error":"Authorization: Bearer `+secret+`"}
+			]
+		}
+	}`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail status = %d body=%s", rec.Code, body)
+	}
+	section := runDetailValidationEvidenceSection(t, body)
+	for _, want := range []string{
+		"Validation Evidence",
+		runID,
+		"validation failed",
+		"commands 2 · passed 1 · failed 1 · skipped 0 · errors 0",
+		"2026-04-29T14:00:00Z",
+		"unit tests",
+		"status failed",
+		`href="/runs/` + runID + `"`,
+		`href="/runs/audit?run=` + runID + `"`,
+	} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("validation evidence missing %q:\n%s", want, section)
+		}
+	}
+	for _, leaked := range []string{
+		secret,
+		"raw validation payload",
+		"raw command text",
+		"OPENAI_API_KEY",
+		"Authorization: Bearer",
+		"validation/summary.md",
+		"validation/results.json",
+		"stdout",
+		"stderr",
+		"manifest.json",
+		security.RedactionMarker,
+		"[omitted]",
+	} {
+		if strings.Contains(section, leaked) {
+			t.Fatalf("validation evidence leaked %q:\n%s", leaked, section)
+		}
+	}
+	for _, want := range []string{"Overview", "Evaluation", "Codex", "Command Metadata", "Artifacts"} {
+		if !strings.Contains(body, "<h2>"+want+"</h2>") {
+			t.Fatalf("existing run detail section %q disappeared:\n%s", want, body)
+		}
+	}
+}
+
+func TestRunDetailValidationEvidenceStatesAreSafe(t *testing.T) {
+	secret := "sk-proj-rundetailstates1234567890"
+	cases := []struct {
+		name        string
+		runID       string
+		setup       func(t *testing.T, dir, runID string)
+		status      int
+		wantSection bool
+		want        []string
+		forbidden   []string
+	}{
+		{
+			name:  "no metadata",
+			runID: "20260429-141000-none",
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","started_at":"2026-04-29T14:10:00Z","artifacts":{"manifest":"manifest.json"}}`)
+			},
+			status: http.StatusOK,
+		},
+		{
+			name:        "missing metadata",
+			runID:       "20260429-142000-missing",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","started_at":"2026-04-29T14:20:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"missing","evidence_status":"missing"}}`)
+			},
+			want: []string{"validation unavailable", "status missing", "2026-04-29T14:20:00Z"},
+		},
+		{
+			name:        "partial metadata",
+			runID:       "20260429-143000-partial",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"partial_failed","started_at":"2026-04-29T14:30:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"partial","evidence_status":"recorded","command_count":1,"failed_count":1}}`)
+			},
+			want: []string{"validation unavailable", "commands 1 · passed 0 · failed 1 · skipped 0 · errors 0", "status partial"},
+		},
+		{
+			name:        "skipped metadata",
+			runID:       "20260429-144000-skipped",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"dry_run_complete","started_at":"2026-04-29T14:40:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"skipped":true,"status":"skipped","evidence_status":"skipped","command_count":1,"commands":[{"label":"declared validation","status":"skipped"}]}}`)
+			},
+			want: []string{"validation skipped", "commands 1 · passed 0 · failed 0 · skipped 1 · errors 0", "declared validation"},
+		},
+		{
+			name:        "stale metadata",
+			runID:       "20260429-145000-stale",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","started_at":"2026-04-29T14:50:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"stale","evidence_status":"recorded"}}`)
+			},
+			want: []string{"validation unavailable", "status stale"},
+		},
+		{
+			name:        "hostile token-like metadata",
+			runID:       "20260429-146000-hostile",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				t.Setenv("JJ_RUN_DETAIL_EVIDENCE_STATE_SECRET", secret)
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{
+					"run_id":"`+runID+`",
+					"status":"complete",
+					"started_at":"2026-04-29T15:00:00Z",
+					"artifacts":{"manifest":"manifest.json","validation_summary":"validation/summary.md"},
+					"validation":{"ran":true,"status":"`+secret+`","summary":"raw validation payload token=`+secret+`","summary_path":"validation/summary.md","commands":[{"label":"`+secret+`","status":"error","error":"token=`+secret+`"}]}
+				}`)
+			},
+			want:      []string{"validation unknown", "commands 1 · passed 0 · failed 0 · skipped 0 · errors 1", "status unknown"},
+			forbidden: []string{secret, "raw validation payload", "token=", "validation/summary.md"},
+		},
+		{
+			name:        "inconsistent metadata",
+			runID:       "20260429-147000-inconsistent",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","started_at":"2026-04-29T15:10:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"passed","evidence_status":"recorded","command_count":1,"passed_count":1,"failed_count":1}}`)
+			},
+			want: []string{"validation unknown", "commands 1 · passed 1 · failed 1 · skipped 0 · errors 0", "status unknown"},
+		},
+		{
+			name:        "malformed metadata",
+			runID:       "20260429-148000-malformed",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"`+secret+`",`)
+			},
+			want:      []string{"validation unavailable", "category unavailable"},
+			forbidden: []string{secret},
+		},
+		{
+			name:   "denied run",
+			runID:  "20260429-149000-denied",
+			status: http.StatusForbidden,
+			setup: func(t *testing.T, dir, runID string) {
+				outside := t.TempDir()
+				writeFile(t, outside, "manifest.json", `{"run_id":"`+runID+`","status":"complete","artifacts":{"manifest":"manifest.json"},"validation":{"status":"passed"}}`)
+				if err := os.MkdirAll(filepath.Join(dir, ".jj/runs", runID), 0o755); err != nil {
+					t.Fatalf("mkdir run: %v", err)
+				}
+				if err := os.Symlink(filepath.Join(outside, "manifest.json"), filepath.Join(dir, ".jj/runs", runID, "manifest.json")); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+			},
+			want: []string{"run unavailable"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tc.setup(t, dir, tc.runID)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/runs/"+tc.runID, nil)
+			newTestServer(t, dir, "").Handler().ServeHTTP(rec, req)
+			body := rec.Body.String()
+			if rec.Code != tc.status {
+				t.Fatalf("detail status = %d, want %d body=%s", rec.Code, tc.status, body)
+			}
+			if !tc.wantSection {
+				if strings.Contains(body, "<h2>Validation Evidence</h2>") {
+					t.Fatalf("%s should not render validation evidence:\n%s", tc.name, body)
+				}
+				return
+			}
+			section := runDetailValidationEvidenceSection(t, body)
+			for _, want := range append([]string{tc.runID}, tc.want...) {
+				if !strings.Contains(section, want) {
+					t.Fatalf("%s validation evidence missing %q:\n%s", tc.name, want, section)
+				}
+			}
+			for _, leaked := range append(tc.forbidden, security.RedactionMarker, "[omitted]", "raw command text", "raw environment", "stdout", "stderr", "manifest.json") {
+				if strings.Contains(section, leaked) {
+					t.Fatalf("%s validation evidence leaked %q:\n%s", tc.name, leaked, section)
+				}
+			}
+		})
+	}
+}
+
 func TestRunAuditExportShowsSanitizedRunSummary(t *testing.T) {
 	dir := newTestWorkspace(t)
 	runID := "20260428-140000-audit"
@@ -4483,6 +4707,14 @@ func dashboardActiveRunSection(t *testing.T, body string) string {
 		t.Fatalf("dashboard missing Active Run section:\n%s", body)
 	}
 	return htmlSection(body, "Active Run", "State Files")
+}
+
+func runDetailValidationEvidenceSection(t *testing.T, body string) string {
+	t.Helper()
+	if !strings.Contains(body, "<h2>Validation Evidence</h2>") {
+		t.Fatalf("run detail missing Validation Evidence section:\n%s", body)
+	}
+	return htmlSection(body, "Validation Evidence", "Codex")
 }
 
 type loopFakeExecutor struct {

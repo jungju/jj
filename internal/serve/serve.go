@@ -129,6 +129,7 @@ type runLink struct {
 	SecurityDetails          []string
 	Invalid                  bool
 	ValidationArtifact       string
+	ValidationLabels         []string
 	Evaluation               runEvaluationMetadata
 	CompareURL               string
 }
@@ -188,6 +189,19 @@ type validationStatusSummary struct {
 	Items      []validationStatusItem
 }
 
+type validationEvidenceSummary struct {
+	Visible         bool
+	State           string
+	Message         string
+	RunID           string
+	ValidationState string
+	CountsLabel     string
+	TimestampLabel  string
+	Labels          []string
+	DetailURL       string
+	AuditURL        string
+}
+
 type activeRunItem struct {
 	RunID            string
 	Status           string
@@ -227,6 +241,8 @@ type runEvaluationMetadata struct {
 	CommandCount   int
 	PassedCount    int
 	FailedCount    int
+	SkippedCount   int
+	ErrorCount     int
 }
 
 type evaluationFindingsSummary struct {
@@ -357,6 +373,7 @@ type runDetail struct {
 	SecuritySummary          string
 	SecurityDetails          []string
 	NextActions              []string
+	ValidationEvidence       validationEvidenceSummary
 }
 
 type runAuditExport struct {
@@ -2852,6 +2869,7 @@ func (s *Server) sanitizeRunHistoryLink(run runLink) runLink {
 	run.NextActions = historySensitiveList(run.NextActions, roots...)
 	run.SecuritySummary = historyDisplayText(run.SecuritySummary, "", roots...)
 	run.SecurityDetails = historySensitiveList(run.SecurityDetails, roots...)
+	run.ValidationLabels = validationEvidenceSanitizedLabels(run.ValidationLabels, roots...)
 	if display, ok := safeRunDetailPath(run.ValidationArtifact, roots...); ok {
 		run.ValidationArtifact = display
 	} else {
@@ -3403,6 +3421,260 @@ func validationStatusCountsLabel(metadata runEvaluationMetadata) string {
 	return fmt.Sprintf("commands %d · passed %d · failed %d", metadata.CommandCount, metadata.PassedCount, metadata.FailedCount)
 }
 
+func validationEvidenceFromRun(run runLink) validationEvidenceSummary {
+	summary := validationEvidenceNoneSummary()
+	runID := latestRunIDLabel(run.ID)
+	if runID == "" {
+		return summary
+	}
+	if run.Invalid {
+		state := "unavailable"
+		message := "Validation evidence unavailable."
+		if evaluationRunDenied(run) {
+			state = "denied"
+			message = "Validation evidence denied."
+		}
+		return validationEvidenceSummary{
+			Visible:         true,
+			State:           state,
+			Message:         message,
+			RunID:           runID,
+			ValidationState: state,
+			TimestampLabel:  latestRunTimestampLabel(run),
+			Labels:          []string{"category " + state},
+			DetailURL:       guardedRunDetailURL(runID),
+			AuditURL:        guardedRunAuditURL(runID),
+		}
+	}
+	if !validationRunCompleted(run.Status) {
+		return summary
+	}
+	metadata := validationStatusMetadataForRun(run)
+	if !validationMetadataRecorded(run, metadata) {
+		return summary
+	}
+	if evaluationInconsistent(run, metadata) {
+		metadata.State = "unknown"
+		metadata.Status = "unknown"
+		metadata.EvidenceStatus = "unknown"
+		metadata.SummaryLabel = "evaluation unknown"
+	}
+	state := validationStatusState(metadata)
+	if state == "" || state == "none" {
+		return summary
+	}
+	labels := validationEvidenceLabelsForRun(run, metadata, state)
+	return validationEvidenceSummary{
+		Visible:         true,
+		State:           state,
+		Message:         validationEvidenceMessage(state),
+		RunID:           runID,
+		ValidationState: state,
+		CountsLabel:     validationEvidenceCountsLabel(metadata),
+		TimestampLabel:  latestRunTimestampLabel(run),
+		Labels:          labels,
+		DetailURL:       guardedRunDetailURL(runID),
+		AuditURL:        guardedRunAuditURL(runID),
+	}
+}
+
+func validationEvidenceNoneSummary() validationEvidenceSummary {
+	return validationEvidenceSummary{
+		State:           "none",
+		Message:         "No validation evidence recorded for this run.",
+		ValidationState: "none",
+		TimestampLabel:  "none",
+	}
+}
+
+func validationEvidenceMessage(state string) string {
+	switch validationStatusState(runEvaluationMetadata{Status: state}) {
+	case "passed":
+		return "Validation evidence passed."
+	case "failed", "needs_work":
+		return "Validation evidence has findings."
+	case "skipped":
+		return "Validation evidence skipped."
+	case "unavailable":
+		return "Validation evidence unavailable."
+	case "denied":
+		return "Validation evidence denied."
+	default:
+		return "Validation evidence state is unknown."
+	}
+}
+
+func validationEvidenceCountsLabel(metadata runEvaluationMetadata) string {
+	metadata = sanitizeRunEvaluationMetadata(metadata)
+	if metadata.CommandCount == 0 &&
+		metadata.PassedCount == 0 &&
+		metadata.FailedCount == 0 &&
+		metadata.SkippedCount == 0 &&
+		metadata.ErrorCount == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"commands %d · passed %d · failed %d · skipped %d · errors %d",
+		metadata.CommandCount,
+		metadata.PassedCount,
+		metadata.FailedCount,
+		metadata.SkippedCount,
+		metadata.ErrorCount,
+	)
+}
+
+func validationEvidenceLabelsForRun(run runLink, metadata runEvaluationMetadata, state string) []string {
+	var labels []string
+	if !(state == "unknown" && evaluationStatusToken(metadata.Status, "") == "unknown") {
+		labels = validationEvidenceSanitizedLabels(run.ValidationLabels)
+	}
+	if len(labels) == 0 {
+		status := evaluationStatusToken(metadata.Status, "")
+		if status != "" && status != "none" {
+			labels = append(labels, "status "+status)
+		}
+	}
+	if len(labels) == 0 {
+		labels = append(labels, "category "+firstNonEmpty(state, "unknown"))
+	}
+	return labels
+}
+
+func validationEvidenceLabelsFromManifest(validation runpkg.ManifestValidation, roots ...security.CommandPathRoot) []string {
+	labels := make([]string, 0, minInt(len(validation.Commands)+2, 6))
+	seen := map[string]bool{}
+	add := func(raw, fallback string) {
+		if len(labels) >= 6 {
+			return
+		}
+		label := validationEvidenceSafeLabel(raw, fallback, roots...)
+		if label == "" || seen[label] {
+			return
+		}
+		seen[label] = true
+		labels = append(labels, label)
+	}
+	for _, command := range validation.Commands {
+		fallback := validationEvidenceCommandStateLabel(command.Status)
+		add(firstNonEmpty(command.Label, command.Name, command.Provider), fallback)
+		if state := validationEvidenceCommandStateLabel(command.Status); state != "" {
+			add("status "+state, "")
+		}
+	}
+	if len(labels) == 0 {
+		if status := evaluationStatusToken(validation.Status, ""); status != "" && status != "none" {
+			add("status "+status, "")
+		}
+	}
+	if len(labels) == 0 {
+		if evidence := evaluationEvidenceToken(validation.EvidenceStatus, ""); evidence != "" && evidence != "none" {
+			add("evidence "+evidence, "")
+		}
+	}
+	return labels
+}
+
+func validationEvidenceSanitizedLabels(items []string, roots ...security.CommandPathRoot) []string {
+	out := make([]string, 0, minInt(len(items), 6))
+	seen := map[string]bool{}
+	for _, item := range items {
+		if len(out) >= 6 {
+			break
+		}
+		label := validationEvidenceSafeLabel(item, "", roots...)
+		if label == "" || seen[label] {
+			continue
+		}
+		seen[label] = true
+		out = append(out, label)
+	}
+	return out
+}
+
+func validationEvidenceSafeLabel(raw, fallback string, roots ...security.CommandPathRoot) string {
+	text := strings.TrimSpace(sanitizeRunDetailText(raw, roots...))
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" ||
+		text == "unsafe value removed" ||
+		text == "sensitive value removed" ||
+		sensitiveDisplayArgName(text) ||
+		strings.Contains(text, security.RedactionMarker) ||
+		unsafeRunDetailText(text) {
+		text = validationEvidenceFallbackLabel(raw, fallback)
+	}
+	if text == "" {
+		text = validationEvidenceFallbackLabel(fallback, "validation")
+	}
+	if len(text) > 64 {
+		text = strings.Join(strings.Fields(truncateDisplay(text, 64)), " ")
+	}
+	if text == "" || unsafeRunDetailText(text) || strings.Contains(text, security.RedactionMarker) {
+		return ""
+	}
+	return text
+}
+
+func validationEvidenceFallbackLabel(raw, fallback string) string {
+	if category := validationEvidenceCommandStateLabel(raw); category != "" {
+		return "status " + category
+	}
+	if sensitiveDisplayArgName(raw) {
+		return strings.TrimSpace(fallback)
+	}
+	if category := dashboardCategory(raw, ""); category != "" {
+		return category
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func validationEvidenceCommandCounts(commands []runpkg.ManifestValidationCommand) (int, int) {
+	skippedCount := 0
+	errorCount := 0
+	for _, command := range commands {
+		switch validationEvidenceCommandState(command.Status) {
+		case "skipped":
+			skippedCount++
+		case "error":
+			errorCount++
+		}
+	}
+	return skippedCount, errorCount
+}
+
+func validationEvidenceCommandStateLabel(status string) string {
+	switch validationEvidenceCommandState(status) {
+	case "passed":
+		return "passed"
+	case "failed":
+		return "failed"
+	case "skipped":
+		return "skipped"
+	case "error":
+		return "error"
+	default:
+		return ""
+	}
+}
+
+func validationEvidenceCommandState(status string) string {
+	switch evaluationStatusToken(status, "") {
+	case "passed", "recorded":
+		return "passed"
+	case "failed", "needs_work":
+		return "failed"
+	case "skipped":
+		return "skipped"
+	case "missing", "malformed", "partial", "stale", "unavailable", "denied", "inconsistent", "unknown":
+		return "error"
+	}
+	switch dashboardCategory(status, "") {
+	case "error", "errored", "timeout", "timed_out", "cancelled", "canceled":
+		return "error"
+	default:
+		return ""
+	}
+}
+
 func evaluationFindingsSummaryFromRuns(runs []runLink) evaluationFindingsSummary {
 	summary := evaluationFindingsNoneSummary("No jj runs found.")
 	selected, ok := selectLatestRun(runs)
@@ -3511,6 +3783,10 @@ func runEvaluationMetadataFromValidation(validation runpkg.ManifestValidation, r
 	}
 	passedCount := maxInt(validation.PassedCount, 0)
 	failedCount := maxInt(validation.FailedCount, 0)
+	skippedCount, errorCount := validationEvidenceCommandCounts(validation.Commands)
+	if validation.Skipped && skippedCount == 0 && commandCount > passedCount+failedCount {
+		skippedCount = commandCount - passedCount - failedCount
+	}
 	status := evaluationStatusToken(sanitizeRunDetailText(validation.Status, roots...), "")
 	evidence := evaluationEvidenceToken(sanitizeRunDetailText(validation.EvidenceStatus, roots...), "")
 	hasMetadata := validation.Ran ||
@@ -3557,6 +3833,8 @@ func runEvaluationMetadataFromValidation(validation runpkg.ManifestValidation, r
 		CommandCount:   commandCount,
 		PassedCount:    passedCount,
 		FailedCount:    failedCount,
+		SkippedCount:   skippedCount,
+		ErrorCount:     errorCount,
 	}
 	return sanitizeRunEvaluationMetadata(metadata)
 }
@@ -3570,6 +3848,8 @@ func sanitizeRunEvaluationMetadata(metadata runEvaluationMetadata) runEvaluation
 		metadata.CommandCount = maxInt(metadata.CommandCount, 0)
 		metadata.PassedCount = maxInt(metadata.PassedCount, 0)
 		metadata.FailedCount = maxInt(metadata.FailedCount, 0)
+		metadata.SkippedCount = maxInt(metadata.SkippedCount, 0)
+		metadata.ErrorCount = maxInt(metadata.ErrorCount, 0)
 		return metadata
 	}
 	metadata.Status = evaluationStatusToken(metadata.Status, "")
@@ -3588,6 +3868,8 @@ func sanitizeRunEvaluationMetadata(metadata runEvaluationMetadata) runEvaluation
 	metadata.CommandCount = maxInt(metadata.CommandCount, 0)
 	metadata.PassedCount = maxInt(metadata.PassedCount, 0)
 	metadata.FailedCount = maxInt(metadata.FailedCount, 0)
+	metadata.SkippedCount = maxInt(metadata.SkippedCount, 0)
+	metadata.ErrorCount = maxInt(metadata.ErrorCount, 0)
 	return metadata
 }
 
@@ -4380,8 +4662,8 @@ func (s *Server) finalizeRunInspection(inspection runInspection) runInspection {
 	if inspection.State != "available" && strings.TrimSpace(inspection.Error) == "" {
 		inspection.Error = inspection.ManifestState
 	}
-	inspection.Detail = s.runDetailFromInspection(inspection)
 	inspection.History = s.runHistoryLinkFromInspection(inspection)
+	inspection.Detail = s.runDetailFromInspection(inspection)
 	if inspection.ManifestLoaded {
 		inspection.AuditSecurity = runAuditSecurityFromManifest(inspection.manifest.Security)
 	} else {
@@ -4453,6 +4735,7 @@ func (s *Server) runHistoryLinkFromInspection(inspection runInspection) runLink 
 	if run.Validation == "" && run.Evaluation.State != "none" {
 		run.Validation = run.Evaluation.SummaryLabel
 	}
+	run.ValidationLabels = validationEvidenceLabelsFromManifest(manifest.Validation, inspection.Roots...)
 	run.ValidationArtifact = listedArtifactPath(manifest.Artifacts, "validation_summary", "validation_results")
 	if run.ValidationArtifact == "" {
 		run.ValidationArtifact = artifactPathByValue(manifest.Artifacts, manifest.Validation.SummaryPath)
@@ -4509,6 +4792,11 @@ func (s *Server) runDetailFromInspection(inspection runInspection) runDetail {
 		},
 		Codex: runCodexDetail{Status: "unknown"},
 	}
+	runDTO := inspection.History
+	if runDTO.ID == "" && inspection.ValidID {
+		runDTO = s.runHistoryLinkFromInspection(inspection)
+	}
+	detail.ValidationEvidence = validationEvidenceFromRun(runDTO)
 	if !inspection.ManifestLoaded {
 		detail.NextActions = runDetailNextActions(detail, dashboardManifest{}, false)
 		return detail
@@ -5806,6 +6094,22 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
         {{if .RunDetail.Validation.Summary}}<p>{{.RunDetail.Validation.Summary}}</p>{{end}}
         <p>{{if .RunDetail.Validation.SummaryURL}}<a href="{{.RunDetail.Validation.SummaryURL}}">Validation summary</a>{{else if .RunDetail.Validation.SummaryPath}}<span class="muted">Validation summary {{.RunDetail.Validation.SummaryPath}}</span>{{end}}{{if .RunDetail.Validation.ResultsURL}} · <a href="{{.RunDetail.Validation.ResultsURL}}">Validation results</a>{{else if .RunDetail.Validation.ResultsPath}} · <span class="muted">Validation results {{.RunDetail.Validation.ResultsPath}}</span>{{end}}</p>
       </section>
+      {{if .RunDetail.ValidationEvidence.Visible}}
+      <section>
+        <h2>Validation Evidence</h2>
+        <p><a href="{{.RunDetail.ValidationEvidence.DetailURL}}">{{.RunDetail.ValidationEvidence.RunID}}</a> <span class="muted">validation {{.RunDetail.ValidationEvidence.ValidationState}} · {{.RunDetail.ValidationEvidence.TimestampLabel}}</span></p>
+        {{if .RunDetail.ValidationEvidence.CountsLabel}}<p class="muted">{{.RunDetail.ValidationEvidence.CountsLabel}}</p>{{end}}
+        {{if .RunDetail.ValidationEvidence.Labels}}
+        <ul>
+        {{range .RunDetail.ValidationEvidence.Labels}}
+          <li><span class="muted">label</span> {{.}}</li>
+        {{end}}
+        </ul>
+        {{end}}
+        <p><a href="{{.RunDetail.ValidationEvidence.DetailURL}}">Run detail</a>{{if .RunDetail.ValidationEvidence.AuditURL}} · <a href="{{.RunDetail.ValidationEvidence.AuditURL}}">Audit export</a>{{end}}</p>
+        {{if .RunDetail.ValidationEvidence.Message}}<p class="muted">{{.RunDetail.ValidationEvidence.Message}}</p>{{end}}
+      </section>
+      {{end}}
       <section>
         <h2>Codex</h2>
         <p class="muted">ran {{.RunDetail.Codex.Ran}} · skipped {{.RunDetail.Codex.Skipped}} · status {{.RunDetail.Codex.Status}}{{if .RunDetail.Codex.Model}} · model {{.RunDetail.Codex.Model}}{{end}} · exit {{.RunDetail.Codex.ExitCode}}{{if .RunDetail.Codex.Duration}} · duration {{.RunDetail.Codex.Duration}}{{end}}</p>

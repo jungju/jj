@@ -266,6 +266,10 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !indexCalls["nextActionSummaryFromSummaries"] {
 		t.Fatalf("handleIndex must build next-action data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
+	detailCalls := serveFunctionCalls(t, funcs, "runDetailFromInspection")
+	if !detailCalls["validationEvidenceFromRun"] {
+		t.Fatalf("runDetailFromInspection must build validation evidence through the sanitized run DTO helper; calls=%v", sortedCallNames(detailCalls))
+	}
 
 	for _, fn := range []string{
 		"handleIndex",
@@ -287,6 +291,7 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"runCompareSideFromInspection",
 		"runHistoryLinkFromInspection",
 		"runDetailFromInspection",
+		"validationEvidenceFromRun",
 	} {
 		calls := serveFunctionCalls(t, funcs, fn)
 		for _, forbidden := range []string{"readRunFile", "loadDashboardManifest", "loadRunManifestResponse", "json.Unmarshal", "os.ReadFile"} {

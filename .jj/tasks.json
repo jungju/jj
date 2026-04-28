@@ -1412,6 +1412,34 @@
       "updated_at": "2026-04-28T22:34:34Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "A guarded completed run with validation metadata shows a compact Validation Evidence section on the existing run detail view.",
+        "The section renders only sanitized run ID label, validation state, safe pass/fail/skip/error count labels when available, timestamp label, sanitized validation step or category labels, and guarded links to existing safe views.",
+        "Runs with no validation metadata render deterministic none or unavailable validation evidence without server errors.",
+        "Denied, malformed, partial, stale, hostile-label, token-like, or internally inconsistent validation metadata renders deterministic denied, unknown, unavailable, or none states without unsafe reflection.",
+        "No response contains raw validation output payloads, stdout/stderr, command text, environment values, raw manifests, raw artifact bodies, raw diff bodies, unsafe absolute paths, denied payloads, configured secrets, token-like values, private key blocks, omission placeholders, planner handoff payloads, raw TASK.md bodies, raw EVAL.md bodies, or raw document bodies.",
+        "Run detail validation evidence is derived from shared sanitized run DTO/helper output, with no handler-local raw filesystem, manifest, validation output, or artifact reads after route input parsing.",
+        "Existing dashboard root Validation Status, Active Run, Recent Runs, Evaluation Findings, latest-run, next-action, Project Docs, TASK summary, and existing run detail behavior remain unchanged when validation evidence is absent."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t29",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T22:35:47Z",
+      "created_by_run": "autopilot-20260428-160202-t29",
+      "created_by_turn": null,
+      "id": "TASK-0050",
+      "mode": "feature",
+      "priority": "high",
+      "reason": "All 49 existing tasks are complete and current evidence shows no failing validation, CI, blocker, disclosure, or boundary regression, so auto mode resolves to feature. The smallest useful next user-facing capability is extending existing guarded run detail views with compact sanitized validation evidence, letting users move from dashboard Validation Status into actionable validation context without adding raw exports, new pages, or broad configuration surface.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Show sanitized validation evidence on run detail",
+      "updated_at": "2026-04-28T22:49:08Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
