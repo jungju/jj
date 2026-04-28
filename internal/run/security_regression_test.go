@@ -1,6 +1,7 @@
 package run
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -121,6 +122,335 @@ func TestSecurityRegressionDryRunAndFullRunRedactPersistedSurfaces(t *testing.T)
 			}
 		})
 	}
+}
+
+func TestSecurityReleaseGateGuardedPlanInputsAcceptedInDryRunAndFullRun(t *testing.T) {
+	for _, dryRun := range []bool{true, false} {
+		for _, pathMode := range []string{"relative", "process-cwd", "absolute"} {
+			name := pathMode
+			if dryRun {
+				name += "-dry"
+			} else {
+				name += "-full"
+			}
+			t.Run(name, func(t *testing.T) {
+				dir := t.TempDir()
+				invocation := t.TempDir()
+				planRel := filepath.Join("plans", "release.md")
+				planPath := filepath.Join(dir, planRel)
+				if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+					t.Fatalf("mkdir plan dir: %v", err)
+				}
+				secret := "release-plan-secret-value"
+				openAIKey := "sk-proj-releaseplan1234567890"
+				privateKeyBody := "release-plan-private-key-body"
+				t.Setenv("JJ_RELEASE_PLAN_SECRET", secret)
+				planContent := strings.Join([]string{
+					"# Release plan",
+					"Authorization: Bearer " + secret,
+					openAIKey,
+					"-----BEGIN PRIVATE KEY-----",
+					privateKeyBody,
+					"-----END PRIVATE KEY-----",
+					"legacy placeholder [REDACTED]",
+					"",
+				}, "\n")
+				if err := os.WriteFile(planPath, []byte(planContent), 0o644); err != nil {
+					t.Fatalf("write plan: %v", err)
+				}
+
+				planArg := filepath.ToSlash(planRel)
+				cwd := dir
+				cwdExplicit := true
+				chdir := dir
+				switch pathMode {
+				case "process-cwd":
+					cwd = ""
+					cwdExplicit = false
+				case "absolute":
+					planArg = planPath
+					chdir = invocation
+				}
+				oldWD, err := os.Getwd()
+				if err != nil {
+					t.Fatalf("getwd: %v", err)
+				}
+				t.Cleanup(func() {
+					if err := os.Chdir(oldWD); err != nil {
+						t.Fatalf("restore cwd: %v", err)
+					}
+				})
+				if err := os.Chdir(chdir); err != nil {
+					t.Fatalf("chdir: %v", err)
+				}
+
+				var stdout, stderr bytes.Buffer
+				codexRunner := &fakeCodexRunner{secret: secret}
+				result, err := Execute(context.Background(), Config{
+					PlanPath:               planArg,
+					CWD:                    cwd,
+					CWDExplicit:            cwdExplicit,
+					ConfigSearchDir:        dir,
+					RunID:                  "release-plan-" + strings.ReplaceAll(name, "_", "-"),
+					PlanningAgents:         1,
+					PlanningAgentsExplicit: true,
+					OpenAIModel:            "test-model",
+					AllowNoGit:             true,
+					AllowNoGitExplicit:     true,
+					DryRun:                 dryRun,
+					DryRunExplicit:         true,
+					AdditionalPlanContext:  "Authorization: Bearer " + secret + "\nlegacy [omitted] placeholder",
+					Stdout:                 &stdout,
+					Stderr:                 &stderr,
+					Planner:                &fakePlanner{secret: secret},
+					CodexRunner:            codexRunner,
+				})
+				if err != nil {
+					t.Fatalf("execute accepted plan input: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+				}
+				if result == nil {
+					t.Fatal("expected run result")
+				}
+				if dryRun && codexRunner.called {
+					t.Fatal("dry-run accepted plan input should not run implementation Codex")
+				}
+				if !dryRun && !codexRunner.called {
+					t.Fatal("full-run accepted plan input should run implementation Codex")
+				}
+
+				manifest := readManifest(t, filepath.Join(result.RunDir, "manifest.json"))
+				if manifest.InputSource != PlanInputSourceFile || manifest.DryRun != dryRun || !manifest.RedactionApplied || !manifest.WorkspaceGuardrailsApplied {
+					t.Fatalf("accepted plan input manifest lost security metadata: %#v", manifest)
+				}
+				forbidden := []string{
+					secret,
+					openAIKey,
+					privateKeyBody,
+					"-----BEGIN PRIVATE KEY-----",
+					"-----END PRIVATE KEY-----",
+					"Bearer [jj-omitted]",
+					"bearer/[jj-omitted]",
+					"[REDACTED]",
+					"[redacted]",
+					"[omitted]",
+					"<hidden>",
+					"{removed}",
+				}
+				assertTreeCleanOfSecurityLeaks(t, result.RunDir, forbidden)
+				assertTreeContains(t, result.RunDir, security.RedactionMarker)
+			})
+		}
+	}
+}
+
+func TestSecurityReleaseGatePlanInputDenialsDoNotPersistArtifactsOrEchoPayloads(t *testing.T) {
+	secret := "release-plan-denial-secret-value"
+	t.Setenv("JJ_RELEASE_PLAN_DENIAL_SECRET", secret)
+
+	target := t.TempDir()
+	invocation := t.TempDir()
+	outside := t.TempDir()
+	outsidePlan := filepath.Join(outside, "outside.md")
+	if err := os.WriteFile(outsidePlan, []byte("outside "+secret+"\n"), 0o644); err != nil {
+		t.Fatalf("write outside plan: %v", err)
+	}
+	invocationPlan := filepath.Join(invocation, "external.md")
+	if err := os.WriteFile(invocationPlan, []byte("external "+secret+"\n"), 0o644); err != nil {
+		t.Fatalf("write invocation plan: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(target, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(target, "directory.md"), 0o755); err != nil {
+		t.Fatalf("mkdir directory plan: %v", err)
+	}
+	secretName := "sk-proj-releasegateplan1234567890.md"
+	if err := os.WriteFile(filepath.Join(target, secretName), []byte("secret path\n"), 0o644); err != nil {
+		t.Fatalf("write secret-looking plan: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		chdir   string
+		planArg string
+		leaks   []string
+	}{
+		{name: "external-relative", chdir: invocation, planArg: "external.md", leaks: []string{invocationPlan, filepath.ToSlash(invocationPlan), "external " + secret}},
+		{name: "relative-traversal", chdir: target, planArg: "../outside.md", leaks: []string{"../outside.md"}},
+		{name: "encoded-traversal", chdir: target, planArg: "docs%2f..%2foutside.md", leaks: []string{"docs%2f..%2foutside.md"}},
+		{name: "absolute-outside", chdir: target, planArg: outsidePlan, leaks: []string{outsidePlan, filepath.ToSlash(outsidePlan), outside, filepath.ToSlash(outside)}},
+		{name: "missing", chdir: target, planArg: "missing.md", leaks: []string{"missing.md"}},
+		{name: "non-regular", chdir: target, planArg: "directory.md", leaks: []string{filepath.Join(target, "directory.md"), filepath.ToSlash(filepath.Join(target, "directory.md"))}},
+		{name: "malformed-control", chdir: target, planArg: "bad\npath.md", leaks: []string{"bad\npath.md"}},
+		{name: "secret-looking", chdir: target, planArg: secretName, leaks: []string{secretName, "sk-proj-releasegateplan1234567890"}},
+		{name: "token-like", chdir: target, planArg: "AbCdEfGhIjKlMnOpQrStUvWxYz12345678901234.md", leaks: []string{"AbCdEfGhIjKlMnOpQrStUvWxYz12345678901234"}},
+	}
+	linkPath := filepath.Join(target, "docs", "link.md")
+	if err := os.Symlink(outsidePlan, linkPath); err == nil {
+		cases = append(cases, struct {
+			name    string
+			chdir   string
+			planArg string
+			leaks   []string
+		}{name: "symlink-escape", chdir: target, planArg: "docs/link.md", leaks: []string{outsidePlan, filepath.ToSlash(outsidePlan), secret}})
+	} else {
+		t.Logf("symlink unavailable; skipping symlink denial case: %v", err)
+	}
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.Chdir(tc.chdir); err != nil {
+				t.Fatalf("chdir: %v", err)
+			}
+			runID := "release-denied-" + strings.ReplaceAll(tc.name, "_", "-")
+			var stdout, stderr bytes.Buffer
+			result, err := Execute(context.Background(), Config{
+				PlanPath:               tc.planArg,
+				CWD:                    target,
+				CWDExplicit:            true,
+				ConfigSearchDir:        target,
+				RunID:                  runID,
+				PlanningAgents:         1,
+				PlanningAgentsExplicit: true,
+				OpenAIModel:            "test-model",
+				AllowNoGit:             true,
+				AllowNoGitExplicit:     true,
+				DryRun:                 true,
+				DryRunExplicit:         true,
+				Stdout:                 &stdout,
+				Stderr:                 &stderr,
+				Planner:                &fakePlanner{},
+				CodexRunner:            &fakeCodexRunner{},
+			})
+			if err == nil {
+				t.Fatalf("expected plan input denial, got result %#v", result)
+			}
+			if !IsValidationError(err) {
+				t.Fatalf("plan input denial should be a validation error, got %T %v", err, err)
+			}
+			combined := err.Error() + "\n" + stdout.String() + "\n" + stderr.String()
+			for _, leaked := range append(tc.leaks,
+				secret,
+				target,
+				filepath.ToSlash(target),
+				security.RedactionMarker,
+				"[REDACTED]",
+				"[redacted]",
+				"[omitted]",
+				"<hidden>",
+				"{removed}",
+			) {
+				if leaked != "" && strings.Contains(combined, leaked) {
+					t.Fatalf("plan input denial leaked %q:\n%s", leaked, combined)
+				}
+			}
+			runDir := filepath.Join(target, ".jj", "runs", runID)
+			if _, statErr := os.Stat(runDir); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("denied plan input persisted run artifacts at %s: %v", runDir, statErr)
+			}
+		})
+	}
+}
+
+func TestSecurityReleaseGateValidationFailureOutputIsSanitized(t *testing.T) {
+	dir := t.TempDir()
+	secret := "release-validation-secret-value"
+	openAIKey := "sk-proj-releasevalidation1234567890"
+	privateKeyBody := "release-validation-private-key-body"
+	t.Setenv("JJ_RELEASE_VALIDATION_SECRET", secret)
+	writePlan(t, dir, "plan.md")
+	unsafeAbs := filepath.Join(t.TempDir(), "unsafe-"+secret+".txt")
+	writeValidationScript(t, dir, strings.Join([]string{
+		`printf 'workspace=%s/file.txt\n' "$PWD"`,
+		"printf 'secret=" + secret + "\\n'",
+		"printf 'path=" + unsafeAbs + "\\n'",
+		"printf 'OPENAI_API_KEY=" + openAIKey + "\\n' >&2",
+		"printf '%s\\n' '-----BEGIN PRIVATE KEY-----' '" + privateKeyBody + "' '-----END PRIVATE KEY-----' >&2",
+		"printf 'legacy [omitted] placeholder\\n' >&2",
+		"exit 7",
+	}, "\n"))
+
+	result, err := Execute(context.Background(), Config{
+		PlanPath:               filepath.Join(dir, "plan.md"),
+		CWD:                    dir,
+		ConfigSearchDir:        dir,
+		RunID:                  "release-validation-failure",
+		PlanningAgents:         1,
+		PlanningAgentsExplicit: true,
+		OpenAIModel:            "test-model",
+		AllowNoGit:             true,
+		AllowNoGitExplicit:     true,
+		Stdout:                 io.Discard,
+		Stderr:                 io.Discard,
+		Planner: &fakePlanner{mergeTask: strings.Join([]string{
+			"# TASK",
+			"",
+			"- Validation command: ./scripts/validate.sh",
+			"",
+		}, "\n")},
+		CodexRunner: &fakeCodexRunner{},
+	})
+	if err != nil {
+		t.Fatalf("validation failure should complete as partial run: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected run result")
+	}
+
+	manifest := readManifest(t, filepath.Join(result.RunDir, "manifest.json"))
+	if manifest.Status != StatusPartial || manifest.Validation.Status != validationStatusFailed || manifest.Validation.FailedCount != 1 || manifest.Validation.PassedCount != 0 {
+		t.Fatalf("expected sanitized validation failure counts, got status=%q validation=%#v", manifest.Status, manifest.Validation)
+	}
+	if len(manifest.Validation.Commands) != 1 {
+		t.Fatalf("expected one validation command record, got %#v", manifest.Validation.Commands)
+	}
+	command := manifest.Validation.Commands[0]
+	if command.Command != "" || command.CWD != "[workspace]" || command.Status != validationStatusFailed || command.ExitCode != 7 || command.StdoutPath == "" || command.StderrPath == "" {
+		t.Fatalf("validation command record should be sanitized metadata only: %#v", command)
+	}
+	if strings.Contains(strings.Join(command.Argv, " "), secret) || strings.Contains(strings.Join(command.Argv, " "), dir) {
+		t.Fatalf("validation argv leaked raw values: %#v", command.Argv)
+	}
+	diag := manifest.Security.Diagnostics
+	if !diag.CommandMetadataSanitized || !diag.CommandArgvSanitized || diag.RawCommandTextPersisted || diag.RawEnvironmentPersisted || diag.CommandCWDLabel != "[workspace]" {
+		t.Fatalf("validation failure diagnostics exposed unsafe command state: %#v", diag)
+	}
+
+	stdout := readFile(t, filepath.Join(result.RunDir, filepath.FromSlash(command.StdoutPath)))
+	stderr := readFile(t, filepath.Join(result.RunDir, filepath.FromSlash(command.StderrPath)))
+	if !strings.Contains(stdout, "workspace=[workspace]/file.txt") || !strings.Contains(stdout, "path=[path]") || !strings.Contains(stdout, security.RedactionMarker) {
+		t.Fatalf("validation stdout should retain only safe labels/redaction evidence:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, security.RedactionMarker) {
+		t.Fatalf("validation stderr should retain redaction evidence:\n%s", stderr)
+	}
+	forbidden := []string{
+		secret,
+		openAIKey,
+		privateKeyBody,
+		unsafeAbs,
+		filepath.ToSlash(unsafeAbs),
+		"-----BEGIN PRIVATE KEY-----",
+		"-----END PRIVATE KEY-----",
+		"Bearer [jj-omitted]",
+		"bearer/[jj-omitted]",
+		"[REDACTED]",
+		"[redacted]",
+		"[omitted]",
+		"<hidden>",
+		"{removed}",
+	}
+	assertTreeCleanOfSecurityLeaks(t, result.RunDir, forbidden)
 }
 
 func TestSecurityRegressionDiagnosticsNormalizeStringsWithoutLeaks(t *testing.T) {

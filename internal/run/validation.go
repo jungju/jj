@@ -269,10 +269,19 @@ func executeValidationCommand(ctx context.Context, cfg Config, command string, s
 	}
 	result.Summary = validationCommandSummary(result, len(stdout.Bytes()), len(stderr.Bytes()))
 
-	if _, writeErr := store.WriteFile(stdoutRel, stdout.Bytes()); writeErr != nil {
+	roots := []security.CommandPathRoot{
+		{Path: store.RunDir, Label: "[run]"},
+		{Path: cfg.CWD, Label: "[workspace]"},
+	}
+	stdoutText, stdoutReport := security.SanitizeDisplayStringWithReport(stdout.String(), roots...)
+	stderrText, stderrReport := security.SanitizeDisplayStringWithReport(stderr.String(), roots...)
+	store.RecordRedactionReport(stdoutReport)
+	store.RecordRedactionReport(stderrReport)
+
+	if _, writeErr := store.WriteFile(stdoutRel, []byte(stdoutText)); writeErr != nil {
 		return result, writeErr
 	}
-	if _, writeErr := store.WriteFile(stderrRel, stderr.Bytes()); writeErr != nil {
+	if _, writeErr := store.WriteFile(stderrRel, []byte(stderrText)); writeErr != nil {
 		return result, writeErr
 	}
 	return result, nil
