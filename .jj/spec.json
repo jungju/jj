@@ -1,6 +1,6 @@
 {
   "acceptance_criteria": [
-    "No persisted artifact or served dashboard response contains raw API keys, common token patterns, private key blocks, [jj-omitted], configured secret values, or omission placeholders.",
+    "No persisted artifact or served dashboard response contains raw API keys, common token patterns, private key blocks, configured secret values, or omission placeholders.",
     "All docs, run artifact, manifest, log, planner, Codex event, diff, eval, and dashboard-visible writes are redacted before persistence.",
     "Traversal attempts using relative, absolute, encoded, or symlinked paths cannot read or write outside the configured workspace or allowed run artifact roots.",
     "Codex event and summary artifacts are revalidated through the run artifact store before fallback creation, redaction, or readback, and symlink replacement cannot cause out-of-root reads or writes.",
@@ -41,7 +41,15 @@
     "Resolution reasons, events, manifests, and planning context remain sanitized and do not include raw commands, raw environment values, secrets, token-like values, unsafe paths, omission placeholders, or raw attacker-controlled payloads.",
     "Existing security, hardening, quality, docs, and feature classification behavior remains covered and unchanged when no real blocker exists.",
     "Focused Go tests cover positive blocker evidence and negated or healthy evidence side by side.",
-    "go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass."
+    "A fixture-driven Go security gate covers persisted run artifacts, manifest scrubbing, command metadata, Codex artifacts, shared run DTOs, and jj serve detail/history/compare/audit surfaces.",
+    "Traversal, absolute, encoded, symlinked, malformed, missing, partial, older, identical, secret-looking, and token-like inputs produce deterministic denied or unavailable states without raw value reflection.",
+    "Rendered HTML, audit JSON, manifests, and checked artifacts contain no raw secrets, token-like values, private key blocks, raw command text, raw environment values, unsafe absolute paths, omission placeholders, raw artifact bodies, or attacker-controlled denied path payloads.",
+    "Tests prove route handlers use shared guarded DTO/helper paths rather than handler-local raw manifest, artifact, command, environment, or path reads after route input parsing.",
+    "Dry-run and non-dry-run fixtures produce equivalent redaction, boundary, and diagnostic behavior.",
+    "Failure output exposes only sanitized categories, counts, booleans, and safe relative labels.",
+    "Untrusted or partial manifests do not render free-form validation reason or summary text on served run inspection surfaces.",
+    "No new dashboard pages, CLI flags, raw artifact export, raw manifest export, or unrelated user-facing features are added by release-gate security validation.",
+    "go test ./internal/serve, go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass."
   ],
   "created_at": "2026-04-28",
   "goals": [
@@ -56,7 +64,8 @@
     "Let users compare exactly two guarded runs side by side using sanitized manifest-derived fields only.",
     "Let users export a guarded sanitized JSON audit summary for exactly one validated run ID using the same disclosure-safe run metadata shown by jj serve.",
     "Keep guarded run metadata construction internally consistent so dashboard, detail, history, comparison, and audit export surfaces cannot drift in validation, sanitization, or unavailable-state behavior.",
-    "Ensure auto and balanced task proposal resolution selects bugfix only from positive current blocker evidence and does not loop on healthy, negated, or completed-task context."
+    "Ensure auto and balanced task proposal resolution selects bugfix only from positive current blocker evidence and does not loop on healthy, negated, or completed-task context.",
+    "Add consolidated fixture-driven release-gate coverage for persisted artifacts and served run surfaces without adding unrelated user-facing features."
   ],
   "non_goals": [
     "Provide a hosted cloud service.",
@@ -70,7 +79,8 @@
     "Add raw artifact diffing or full-text document comparison as part of the guarded run comparison page.",
     "Add raw manifest export, raw artifact export, or artifact content bundling as part of the guarded run audit JSON export.",
     "Add new dashboard pages or CLI flags as part of the internal consistency hardening pass.",
-    "Add new product features while fixing automatic task proposal blocker classification."
+    "Add new product features while fixing automatic task proposal blocker classification.",
+    "Add new dashboard pages, CLI flags, raw artifact export, raw manifest export, or unrelated user-facing features as part of release-gate security validation."
   ],
   "open_questions": [
     "Should explicitly provided plan files outside --cwd remain allowed as read-only inputs after canonicalization?",
@@ -119,10 +129,14 @@
     "Auto or balanced task proposal resolution must choose bugfix only from positive current evidence of failed validation, failed tests, failed or blocked runnable tasks, provider failure, panic, fatal error, or regression.",
     "Healthy or negated evidence such as no blocker, not blocked, validation passed, tests pass, failed_count: 0, status passed, no regressions found, all tasks done, or no runnable tasks must not trigger bugfix resolution.",
     "Concrete feature, security, hardening, quality, or docs selections must be overridden to bugfix only when the same positive critical blocker evidence exists.",
-    "Task proposal resolution reasons, events, manifests, and planning context must remain sanitized and must not echo raw logs, paths, commands, environment values, secrets, token-like values, omission placeholders, or attacker-controlled payloads."
+    "Task proposal resolution reasons, events, manifests, and planning context must remain sanitized and must not echo raw logs, paths, commands, environment values, secrets, token-like values, omission placeholders, or attacker-controlled payloads.",
+    "Untrusted or partial manifest validation reason and summary text must not render on served run inspection surfaces unless the manifest is trusted.",
+    "A consolidated fixture-driven security release-gate validation path must exercise hostile fixtures across persisted run artifacts, manifest scrubbing, command metadata, Codex artifacts, shared run DTOs, run detail, history, compare, audit export, unsafe run IDs, path denial, and dry-run/non-dry-run parity.",
+    "Release-gate assertions must check rendered HTML, audit JSON, manifests, and persisted checked artifacts for absence of raw secrets, token-like values, private key blocks, raw command text, raw environment values, unsafe absolute paths, omission placeholders, raw artifact bodies, and attacker-controlled denied path payloads.",
+    "Release-gate failure output must expose only sanitized categories, counts, booleans, and safe relative labels."
   ],
-  "summary": "jj is a CLI that turns a user planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains a core constraint, and jj serve includes guarded per-run detail pages, a guarded run history browser, a guarded two-run comparison view, and a guarded sanitized JSON audit export for a single run. Guarded run inspection surfaces share sanitized metadata construction so validation, redaction, unavailable states, denied states, and safe links remain consistent across detail, history, comparison, and audit export handlers. Automatic and balanced task proposal resolution now selects bugfix only from positive current blocker evidence, while healthy, negated, or completed-task context does not create false-positive bugfix loops.",
+  "summary": "jj is a CLI that turns a user planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains a core constraint, and jj serve includes guarded per-run detail pages, a guarded run history browser, a guarded two-run comparison view, and a guarded sanitized JSON audit export for a single run. Guarded run inspection surfaces share sanitized metadata construction so validation, redaction, unavailable states, denied states, and safe links remain consistent across detail, history, comparison, and audit export handlers. Automatic and balanced task proposal resolution now selects bugfix only from positive current blocker evidence, while healthy, negated, or completed-task context does not create false-positive bugfix loops. A validated release-gate security suite now covers persisted run artifacts, manifest scrubbing, command metadata, Codex artifacts, shared run DTOs, jj serve detail, history, compare, and audit surfaces, unsafe inputs, and dry-run/non-dry-run parity. Untrusted or partial manifests no longer render free-form validation reason or summary text.",
   "title": "jj Security Boundary and Dashboard Run Inspection",
-  "updated_at": "2026-04-28T16:59:38Z",
+  "updated_at": "2026-04-28T17:12:59Z",
   "version": 1
 }

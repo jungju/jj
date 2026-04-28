@@ -3117,8 +3117,6 @@ func (s *Server) runValidationDetail(manifest dashboardManifest, runDir, runID s
 	detail := runValidationDetail{
 		Status:         safeText(firstNonEmpty(manifest.Validation.Status, "unknown")),
 		EvidenceStatus: safeText(firstNonEmpty(manifest.Validation.EvidenceStatus, "unknown")),
-		Reason:         safeText(manifest.Validation.Reason),
-		Summary:        safeText(manifest.Validation.Summary),
 		CommandCount:   manifest.Validation.CommandCount,
 		PassedCount:    manifest.Validation.PassedCount,
 		FailedCount:    manifest.Validation.FailedCount,
@@ -3127,6 +3125,8 @@ func (s *Server) runValidationDetail(manifest dashboardManifest, runDir, runID s
 		detail.CommandCount = len(manifest.Validation.Commands)
 	}
 	if trustedManifest {
+		detail.Reason = safeText(manifest.Validation.Reason)
+		detail.Summary = safeText(manifest.Validation.Summary)
 		if status := artifactStatusForPath(manifest, runDir, runID, manifest.Validation.ResultsPath, roots...); status.Path != "" {
 			detail.ResultsPath = status.Path
 			detail.ResultsURL = status.URL

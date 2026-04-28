@@ -760,6 +760,35 @@
       "updated_at": "2026-04-28T16:58:18Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "A fixture-driven Go security gate covers persisted run artifacts, manifest scrubbing, command metadata, Codex artifacts, shared run DTOs, and jj serve detail/history/compare/audit surfaces.",
+        "Traversal, absolute, encoded, symlinked, malformed, missing, partial, older, identical, secret-looking, and token-like inputs produce deterministic denied or unavailable states without raw value reflection.",
+        "Rendered HTML, audit JSON, manifests, and checked artifacts contain no raw secrets, token-like values, private key blocks, raw command text, raw environment values, unsafe absolute paths, omission placeholders, raw artifact bodies, or attacker-controlled denied path payloads.",
+        "Tests prove route handlers use shared guarded DTO/helper paths rather than handler-local raw manifest, artifact, command, environment, or path reads after route input parsing.",
+        "Dry-run and non-dry-run fixtures produce equivalent redaction, boundary, and diagnostic behavior.",
+        "Failure output exposes only sanitized categories, counts, booleans, and safe relative labels.",
+        "No new dashboard pages, CLI flags, raw artifact export, raw manifest export, or unrelated user-facing features are added.",
+        "go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t06",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T16:59:39Z",
+      "created_by_run": "autopilot-20260428-160202-t06",
+      "created_by_turn": null,
+      "id": "TASK-0027",
+      "mode": "security",
+      "priority": "high",
+      "reason": "All existing tasks are done and there is no positive blocker evidence, so bugfix is not appropriate. Security remains the best next category because jj persists artifacts, handles secrets and paths, records command metadata, and serves dashboard/audit surfaces that must stay disclosure-safe. This task adds consolidated regression coverage to prove the completed hardening remains enforced without adding unrelated features.",
+      "resolved_task_proposal_mode": "security",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Add release-gate security regression validation for guarded artifacts and serve routes",
+      "updated_at": "2026-04-28T17:09:26Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
