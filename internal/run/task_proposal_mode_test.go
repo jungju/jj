@@ -34,12 +34,20 @@ func TestParseTaskProposalModeDefaultsToAuto(t *testing.T) {
 	}
 }
 
+func TestTaskProposalTaskIDUsesGlobalSequenceFallback(t *testing.T) {
+	for _, mode := range ValidTaskProposalModes() {
+		if got := TaskProposalTaskID(mode); got != "TASK-0001" {
+			t.Fatalf("mode %s should use global task fallback id, got %q", mode, got)
+		}
+	}
+}
+
 func TestResolveTaskProposalModeAutoBugfix(t *testing.T) {
 	got := ResolveTaskProposalMode(TaskProposalModeAuto, "validation failed and tests fail")
 	if got.Selected != TaskProposalModeAuto || got.Resolved != TaskProposalModeBugfix {
 		t.Fatalf("expected auto to resolve bugfix, got %#v", got)
 	}
-	if !strings.Contains(got.Reason, "bugfix") || got.SelectedTaskID != "T-BUGFIX-001" {
+	if !strings.Contains(got.Reason, "bugfix") || got.SelectedTaskID != "TASK-0001" {
 		t.Fatalf("unexpected resolution metadata: %#v", got)
 	}
 }
@@ -49,7 +57,7 @@ func TestResolveTaskProposalModeAutoSecurityEvidence(t *testing.T) {
 	if got.Selected != TaskProposalModeAuto || got.Resolved != TaskProposalModeSecurity {
 		t.Fatalf("expected auto to resolve security, got %#v", got)
 	}
-	if got.SelectedTaskID != "T-SEC-001" {
+	if got.SelectedTaskID != "TASK-0001" {
 		t.Fatalf("unexpected selected task id: %#v", got)
 	}
 }
@@ -76,7 +84,7 @@ func TestResolveTaskProposalModeCriticalBlockerOverridesConcreteModeToBugfix(t *
 	if got.Selected != TaskProposalModeFeature || got.Resolved != TaskProposalModeBugfix {
 		t.Fatalf("expected bugfix override, got %#v", got)
 	}
-	if !strings.Contains(got.Reason, "overridden") || got.SelectedTaskID != "T-BUGFIX-001" {
+	if !strings.Contains(got.Reason, "overridden") || got.SelectedTaskID != "TASK-0001" {
 		t.Fatalf("expected override metadata, got %#v", got)
 	}
 }
@@ -84,17 +92,17 @@ func TestResolveTaskProposalModeCriticalBlockerOverridesConcreteModeToBugfix(t *
 func TestTaskProposalPromptContextIncludesInstruction(t *testing.T) {
 	resolution := ResolveTaskProposalMode(TaskProposalModeSecurity, "secret risk")
 	got := TaskProposalPromptContext(resolution)
-	for _, want := range []string{"Task Proposal Mode: security", "Resolved Mode: security", "secret redaction", "T-SEC"} {
+	for _, want := range []string{"Task Proposal Mode: security", "Resolved Mode: security", "secret redaction", "TASK-0001"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("prompt context missing %q:\n%s", want, got)
 		}
 	}
 }
 
-func TestTaskProposalPromptContextIncludesPriorityTaskIntentOverride(t *testing.T) {
+func TestTaskProposalPromptContextIncludesNextIntentOverride(t *testing.T) {
 	resolution := ResolveTaskProposalMode(TaskProposalModeFeature, "feature work")
-	got := TaskProposalPromptContext(resolution, "Implement priority task.")
-	for _, want := range []string{".jj/priority-task.md is active", "free-form intent", "Ignore task-proposal-mode", "Use mode only after satisfying the intent"} {
+	got := TaskProposalPromptContext(resolution, "Improve the web UI only.")
+	for _, want := range []string{".jj/next-intent.md is active", "free-form intent", "Ignore task-proposal-mode", "Use mode only after satisfying the intent"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("prompt context missing %q:\n%s", want, got)
 		}

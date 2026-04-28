@@ -187,7 +187,7 @@ Return only one JSON object. Do not use Markdown fences.
 Required JSON shape:
 {
   "spec": "{\"version\":1,\"title\":\"...\",\"summary\":\"...\",\"goals\":[],\"non_goals\":[],\"requirements\":[],\"acceptance_criteria\":[],\"open_questions\":[]}",
-  "task": "{\"version\":1,\"active_task_id\":null,\"tasks\":[{\"id\":\"T-FEATURE-001\",\"title\":\"...\",\"mode\":\"feature\",\"priority\":\"high\",\"status\":\"queued\",\"reason\":\"...\",\"acceptance_criteria\":[],\"validation_command\":\"./scripts/validate.sh\"}]}",
+  "task": "{\"version\":1,\"active_task_id\":null,\"tasks\":[{\"id\":\"TASK-0001\",\"title\":\"...\",\"mode\":\"feature\",\"priority\":\"high\",\"status\":\"queued\",\"reason\":\"...\",\"acceptance_criteria\":[],\"validation_command\":\"./scripts/validate.sh\"}]}",
   "notes": ["..."]
 }
 

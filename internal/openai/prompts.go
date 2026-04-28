@@ -57,7 +57,7 @@ Return the "task" field as a JSON string containing only the next proposed task 
   "active_task_id": null,
   "tasks": [
     {
-      "id": "T-FEATURE-001",
+      "id": "TASK-0001",
       "title": "Short imperative title",
       "mode": "feature",
       "priority": "high",

@@ -161,10 +161,10 @@ Non-dry-run mode writes JSON state, runs the implementation provider, captures e
 
 ## Next-Turn Intent
 
-For direct operator guidance, write free-form Markdown to `.jj/priority-task.md`. This is the preferred way to steer the next turn because it can express intent more naturally than a fixed mode:
+For direct operator guidance, write free-form Markdown to `.jj/next-intent.md`. This is the preferred way to steer the next turn because it can express intent more naturally than a fixed mode:
 
 ```bash
-cat > .jj/priority-task.md <<'EOF'
+cat > .jj/next-intent.md <<'EOF'
 웹 UI About 페이지 기능 추가
 Acceptance: About 페이지가 웹 UI에서 접근 가능하고 기본 레이아웃과 검증이 통과해야 한다.
 EOF
@@ -181,7 +181,7 @@ Other useful intent examples:
 UI만 개선해
 ```
 
-When `.jj/priority-task.md` is non-empty, it is the highest-priority planning input. The first proposed runnable task must be scoped to that intent, and `task-proposal-mode`, resolved mode, and auto/balanced detection are ignored for choosing what to plan. Mode still remains useful afterward as inferred category metadata, task ID/title fallback guidance, stored task metadata, and compatibility behavior. A successful full run with passed validation empties the file; dry-runs, planning failures, Codex failures, validation failures, and reconciliation failures preserve it.
+When `.jj/next-intent.md` is non-empty, it is the highest-priority planning input. The first proposed runnable task must be scoped to that intent, and `task-proposal-mode`, resolved mode, and auto/balanced detection are ignored for choosing what to plan. Mode still remains useful afterward as inferred category metadata, task ID/title fallback guidance, stored task metadata, and compatibility behavior. A successful full run with passed validation empties the file; dry-runs, planning failures, Codex failures, validation failures, and reconciliation failures preserve it.
 
 ## Task Proposal Mode
 
@@ -202,7 +202,7 @@ Each run appends the proposed task batch to `.jj/tasks.json` instead of replacin
 
 When no next-turn intent is active, concrete modes are respected. For example, `--task-proposal-mode feature` keeps proposing feature work even when the current SPEC mentions security-related requirements. A concrete mode is only overridden to `bugfix` when a real blocker prevents progress, such as failing validation, failing tests, provider failure, a panic, fatal error, blocked state, or regression evidence. `auto` and `balanced` resolve from compact current evidence: SPEC requirements/open questions, non-terminal tasks, and recent validation or run failures. Old completed task reasons are not fed directly into auto mode, so historical security wording does not keep forcing security tasks by itself.
 
-Use `task-proposal-mode` as a category hint, fallback, or compatibility setting. Use `.jj/priority-task.md` when you want to say the actual next-turn intent.
+Use `task-proposal-mode` as a category hint, fallback, or compatibility setting. Use `.jj/next-intent.md` when you want to say the actual next-turn intent.
 
 ```bash
 jj run plan.md --task-proposal-mode docs
@@ -229,10 +229,10 @@ printf 'feature\n' > .jj/task-proposal-mode
 printf 'quality\n' > .jj/task-proposal-mode
 ```
 
-Autopilot does not need a separate intent setting because each fresh `jj run` reads `.jj/priority-task.md` through the core runner:
+Autopilot does not need a separate intent setting because each fresh `jj run` reads `.jj/next-intent.md` through the core runner:
 
 ```bash
-cat > .jj/priority-task.md <<'EOF'
+cat > .jj/next-intent.md <<'EOF'
 웹 UI About 페이지 기능 추가
 Acceptance: About 페이지가 웹 UI에서 접근 가능하고 기본 레이아웃과 검증이 통과해야 한다.
 EOF

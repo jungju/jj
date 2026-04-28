@@ -256,18 +256,18 @@ func TestExecuteTaskProposalModePersistsPromptsAndEvents(t *testing.T) {
 
 	runDir := filepath.Join(dir, ".jj", "runs", "proposal-feature")
 	manifest := readManifest(t, filepath.Join(runDir, "manifest.json"))
-	if manifest.TaskProposalMode != TaskProposalModeFeature || manifest.ResolvedTaskProposalMode != TaskProposalModeFeature || manifest.SelectedTaskID != "T-FEATURE-001" {
+	if manifest.TaskProposalMode != TaskProposalModeFeature || manifest.ResolvedTaskProposalMode != TaskProposalModeFeature || manifest.SelectedTaskID != "TASK-0001" {
 		t.Fatalf("unexpected proposal manifest metadata: %#v", manifest)
 	}
 	if manifest.Config.TaskProposalMode != string(TaskProposalModeFeature) {
 		t.Fatalf("manifest config missing proposal mode: %#v", manifest.Config)
 	}
 	planning := readPlanning(t, filepath.Join(runDir, "planning.json"))
-	if planning.TaskProposalMode != string(TaskProposalModeFeature) || planning.ResolvedTaskProposalMode != string(TaskProposalModeFeature) || planning.SelectedTaskID != "T-FEATURE-001" {
+	if planning.TaskProposalMode != string(TaskProposalModeFeature) || planning.ResolvedTaskProposalMode != string(TaskProposalModeFeature) || planning.SelectedTaskID != "TASK-0001" {
 		t.Fatalf("planning metadata missing proposal mode: %#v", planning)
 	}
 	events := readFile(t, filepath.Join(runDir, "events.jsonl"))
-	for _, want := range []string{"task_proposal_mode.selected", `"mode":"feature"`, "task_proposal_mode.resolved", `"resolved_mode":"feature"`, "task.proposed", `"task_id":"T-FEATURE-001"`} {
+	for _, want := range []string{"task_proposal_mode.selected", `"mode":"feature"`, "task_proposal_mode.resolved", `"resolved_mode":"feature"`, "task.proposed", `"task_id":"TASK-0001"`} {
 		if !strings.Contains(events, want) {
 			t.Fatalf("events missing %q:\n%s", want, events)
 		}
@@ -289,7 +289,7 @@ func TestExecuteTaskProposalModePersistsPromptsAndEvents(t *testing.T) {
 		}
 	}
 	taskData := readFile(t, filepath.Join(runDir, "snapshots", "tasks.after.json"))
-	if !strings.Contains(taskData, `"id": "T-FEATURE-001"`) || !strings.Contains(taskData, `"mode": "feature"`) {
+	if !strings.Contains(taskData, `"id": "TASK-0001"`) || !strings.Contains(taskData, `"mode": "feature"`) {
 		t.Fatalf("tasks.json missing proposal mode metadata:\n%s", taskData)
 	}
 	assertNoFile(t, filepath.Join(dir, ".jj", "eval.json"))
@@ -320,27 +320,27 @@ func TestExecuteTaskProposalModeCriticalBlockerOverridesConcreteMode(t *testing.
 	if manifest.TaskProposalMode != TaskProposalModeFeature || manifest.ResolvedTaskProposalMode != TaskProposalModeBugfix {
 		t.Fatalf("expected feature to resolve bugfix, got %#v", manifest)
 	}
-	if !strings.Contains(manifest.TaskProposalReason, "overridden") || manifest.SelectedTaskID != "T-BUGFIX-001" {
+	if !strings.Contains(manifest.TaskProposalReason, "overridden") || manifest.SelectedTaskID != "TASK-0001" {
 		t.Fatalf("expected override reason and bugfix task id, got %#v", manifest)
 	}
 	taskData := readFile(t, filepath.Join(runDir, "snapshots", "tasks.after.json"))
-	if !strings.Contains(taskData, `"id": "T-BUGFIX-001"`) || !strings.Contains(taskData, `"mode": "bugfix"`) || !strings.Contains(taskData, `"selected_task_proposal_mode": "feature"`) {
+	if !strings.Contains(taskData, `"id": "TASK-0001"`) || !strings.Contains(taskData, `"mode": "bugfix"`) || !strings.Contains(taskData, `"selected_task_proposal_mode": "feature"`) {
 		t.Fatalf("tasks.json missing bugfix override metadata:\n%s", taskData)
 	}
 	assertNoFile(t, filepath.Join(dir, ".jj", "eval.json"))
 }
 
-func TestExecutePriorityTaskOverridePersistsContextAndClearsOnPassedValidation(t *testing.T) {
+func TestExecuteNextIntentOverridePersistsContextAndClearsOnPassedValidation(t *testing.T) {
 	dir := initGit(t)
 	writePlan(t, dir, "plan.md")
 	secret := "sk-proj-prioritysecret1234567890"
-	writePriorityTask(t, dir, "Web UI About page feature only.\nOPENAI_API_KEY="+secret+"\n")
+	writeNextIntent(t, dir, "Web UI About page feature only.\nOPENAI_API_KEY="+secret+"\n")
 	planner := &fakePlanner{}
 
 	_, err := Execute(context.Background(), Config{
 		PlanPath:         filepath.Join(dir, "plan.md"),
 		CWD:              dir,
-		RunID:            "priority-success",
+		RunID:            "next-intent-success",
 		PlanningAgents:   1,
 		OpenAIModel:      "test-model",
 		TaskProposalMode: TaskProposalModeSecurity,
@@ -349,27 +349,27 @@ func TestExecutePriorityTaskOverridePersistsContextAndClearsOnPassedValidation(t
 		CodexRunner:      &fakeCodexRunner{mutate: true},
 	})
 	if err != nil {
-		t.Fatalf("execute priority task run: %v", err)
+		t.Fatalf("execute next intent run: %v", err)
 	}
 
-	runDir := filepath.Join(dir, ".jj", "runs", "priority-success")
-	if got := readFile(t, filepath.Join(dir, DefaultPriorityTaskPath)); got != "" {
-		t.Fatalf("priority task should be cleared after passed validation, got %q", got)
+	runDir := filepath.Join(dir, ".jj", "runs", "next-intent-success")
+	if got := readFile(t, filepath.Join(dir, DefaultNextIntentPath)); got != "" {
+		t.Fatalf("next intent should be cleared after passed validation, got %q", got)
 	}
 	manifest := readManifest(t, filepath.Join(runDir, "manifest.json"))
 	if manifest.TaskProposalMode != TaskProposalModeSecurity || manifest.ResolvedTaskProposalMode != TaskProposalModeSecurity {
-		t.Fatalf("priority task intent should preserve mode metadata while overriding task choice guidance, got %#v", manifest)
+		t.Fatalf("next intent should preserve mode metadata while overriding task choice guidance, got %#v", manifest)
 	}
-	if manifest.Artifacts["input_priority_task"] != "input/priority-task.md" {
-		t.Fatalf("manifest missing priority task artifact: %#v", manifest.Artifacts)
+	if manifest.Artifacts["input_next_intent"] != "input/next-intent.md" {
+		t.Fatalf("manifest missing next intent artifact: %#v", manifest.Artifacts)
 	}
-	priorityArtifact := readFile(t, filepath.Join(runDir, "input", "priority-task.md"))
-	if !strings.Contains(priorityArtifact, "Web UI About page feature only.") || strings.Contains(priorityArtifact, secret) || !strings.Contains(priorityArtifact, "[jj-omitted]") {
-		t.Fatalf("priority task artifact should contain redacted priority content:\n%s", priorityArtifact)
+	intentArtifact := readFile(t, filepath.Join(runDir, "input", "next-intent.md"))
+	if !strings.Contains(intentArtifact, "Web UI About page feature only.") || strings.Contains(intentArtifact, secret) || !strings.Contains(intentArtifact, "[jj-omitted]") {
+		t.Fatalf("next intent artifact should contain redacted content:\n%s", intentArtifact)
 	}
 	input := readFile(t, filepath.Join(runDir, "input.md"))
-	if !strings.Contains(input, "# Priority Task Intent Override") || !strings.Contains(input, "Web UI About page feature only.") || strings.Contains(input, secret) {
-		t.Fatalf("planning input missing redacted priority override:\n%s", input)
+	if !strings.Contains(input, "# Next Intent Override") || !strings.Contains(input, "Web UI About page feature only.") || strings.Contains(input, secret) {
+		t.Fatalf("planning input missing redacted next intent override:\n%s", input)
 	}
 	if len(planner.draftRequests) != 1 {
 		t.Fatalf("expected one draft request, got %d", len(planner.draftRequests))
@@ -382,29 +382,29 @@ func TestExecutePriorityTaskOverridePersistsContextAndClearsOnPassedValidation(t
 		{"draft", planner.draftRequests[0].Plan, planner.draftRequests[0].TaskProposalInstruction},
 		{"merge", planner.lastMergeRequest.Plan, planner.lastMergeRequest.TaskProposalInstruction},
 	} {
-		if !strings.Contains(req.plan, "# Priority Task Intent Override") || !strings.Contains(req.plan, "Web UI About page feature only.") || strings.Contains(req.plan, secret) {
-			t.Fatalf("%s request missing redacted priority context:\n%s", req.name, req.plan)
+		if !strings.Contains(req.plan, "# Next Intent Override") || !strings.Contains(req.plan, "Web UI About page feature only.") || strings.Contains(req.plan, secret) {
+			t.Fatalf("%s request missing redacted next intent context:\n%s", req.name, req.plan)
 		}
-		if !strings.Contains(req.instruction, "Task Proposal Mode: security") || !strings.Contains(req.instruction, ".jj/priority-task.md is active") || !strings.Contains(req.instruction, "Ignore task-proposal-mode") || !strings.Contains(req.instruction, "Use mode only after satisfying the intent") {
+		if !strings.Contains(req.instruction, "Task Proposal Mode: security") || !strings.Contains(req.instruction, ".jj/next-intent.md is active") || !strings.Contains(req.instruction, "Ignore task-proposal-mode") || !strings.Contains(req.instruction, "Use mode only after satisfying the intent") {
 			t.Fatalf("%s request missing priority instruction:\n%s", req.name, req.instruction)
 		}
 	}
 	events := readFile(t, filepath.Join(runDir, "events.jsonl"))
-	if !strings.Contains(events, "priority_task.cleared") {
-		t.Fatalf("events should record priority task clearing:\n%s", events)
+	if !strings.Contains(events, "next_intent.cleared") {
+		t.Fatalf("events should record next intent clearing:\n%s", events)
 	}
 }
 
-func TestExecutePriorityTaskDryRunDoesNotClear(t *testing.T) {
+func TestExecuteNextIntentDryRunDoesNotClear(t *testing.T) {
 	dir := t.TempDir()
 	writePlan(t, dir, "plan.md")
-	priority := "Keep priority task for full run.\n"
-	writePriorityTask(t, dir, priority)
+	intent := "Keep next intent for full run.\n"
+	writeNextIntent(t, dir, intent)
 
 	_, err := Execute(context.Background(), Config{
 		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
-		RunID:          "priority-dry-run",
+		RunID:          "next-intent-dry-run",
 		PlanningAgents: 1,
 		OpenAIModel:    "test-model",
 		AllowNoGit:     true,
@@ -413,28 +413,28 @@ func TestExecutePriorityTaskDryRunDoesNotClear(t *testing.T) {
 		Planner:        &fakePlanner{},
 	})
 	if err != nil {
-		t.Fatalf("execute priority dry-run: %v", err)
+		t.Fatalf("execute next intent dry-run: %v", err)
 	}
-	if got := readFile(t, filepath.Join(dir, DefaultPriorityTaskPath)); got != priority {
-		t.Fatalf("dry-run should preserve priority task, got %q", got)
+	if got := readFile(t, filepath.Join(dir, DefaultNextIntentPath)); got != intent {
+		t.Fatalf("dry-run should preserve next intent, got %q", got)
 	}
-	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "priority-dry-run", "manifest.json"))
-	if manifest.Artifacts["input_priority_task"] != "input/priority-task.md" {
-		t.Fatalf("dry-run manifest missing priority artifact: %#v", manifest.Artifacts)
+	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "next-intent-dry-run", "manifest.json"))
+	if manifest.Artifacts["input_next_intent"] != "input/next-intent.md" {
+		t.Fatalf("dry-run manifest missing next intent artifact: %#v", manifest.Artifacts)
 	}
 }
 
-func TestExecutePriorityTaskKeptOnValidationFailure(t *testing.T) {
+func TestExecuteNextIntentKeptOnValidationFailure(t *testing.T) {
 	dir := initGit(t)
 	writePlan(t, dir, "plan.md")
 	writeValidationScript(t, dir, "exit 7")
-	priority := "Keep priority task after failed validation.\n"
-	writePriorityTask(t, dir, priority)
+	intent := "Keep next intent after failed validation.\n"
+	writeNextIntent(t, dir, intent)
 
 	_, err := Execute(context.Background(), Config{
 		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
-		RunID:          "priority-validation-fail",
+		RunID:          "next-intent-validation-fail",
 		PlanningAgents: 1,
 		OpenAIModel:    "test-model",
 		Stdout:         io.Discard,
@@ -442,23 +442,23 @@ func TestExecutePriorityTaskKeptOnValidationFailure(t *testing.T) {
 		CodexRunner:    &fakeCodexRunner{mutate: true},
 	})
 	if err != nil {
-		t.Fatalf("validation failure should not abort priority run: %v", err)
+		t.Fatalf("validation failure should not abort next intent run: %v", err)
 	}
-	if got := readFile(t, filepath.Join(dir, DefaultPriorityTaskPath)); got != priority {
-		t.Fatalf("validation failure should preserve priority task, got %q", got)
+	if got := readFile(t, filepath.Join(dir, DefaultNextIntentPath)); got != intent {
+		t.Fatalf("validation failure should preserve next intent, got %q", got)
 	}
 }
 
-func TestExecutePriorityTaskKeptOnPlanningFailure(t *testing.T) {
+func TestExecuteNextIntentKeptOnPlanningFailure(t *testing.T) {
 	dir := t.TempDir()
 	writePlan(t, dir, "plan.md")
-	priority := "Keep priority task after planning failure.\n"
-	writePriorityTask(t, dir, priority)
+	intent := "Keep next intent after planning failure.\n"
+	writeNextIntent(t, dir, intent)
 
 	_, err := Execute(context.Background(), Config{
 		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
-		RunID:          "priority-planning-fail",
+		RunID:          "next-intent-planning-fail",
 		PlanningAgents: 1,
 		OpenAIModel:    "test-model",
 		AllowNoGit:     true,
@@ -468,21 +468,21 @@ func TestExecutePriorityTaskKeptOnPlanningFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected planning failure")
 	}
-	if got := readFile(t, filepath.Join(dir, DefaultPriorityTaskPath)); got != priority {
-		t.Fatalf("planning failure should preserve priority task, got %q", got)
+	if got := readFile(t, filepath.Join(dir, DefaultNextIntentPath)); got != intent {
+		t.Fatalf("planning failure should preserve next intent, got %q", got)
 	}
 }
 
-func TestExecutePriorityTaskKeptOnCodexFailure(t *testing.T) {
+func TestExecuteNextIntentKeptOnCodexFailure(t *testing.T) {
 	dir := initGit(t)
 	writePlan(t, dir, "plan.md")
-	priority := "Keep priority task after Codex failure.\n"
-	writePriorityTask(t, dir, priority)
+	intent := "Keep next intent after Codex failure.\n"
+	writeNextIntent(t, dir, intent)
 
 	_, err := Execute(context.Background(), Config{
 		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
-		RunID:          "priority-codex-fail",
+		RunID:          "next-intent-codex-fail",
 		PlanningAgents: 1,
 		OpenAIModel:    "test-model",
 		Stdout:         io.Discard,
@@ -492,21 +492,21 @@ func TestExecutePriorityTaskKeptOnCodexFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected codex failure")
 	}
-	if got := readFile(t, filepath.Join(dir, DefaultPriorityTaskPath)); got != priority {
-		t.Fatalf("codex failure should preserve priority task, got %q", got)
+	if got := readFile(t, filepath.Join(dir, DefaultNextIntentPath)); got != intent {
+		t.Fatalf("codex failure should preserve next intent, got %q", got)
 	}
 }
 
-func TestExecutePriorityTaskKeptOnSpecReconcileFailure(t *testing.T) {
+func TestExecuteNextIntentKeptOnSpecReconcileFailure(t *testing.T) {
 	dir := initGit(t)
 	writePlan(t, dir, "plan.md")
-	priority := "Keep priority task after reconcile failure.\n"
-	writePriorityTask(t, dir, priority)
+	intent := "Keep next intent after reconcile failure.\n"
+	writeNextIntent(t, dir, intent)
 
 	_, err := Execute(context.Background(), Config{
 		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
-		RunID:          "priority-reconcile-fail",
+		RunID:          "next-intent-reconcile-fail",
 		PlanningAgents: 1,
 		OpenAIModel:    "test-model",
 		Stdout:         io.Discard,
@@ -516,8 +516,8 @@ func TestExecutePriorityTaskKeptOnSpecReconcileFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected reconcile failure")
 	}
-	if got := readFile(t, filepath.Join(dir, DefaultPriorityTaskPath)); got != priority {
-		t.Fatalf("reconcile failure should preserve priority task, got %q", got)
+	if got := readFile(t, filepath.Join(dir, DefaultNextIntentPath)); got != intent {
+		t.Fatalf("reconcile failure should preserve next intent, got %q", got)
 	}
 }
 
@@ -911,17 +911,19 @@ func TestExecuteFailedValidationLeavesWorkspaceSpecUnchanged(t *testing.T) {
 	}
 }
 
-func TestExecuteAppendsTasksAndDevelopsNewSelection(t *testing.T) {
+func TestExecuteRunsExistingInProgressTaskBeforePlanningNewWork(t *testing.T) {
 	dir := initGit(t)
 	writePlan(t, dir, "plan.md")
+	nextIntent := "Plan a brand new feature later.\n"
+	writeNextIntent(t, dir, nextIntent)
 	if err := os.MkdirAll(filepath.Join(dir, ".jj"), 0o755); err != nil {
 		t.Fatalf("mkdir .jj: %v", err)
 	}
 	existingTasks := `{
 		"version": 1,
-		"active_task_id": "T-FEATURE-001",
+		"active_task_id": "TASK-0001",
 		"tasks": [{
-			"id": "T-FEATURE-001",
+			"id": "TASK-0001",
 			"title": "Existing active feature",
 			"mode": "feature",
 			"priority": "high",
@@ -934,37 +936,165 @@ func TestExecuteAppendsTasksAndDevelopsNewSelection(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".jj", "tasks.json"), []byte(existingTasks), 0o644); err != nil {
 		t.Fatalf("write tasks state: %v", err)
 	}
+	planner := &fakePlanner{}
 
 	_, err := Execute(context.Background(), Config{
 		PlanPath:       filepath.Join(dir, "plan.md"),
 		CWD:            dir,
-		RunID:          "append-task-full",
+		RunID:          "existing-task-full",
 		PlanningAgents: 1,
 		OpenAIModel:    "test-model",
 		Stdout:         io.Discard,
-		Planner:        &fakePlanner{},
+		Planner:        planner,
 		CodexRunner:    &fakeCodexRunner{mutate: true},
 	})
 	if err != nil {
-		t.Fatalf("execute append task run: %v", err)
+		t.Fatalf("execute existing task run: %v", err)
+	}
+	if len(planner.draftRequests) != 0 || strings.TrimSpace(planner.lastMergeRequest.Plan) != "" {
+		t.Fatalf("planner draft/merge should be skipped for existing work, drafts=%d merge=%#v", len(planner.draftRequests), planner.lastMergeRequest)
 	}
 
 	state := readTaskState(t, filepath.Join(dir, ".jj", "tasks.json"))
 	if state.ActiveTaskID != nil {
 		t.Fatalf("completed run should clear active task, got %#v", state.ActiveTaskID)
 	}
-	if len(state.Tasks) != 2 {
-		t.Fatalf("expected existing task plus appended selected task, got %#v", state.Tasks)
+	if len(state.Tasks) != 1 {
+		t.Fatalf("expected no appended task when existing work is runnable, got %#v", state.Tasks)
 	}
-	if state.Tasks[0].ID != "T-FEATURE-001" || state.Tasks[0].Status != "queued" {
-		t.Fatalf("existing active task should be preserved and demoted to queued, got %#v", state.Tasks[0])
+	if state.Tasks[0].ID != "TASK-0001" || state.Tasks[0].Status != "done" || state.Tasks[0].CompletedByRun == nil || *state.Tasks[0].CompletedByRun != "existing-task-full" {
+		t.Fatalf("existing active task should be selected and completed, got %#v", state.Tasks[0])
 	}
-	if state.Tasks[1].ID != "T-FEATURE-002" || state.Tasks[1].Status != "done" || state.Tasks[1].CompletedByRun == nil || *state.Tasks[1].CompletedByRun != "append-task-full" {
-		t.Fatalf("new appended task should be selected and completed, got %#v", state.Tasks[1])
+	if got := readFile(t, filepath.Join(dir, DefaultNextIntentPath)); got != nextIntent {
+		t.Fatalf("existing work should preserve next intent, got %q", got)
 	}
-	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "append-task-full", "manifest.json"))
-	if manifest.SelectedTaskID != "T-FEATURE-002" || manifest.Validation.Status != validationStatusPassed {
-		t.Fatalf("manifest should point at appended selected task, got selected=%s validation=%#v", manifest.SelectedTaskID, manifest.Validation)
+	runDir := filepath.Join(dir, ".jj", "runs", "existing-task-full")
+	manifest := readManifest(t, filepath.Join(runDir, "manifest.json"))
+	if manifest.SelectedTaskID != "TASK-0001" || manifest.Validation.Status != validationStatusPassed {
+		t.Fatalf("manifest should point at existing selected task, got selected=%s validation=%#v", manifest.SelectedTaskID, manifest.Validation)
+	}
+	if _, ok := manifest.Artifacts["input_next_intent"]; ok {
+		t.Fatalf("next intent should not be artifacted when existing work runs: %#v", manifest.Artifacts)
+	}
+	planning := readPlanning(t, filepath.Join(runDir, "planning.json"))
+	if planning.Provider != "existing_task" || planning.SelectedTaskID != "TASK-0001" {
+		t.Fatalf("planning artifact should record existing task source, got %#v", planning)
+	}
+	events := readFile(t, filepath.Join(runDir, "events.jsonl"))
+	if !strings.Contains(events, "task.selected") || !strings.Contains(events, `"source":"existing"`) || strings.Contains(events, "task.proposed") {
+		t.Fatalf("events should record existing task selection only:\n%s", events)
+	}
+}
+
+func TestExecutePromotesExistingQueuedTaskBeforePlanningNewWork(t *testing.T) {
+	dir := initGit(t)
+	writePlan(t, dir, "plan.md")
+	if err := os.MkdirAll(filepath.Join(dir, ".jj"), 0o755); err != nil {
+		t.Fatalf("mkdir .jj: %v", err)
+	}
+	existingTasks := `{
+		"version": 1,
+		"active_task_id": null,
+		"tasks": [{
+			"id": "TASK-0001",
+			"title": "Existing queued feature",
+			"mode": "feature",
+			"priority": "high",
+			"status": "queued",
+			"reason": "existing",
+			"acceptance_criteria": ["existing works"],
+			"validation_command": "./scripts/validate.sh"
+		}]
+	}`
+	if err := os.WriteFile(filepath.Join(dir, ".jj", "tasks.json"), []byte(existingTasks), 0o644); err != nil {
+		t.Fatalf("write tasks state: %v", err)
+	}
+	planner := &fakePlanner{}
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "existing-queued-full",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		Stdout:         io.Discard,
+		Planner:        planner,
+		CodexRunner:    &fakeCodexRunner{mutate: true},
+	})
+	if err != nil {
+		t.Fatalf("execute queued existing task run: %v", err)
+	}
+	if len(planner.draftRequests) != 0 || strings.TrimSpace(planner.lastMergeRequest.Plan) != "" {
+		t.Fatalf("planner draft/merge should be skipped for queued existing work, drafts=%d merge=%#v", len(planner.draftRequests), planner.lastMergeRequest)
+	}
+	state := readTaskState(t, filepath.Join(dir, ".jj", "tasks.json"))
+	if len(state.Tasks) != 1 || state.Tasks[0].ID != "TASK-0001" || state.Tasks[0].Status != "done" {
+		t.Fatalf("queued existing task should be completed without appending, got %#v", state.Tasks)
+	}
+	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "existing-queued-full", "manifest.json"))
+	if manifest.SelectedTaskID != "TASK-0001" {
+		t.Fatalf("manifest should select queued existing task, got %#v", manifest)
+	}
+}
+
+func TestExecuteDryRunReportsExistingTaskWithoutConsumingNextIntent(t *testing.T) {
+	dir := t.TempDir()
+	writePlan(t, dir, "plan.md")
+	nextIntent := "Use later after the queue is empty.\n"
+	writeNextIntent(t, dir, nextIntent)
+	if err := os.MkdirAll(filepath.Join(dir, ".jj"), 0o755); err != nil {
+		t.Fatalf("mkdir .jj: %v", err)
+	}
+	existingTasks := `{
+		"version": 1,
+		"active_task_id": null,
+		"tasks": [{
+			"id": "TASK-0001",
+			"title": "Existing queued dry-run task",
+			"mode": "feature",
+			"priority": "high",
+			"status": "queued",
+			"reason": "existing",
+			"acceptance_criteria": ["existing works"],
+			"validation_command": "./scripts/validate.sh"
+		}]
+	}`
+	taskPath := filepath.Join(dir, ".jj", "tasks.json")
+	if err := os.WriteFile(taskPath, []byte(existingTasks), 0o644); err != nil {
+		t.Fatalf("write tasks state: %v", err)
+	}
+	planner := &fakePlanner{}
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "existing-dry-run",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		AllowNoGit:     true,
+		DryRun:         true,
+		Stdout:         io.Discard,
+		Planner:        planner,
+	})
+	if err != nil {
+		t.Fatalf("execute existing dry-run: %v", err)
+	}
+	if len(planner.draftRequests) != 0 || strings.TrimSpace(planner.lastMergeRequest.Plan) != "" {
+		t.Fatalf("planner draft/merge should be skipped for existing dry-run, drafts=%d merge=%#v", len(planner.draftRequests), planner.lastMergeRequest)
+	}
+	if got := readFile(t, taskPath); got != existingTasks {
+		t.Fatalf("dry-run should not mutate workspace tasks, got:\n%s", got)
+	}
+	if got := readFile(t, filepath.Join(dir, DefaultNextIntentPath)); got != nextIntent {
+		t.Fatalf("dry-run existing work should preserve next intent, got %q", got)
+	}
+	runDir := filepath.Join(dir, ".jj", "runs", "existing-dry-run")
+	manifest := readManifest(t, filepath.Join(runDir, "manifest.json"))
+	if manifest.SelectedTaskID != "TASK-0001" {
+		t.Fatalf("dry-run manifest should select existing task, got %#v", manifest)
+	}
+	if _, ok := manifest.Artifacts["input_next_intent"]; ok {
+		t.Fatalf("dry-run existing task should not artifact next intent: %#v", manifest.Artifacts)
 	}
 }
 
@@ -1274,7 +1404,7 @@ func TestExecuteNonDryRunCommitsCleanGitWorkspace(t *testing.T) {
 		t.Fatalf("HEAD should advance after successful clean git run, before=%s after=%s", headBefore, headAfter)
 	}
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "local-commit-turn", "manifest.json"))
-	wantSubject := "jj: T-FEATURE-001 Refresh dashboard controls"
+	wantSubject := "jj: TASK-0001 Refresh dashboard controls"
 	if !manifest.Commit.Ran || manifest.Commit.Status != "success" || manifest.Commit.SHA != headAfter || manifest.Commit.Message != wantSubject {
 		t.Fatalf("expected successful commit metadata, got %#v head=%s", manifest.Commit, headAfter)
 	}
@@ -2393,14 +2523,14 @@ func writePlan(t *testing.T, dir, name string) {
 	}
 }
 
-func writePriorityTask(t *testing.T, dir, content string) {
+func writeNextIntent(t *testing.T, dir, content string) {
 	t.Helper()
-	path := filepath.Join(dir, DefaultPriorityTaskPath)
+	path := filepath.Join(dir, DefaultNextIntentPath)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir priority task dir: %v", err)
+		t.Fatalf("mkdir next intent dir: %v", err)
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write priority task: %v", err)
+		t.Fatalf("write next intent: %v", err)
 	}
 }
 

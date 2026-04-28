@@ -172,23 +172,10 @@ func ResolveTaskProposalMode(selected TaskProposalMode, evidence string) TaskPro
 	}
 }
 
-// TaskProposalTaskID returns the default mode-aware task id for generated task
-// scaffolding and events.
+// TaskProposalTaskID returns the default global task id for generated task
+// scaffolding and events. Category metadata lives in TaskRecord.Mode.
 func TaskProposalTaskID(mode TaskProposalMode) string {
-	switch concreteTaskProposalMode(mode) {
-	case TaskProposalModeSecurity:
-		return "T-SEC-001"
-	case TaskProposalModeHardening:
-		return "T-HARDEN-001"
-	case TaskProposalModeQuality:
-		return "T-QUALITY-001"
-	case TaskProposalModeBugfix:
-		return "T-BUGFIX-001"
-	case TaskProposalModeDocs:
-		return "T-DOCS-001"
-	default:
-		return "T-FEATURE-001"
-	}
+	return "TASK-0001"
 }
 
 // TaskProposalTaskTitle returns a concise title for generated task scaffolding.
@@ -210,7 +197,7 @@ func TaskProposalTaskTitle(mode TaskProposalMode) string {
 }
 
 // TaskProposalPromptContext formats the mode context passed to providers.
-func TaskProposalPromptContext(resolution TaskProposalResolution, priorityTask ...string) string {
+func TaskProposalPromptContext(resolution TaskProposalResolution, nextIntent ...string) string {
 	selected := resolution.Selected
 	resolved := resolution.Resolved
 	if !selected.Valid() {
@@ -225,13 +212,13 @@ func TaskProposalPromptContext(resolution TaskProposalResolution, priorityTask .
 	if strings.TrimSpace(resolution.Reason) != "" {
 		fmt.Fprintf(&b, "Resolution Reason: %s\n", resolution.Reason)
 	}
-	fmt.Fprintf(&b, "Recommended Task ID Prefix: %s\n", strings.TrimSuffix(TaskProposalTaskID(resolved), "-001"))
+	fmt.Fprintf(&b, "Recommended Task ID Format: %s\n", TaskProposalTaskID(resolved))
 	fmt.Fprintf(&b, "Instruction: %s", selected.PromptInstruction())
 	if selected != resolved {
 		fmt.Fprintf(&b, "\nConcrete Direction: %s", resolved.PromptInstruction())
 	}
-	if len(priorityTask) > 0 && strings.TrimSpace(priorityTask[0]) != "" {
-		fmt.Fprintf(&b, "\nPriority Task Intent Override: .jj/priority-task.md is active. The first proposed runnable task must be scoped to that free-form intent. Ignore task-proposal-mode, resolved mode, and auto/balanced detection when choosing the task. Use mode only after satisfying the intent as inferred category metadata or fallback guidance.")
+	if len(nextIntent) > 0 && strings.TrimSpace(nextIntent[0]) != "" {
+		fmt.Fprintf(&b, "\nNext Intent Override: .jj/next-intent.md is active. The first proposed runnable task must be scoped to that free-form intent. Ignore task-proposal-mode, resolved mode, and auto/balanced detection when choosing the task. Use mode only after satisfying the intent as inferred category metadata or fallback guidance.")
 	}
 	return b.String()
 }

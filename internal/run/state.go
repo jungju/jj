@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	DefaultSpecStatePath    = ".jj/spec.json"
-	DefaultTasksStatePath   = ".jj/tasks.json"
-	DefaultPriorityTaskPath = ".jj/priority-task.md"
+	DefaultSpecStatePath  = ".jj/spec.json"
+	DefaultTasksStatePath = ".jj/tasks.json"
+	DefaultNextIntentPath = ".jj/next-intent.md"
 )
 
 type SpecState struct {
@@ -126,12 +126,12 @@ func writeSnapshotJSON(store artifact.Store, rel string, value any) (string, err
 	return writeRedactedJSON(store, rel, value)
 }
 
-func buildPlanningContext(plan string, spec SpecState, tasks TaskState, continuation string, priorityTask string) string {
+func buildPlanningContext(plan string, spec SpecState, tasks TaskState, continuation string, nextIntent string) string {
 	var b strings.Builder
-	if strings.TrimSpace(priorityTask) != "" {
-		b.WriteString("# Priority Task Intent Override\n\n")
-		b.WriteString("The following local operator intent from .jj/priority-task.md is the highest-priority next-turn planning input. Scope the first proposed runnable task to this intent. Ignore task-proposal-mode, resolved mode, and auto/balanced detection when choosing what to plan; use mode only after the intent is satisfied as category metadata or fallback guidance.\n\n")
-		b.WriteString(truncateString(redactSecrets(priorityTask), 16000))
+	if strings.TrimSpace(nextIntent) != "" {
+		b.WriteString("# Next Intent Override\n\n")
+		b.WriteString("The following local operator intent from .jj/next-intent.md is the highest-priority next-turn planning input. Scope the first proposed runnable task to this intent. Ignore task-proposal-mode, resolved mode, and auto/balanced detection when choosing what to plan; use mode only after the intent is satisfied as category metadata or fallback guidance.\n\n")
+		b.WriteString(truncateString(redactSecrets(nextIntent), 16000))
 		b.WriteString("\n\n")
 	}
 	if specHasContent(spec) {
@@ -160,13 +160,13 @@ func buildPlanningContext(plan string, spec SpecState, tasks TaskState, continua
 	return redactSecrets(b.String())
 }
 
-func buildTaskProposalEvidence(spec SpecState, tasks TaskState, continuation string, priorityTask string) string {
+func buildTaskProposalEvidence(spec SpecState, tasks TaskState, continuation string, nextIntent string) string {
 	var b strings.Builder
-	if strings.TrimSpace(priorityTask) != "" {
-		b.WriteString("Priority task intent override from .jj/priority-task.md:\n")
+	if strings.TrimSpace(nextIntent) != "" {
+		b.WriteString("Next intent override from .jj/next-intent.md:\n")
 		b.WriteString("- This free-form intent is the highest-priority next task input and should override task-proposal-mode, resolved mode, and auto/balanced detection when choosing what to plan.\n")
 		b.WriteString("- Scope the first proposed runnable task to this intent; use mode only afterward as category metadata or fallback guidance.\n")
-		for _, line := range strings.Split(truncateString(redactSecrets(priorityTask), 4000), "\n") {
+		for _, line := range strings.Split(truncateString(redactSecrets(nextIntent), 4000), "\n") {
 			if trimmed := strings.TrimSpace(line); trimmed != "" {
 				b.WriteString("- ")
 				b.WriteString(trimmed)
@@ -435,6 +435,55 @@ func appendPlannedTaskState(before TaskState, planned []TaskRecord, proposal Tas
 	return redacted, selectedTask(redacted, proposal)
 }
 
+func selectExistingRunnableTask(state TaskState) (TaskRecord, bool) {
+	state = normalizeExistingTaskState(state)
+	if state.ActiveTaskID != nil {
+		idx := taskIndexByID(state, *state.ActiveTaskID)
+		if idx >= 0 && taskRunnable(state.Tasks[idx].Status) {
+			return state.Tasks[idx], true
+		}
+	}
+	for _, task := range state.Tasks {
+		switch strings.ToLower(strings.TrimSpace(task.Status)) {
+		case "active", "in_progress":
+			return task, true
+		}
+	}
+	for _, task := range state.Tasks {
+		if strings.EqualFold(strings.TrimSpace(task.Status), "queued") {
+			return task, true
+		}
+	}
+	return TaskRecord{}, false
+}
+
+func buildExistingRunnableTaskState(before TaskState, proposal TaskProposalResolution, inProgress bool, now time.Time) (TaskState, TaskRecord, bool) {
+	state := normalizeExistingTaskState(before)
+	selected, ok := selectExistingRunnableTask(state)
+	if !ok {
+		return redactTaskState(state), TaskRecord{}, false
+	}
+	idx := taskIndexByID(state, selected.ID)
+	if idx < 0 {
+		return redactTaskState(state), TaskRecord{}, false
+	}
+	if inProgress {
+		state = demoteExistingActiveTasksExcept(state, selected.ID, now)
+		idx = taskIndexByID(state, selected.ID)
+		if idx >= 0 {
+			state.Tasks[idx].Status = "in_progress"
+			state.Tasks[idx].UpdatedAt = now.Format(time.RFC3339)
+			if strings.TrimSpace(state.Tasks[idx].ValidationCommand) == "" {
+				state.Tasks[idx].ValidationCommand = defaultValidationCommand
+			}
+			id := state.Tasks[idx].ID
+			state.ActiveTaskID = &id
+		}
+	}
+	redacted := redactTaskState(state)
+	return redacted, taskByID(redacted, selected.ID, proposal), true
+}
+
 func normalizeExistingTaskState(state TaskState) TaskState {
 	if state.Version == 0 {
 		state.Version = 1
@@ -455,6 +504,21 @@ func normalizeExistingTaskState(state TaskState) TaskState {
 
 func demoteExistingActiveTasks(state TaskState, now time.Time) TaskState {
 	for i := range state.Tasks {
+		switch strings.ToLower(strings.TrimSpace(state.Tasks[i].Status)) {
+		case "active", "in_progress":
+			state.Tasks[i].Status = "queued"
+			state.Tasks[i].UpdatedAt = now.Format(time.RFC3339)
+		}
+	}
+	state.ActiveTaskID = nil
+	return state
+}
+
+func demoteExistingActiveTasksExcept(state TaskState, keepID string, now time.Time) TaskState {
+	for i := range state.Tasks {
+		if state.Tasks[i].ID == keepID {
+			continue
+		}
 		switch strings.ToLower(strings.TrimSpace(state.Tasks[i].Status)) {
 		case "active", "in_progress":
 			state.Tasks[i].Status = "queued"
@@ -839,19 +903,15 @@ func uniqueStrings(items ...string) []string {
 	return out
 }
 
-func nextTaskID(state TaskState, mode TaskProposalMode) string {
-	prefix := strings.TrimSuffix(TaskProposalTaskID(mode), "-001")
-	max := 0
+func nextTaskID(state TaskState, _ TaskProposalMode) string {
+	max := len(state.Tasks)
 	for _, task := range state.Tasks {
-		if !strings.HasPrefix(task.ID, prefix+"-") {
-			continue
-		}
 		var n int
-		if _, err := fmt.Sscanf(strings.TrimPrefix(task.ID, prefix+"-"), "%d", &n); err == nil && n > max {
+		if _, err := fmt.Sscanf(strings.TrimSpace(task.ID), "TASK-%04d", &n); err == nil && n > max {
 			max = n
 		}
 	}
-	return fmt.Sprintf("%s-%03d", prefix, max+1)
+	return fmt.Sprintf("TASK-%04d", max+1)
 }
 
 func changedFilesFromNameStatus(nameStatus string) []string {

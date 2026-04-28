@@ -695,7 +695,7 @@ func TestProjectDocAllowlistServesOnlyDocumentedDocs(t *testing.T) {
 		{"/doc?path=docs/SPEC.md", "<h1>Spec Doc</h1>"},
 		{"/doc?path=docs/TASK.md", "<h1>Task Doc</h1>"},
 		{"/doc?path=.jj/spec.json", "SPEC"},
-		{"/doc?path=.jj/tasks.json", "T-SEC-001"},
+		{"/doc?path=.jj/tasks.json", "TASK-0001"},
 	}
 	for _, tc := range allowed {
 		t.Run(tc.target, func(t *testing.T) {
@@ -975,7 +975,7 @@ func TestRunDetailShowsManifestMetadataAndGuardedLinks(t *testing.T) {
 		"planner_provider": "openai",
 		"task_proposal_mode": "feature",
 		"resolved_task_proposal_mode": "feature",
-		"selected_task_id": "T-FEATURE-001",
+		"selected_task_id": "TASK-0001",
 		"planner": {"provider": "openai", "model": "gpt-test"},
 		"workspace": {"spec_path": ".jj/spec.json", "task_path": ".jj/tasks.json", "spec_written": true, "task_written": true},
 		"artifacts": {
@@ -1049,7 +1049,7 @@ func TestRunDetailShowsManifestMetadataAndGuardedLinks(t *testing.T) {
 		}
 	}`, runID, secret, runID))
 	writeFile(t, dir, ".jj/runs/"+runID+"/snapshots/spec.after.json", `{"title":"SPEC"}`)
-	writeFile(t, dir, ".jj/runs/"+runID+"/snapshots/tasks.after.json", `{"tasks":[{"id":"T-FEATURE-001"}]}`)
+	writeFile(t, dir, ".jj/runs/"+runID+"/snapshots/tasks.after.json", `{"tasks":[{"id":"TASK-0001"}]}`)
 	writeFile(t, dir, ".jj/runs/"+runID+"/validation/summary.md", "validation summary\n")
 	writeFile(t, dir, ".jj/runs/"+runID+"/validation/results.json", `{"status":"passed"}`)
 	writeFile(t, dir, ".jj/runs/"+runID+"/validation/001-validate.stdout.txt", "ok\n")
@@ -1083,7 +1083,7 @@ func TestRunDetailShowsManifestMetadataAndGuardedLinks(t *testing.T) {
 		"dry-run false",
 		"provider openai",
 		"model gpt-test",
-		"selected task T-FEATURE-001",
+		"selected task TASK-0001",
 		"Generated State And Docs",
 		"snapshots/spec.after.json",
 		"snapshots/tasks.after.json",
@@ -1227,7 +1227,7 @@ func TestRunCompareShowsSanitizedSideBySideMetadata(t *testing.T) {
 		"planner_provider": "openai",
 		"task_proposal_mode": "feature",
 		"resolved_task_proposal_mode": "feature",
-		"selected_task_id": "T-FEATURE-003",
+		"selected_task_id": "TASK-0003",
 		"planner": {"provider": "openai", "model": "gpt-test"},
 		"workspace": {"spec_path": ".jj/spec.json", "task_path": ".jj/tasks.json", "spec_written": true, "task_written": true},
 		"artifacts": {
@@ -1300,7 +1300,7 @@ func TestRunCompareShowsSanitizedSideBySideMetadata(t *testing.T) {
 		}
 	}`, leftID, secret, leftID))
 	writeFile(t, dir, ".jj/runs/"+leftID+"/snapshots/spec.after.json", `{"title":"SPEC"}`)
-	writeFile(t, dir, ".jj/runs/"+leftID+"/snapshots/tasks.after.json", `{"tasks":[{"id":"T-FEATURE-003"}]}`)
+	writeFile(t, dir, ".jj/runs/"+leftID+"/snapshots/tasks.after.json", `{"tasks":[{"id":"TASK-0003"}]}`)
 	writeFile(t, dir, ".jj/runs/"+leftID+"/validation/summary.md", "validation summary with "+secret+"\n")
 	writeFile(t, dir, ".jj/runs/"+leftID+"/validation/results.json", `{"status":"passed"}`)
 	writeFile(t, dir, ".jj/runs/"+leftID+"/validation/001-validate.stdout.txt", "ok\n")
@@ -1341,7 +1341,7 @@ func TestRunCompareShowsSanitizedSideBySideMetadata(t *testing.T) {
 		"dry-run true",
 		"provider openai",
 		"provider codex",
-		"selected task T-FEATURE-003",
+		"selected task TASK-0003",
 		"Generated State And Docs",
 		"snapshots/spec.after.json",
 		"Evaluation",
@@ -1652,7 +1652,7 @@ func TestArtifactHTTPStackRejectsUnsafePathsWithoutLeaks(t *testing.T) {
 		t.Fatalf("read public doc: %v", err)
 	}
 	body = string(bodyBytes)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "T-SEC-001") {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "TASK-0001") {
 		t.Fatalf("public doc did not serve: status=%d body=%s", resp.StatusCode, body)
 	}
 }
@@ -2307,11 +2307,11 @@ func (f *loopFakeExecutor) Run(ctx context.Context, cfg runpkg.Config) (*runpkg.
 	if err := writeFakeRunFile(runDir, "snapshots/spec.after.json", `{"version":1,"title":"SPEC","summary":"summary"}`); err != nil {
 		return nil, err
 	}
-	if err := writeFakeRunFile(runDir, "snapshots/tasks.after.json", `{"version":1,"tasks":[{"id":"T-FEATURE-001","title":"Task","mode":"feature","status":"done"}]}`); err != nil {
+	if err := writeFakeRunFile(runDir, "snapshots/tasks.after.json", `{"version":1,"tasks":[{"id":"TASK-0001","title":"Task","mode":"feature","status":"done"}]}`); err != nil {
 		return nil, err
 	}
 	_ = writeFakeRunFile(filepath.Join(cfg.CWD, ".jj"), "spec.json", `{"version":1,"title":"SPEC","summary":"summary"}`)
-	_ = writeFakeRunFile(filepath.Join(cfg.CWD, ".jj"), "tasks.json", `{"version":1,"tasks":[{"id":"T-FEATURE-001","title":"Task","mode":"feature","status":"done"}]}`)
+	_ = writeFakeRunFile(filepath.Join(cfg.CWD, ".jj"), "tasks.json", `{"version":1,"tasks":[{"id":"TASK-0001","title":"Task","mode":"feature","status":"done"}]}`)
 	if err := writeFakeRunFile(runDir, "validation/summary.md", "validation "+validation+"\n"); err != nil {
 		return nil, err
 	}
@@ -2428,14 +2428,14 @@ func newTestWorkspace(t *testing.T) string {
 	writeFile(t, dir, "docs/SPEC.md", "# Spec Doc\n")
 	writeFile(t, dir, "docs/TASK.md", "# Task Doc\n")
 	writeFile(t, dir, ".jj/spec.json", `{"version":1,"title":"SPEC","summary":"Do the spec."}`)
-	writeFile(t, dir, ".jj/tasks.json", `{"version":1,"active_task_id":null,"tasks":[{"id":"T-SEC-001","title":"Secure artifacts","mode":"security","status":"queued"}]}`)
+	writeFile(t, dir, ".jj/tasks.json", `{"version":1,"active_task_id":null,"tasks":[{"id":"TASK-0001","title":"Secure artifacts","mode":"security","status":"queued"}]}`)
 	writeFile(t, dir, "docs/guide.md", "# Guide\n")
 	writeFile(t, dir, "playground/plan.md", "# Plan\n")
 	writeFile(t, dir, ".git/ignored.md", "# ignored\n")
 	writeFile(t, dir, ".jj/runs/20260425-110000-aaaaaa/manifest.json", `{"run_id":"20260425-110000-aaaaaa","status":"success","started_at":"2026-04-25T11:00:00Z","artifacts":{"manifest":"manifest.json"}}`)
-	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/manifest.json", `{"run_id":"20260425-120000-bbbbbb","status":"failed","started_at":"2026-04-25T12:00:00Z","task_proposal_mode":"auto","resolved_task_proposal_mode":"security","selected_task_id":"T-SEC-001","repository":{"enabled":true,"provider":"github","repo_url":"https://user:ghp_dashboardsecret1234567890@github.com/acme/app.git","sanitized_repo_url":"https://github.com/acme/app.git","repo_dir":"/tmp/acme-app","base_branch":"main","work_branch":"jj/run-20260425-120000-bbbbbb","push_enabled":true,"push_mode":"branch","pushed":true,"push_status":"pushed","pushed_ref":"origin/jj/run-20260425-120000-bbbbbb"},"artifacts":{"manifest":"manifest.json","snapshot_spec_after":"snapshots/spec.after.json","snapshot_tasks_after":"snapshots/tasks.after.json","validation_summary":"validation/summary.md"},"validation":{"status":"failed","summary_path":"validation/summary.md"},"risks":["review required"]}`)
+	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/manifest.json", `{"run_id":"20260425-120000-bbbbbb","status":"failed","started_at":"2026-04-25T12:00:00Z","task_proposal_mode":"auto","resolved_task_proposal_mode":"security","selected_task_id":"TASK-0001","repository":{"enabled":true,"provider":"github","repo_url":"https://user:ghp_dashboardsecret1234567890@github.com/acme/app.git","sanitized_repo_url":"https://github.com/acme/app.git","repo_dir":"/tmp/acme-app","base_branch":"main","work_branch":"jj/run-20260425-120000-bbbbbb","push_enabled":true,"push_mode":"branch","pushed":true,"push_status":"pushed","pushed_ref":"origin/jj/run-20260425-120000-bbbbbb"},"artifacts":{"manifest":"manifest.json","snapshot_spec_after":"snapshots/spec.after.json","snapshot_tasks_after":"snapshots/tasks.after.json","validation_summary":"validation/summary.md"},"validation":{"status":"failed","summary_path":"validation/summary.md"},"risks":["review required"]}`)
 	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/snapshots/spec.after.json", `{"version":1,"title":"SPEC","summary":"Do the spec."}`)
-	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/snapshots/tasks.after.json", `{"version":1,"tasks":[{"id":"T-SEC-001","title":"Do the task.","mode":"security","status":"queued"}]}`)
+	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/snapshots/tasks.after.json", `{"version":1,"tasks":[{"id":"TASK-0001","title":"Do the task.","mode":"security","status":"queued"}]}`)
 	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/validation/summary.md", "failed\n")
 	return dir
 }

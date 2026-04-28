@@ -77,7 +77,7 @@ func TestReconcileSpecPromptRequestsResultBasedSchema(t *testing.T) {
 	prompt := reconcileSpecPrompt(ReconcileSpecRequest{
 		PreviousSpec:      `{"version":1,"title":"Before"}`,
 		PlannedSpec:       `{"version":1,"title":"Planned"}`,
-		SelectedTask:      `{"id":"T-FEATURE-001"}`,
+		SelectedTask:      `{"id":"TASK-0001"}`,
 		CodexSummary:      "Changed code.",
 		GitDiffSummary:    "diff summary",
 		ValidationSummary: "Validation status: passed",

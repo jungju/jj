@@ -204,6 +204,117 @@ type runDetail struct {
 	NextActions              []string
 }
 
+type runAuditExport struct {
+	SchemaVersion string             `json:"schema_version"`
+	State         string             `json:"state"`
+	RunID         string             `json:"run_id,omitempty"`
+	ManifestState string             `json:"manifest_state"`
+	Error         string             `json:"error,omitempty"`
+	Status        string             `json:"status"`
+	StartedAt     string             `json:"started_at,omitempty"`
+	FinishedAt    string             `json:"finished_at,omitempty"`
+	Duration      string             `json:"duration,omitempty"`
+	DryRun        bool               `json:"dry_run"`
+	Planner       runAuditPlanner    `json:"planner"`
+	GeneratedDocs []runAuditLink     `json:"generated_docs"`
+	Artifacts     []runAuditLink     `json:"artifacts"`
+	Evaluation    runAuditEvaluation `json:"evaluation"`
+	Codex         runAuditCodex      `json:"codex"`
+	Commands      []runAuditCommand  `json:"commands"`
+	Security      runAuditSecurity   `json:"security"`
+	NextActions   []string           `json:"next_actions,omitempty"`
+}
+
+type runAuditPlanner struct {
+	Provider                 string `json:"provider,omitempty"`
+	Model                    string `json:"model,omitempty"`
+	TaskProposalMode         string `json:"task_proposal_mode,omitempty"`
+	ResolvedTaskProposalMode string `json:"resolved_task_proposal_mode,omitempty"`
+	SelectedTaskID           string `json:"selected_task_id,omitempty"`
+}
+
+type runAuditLink struct {
+	Label     string `json:"label,omitempty"`
+	Path      string `json:"path,omitempty"`
+	URL       string `json:"url,omitempty"`
+	Available bool   `json:"available"`
+	Status    string `json:"status"`
+}
+
+type runAuditEvaluation struct {
+	Status          string        `json:"status"`
+	EvidenceStatus  string        `json:"evidence_status"`
+	Reason          string        `json:"reason,omitempty"`
+	Summary         string        `json:"summary,omitempty"`
+	Results         *runAuditLink `json:"results,omitempty"`
+	SummaryArtifact *runAuditLink `json:"summary_artifact,omitempty"`
+	CommandCount    int           `json:"command_count"`
+	PassedCount     int           `json:"passed_count"`
+	FailedCount     int           `json:"failed_count"`
+}
+
+type runAuditCodex struct {
+	Ran             bool          `json:"ran"`
+	Skipped         bool          `json:"skipped"`
+	Status          string        `json:"status"`
+	Model           string        `json:"model,omitempty"`
+	ExitCode        int           `json:"exit_code"`
+	Duration        string        `json:"duration,omitempty"`
+	Events          *runAuditLink `json:"events,omitempty"`
+	SummaryArtifact *runAuditLink `json:"summary_artifact,omitempty"`
+	Exit            *runAuditLink `json:"exit,omitempty"`
+	Error           string        `json:"error,omitempty"`
+}
+
+type runAuditCommand struct {
+	Source   string        `json:"source,omitempty"`
+	Label    string        `json:"label,omitempty"`
+	Name     string        `json:"name,omitempty"`
+	Provider string        `json:"provider,omitempty"`
+	Model    string        `json:"model,omitempty"`
+	CWD      string        `json:"cwd,omitempty"`
+	RunID    string        `json:"run_id,omitempty"`
+	Argv     []string      `json:"argv,omitempty"`
+	Status   string        `json:"status"`
+	ExitCode int           `json:"exit_code"`
+	Duration string        `json:"duration,omitempty"`
+	Stdout   *runAuditLink `json:"stdout,omitempty"`
+	Stderr   *runAuditLink `json:"stderr,omitempty"`
+	Error    string        `json:"error,omitempty"`
+	Note     string        `json:"note,omitempty"`
+}
+
+type runAuditSecurity struct {
+	Available                  bool                   `json:"available"`
+	Summary                    string                 `json:"summary"`
+	Details                    []string               `json:"details,omitempty"`
+	RedactionApplied           bool                   `json:"redaction_applied"`
+	WorkspaceGuardrailsApplied bool                   `json:"workspace_guardrails_applied"`
+	RedactionCount             int64                  `json:"redaction_count"`
+	SecretMaterialPresent      bool                   `json:"secret_material_present"`
+	RootLabels                 []string               `json:"root_labels,omitempty"`
+	GuardedRoots               []runAuditSecurityRoot `json:"guarded_roots,omitempty"`
+	DeniedPathCount            int                    `json:"denied_path_count"`
+	DeniedPathCategories       []string               `json:"denied_path_categories,omitempty"`
+	DeniedPathCategoryCounts   map[string]int         `json:"denied_path_category_counts,omitempty"`
+	FailureCategories          []string               `json:"failure_categories,omitempty"`
+	FailureCategoryCounts      map[string]int         `json:"failure_category_counts,omitempty"`
+	CommandRecordCount         int                    `json:"command_record_count"`
+	CommandMetadataSanitized   bool                   `json:"command_metadata_sanitized"`
+	CommandArgvSanitized       bool                   `json:"command_argv_sanitized"`
+	CommandCWDLabel            string                 `json:"command_cwd_label,omitempty"`
+	CommandSanitizationStatus  string                 `json:"command_sanitization_status,omitempty"`
+	RawCommandTextPersisted    bool                   `json:"raw_command_text_persisted"`
+	RawEnvironmentPersisted    bool                   `json:"raw_environment_persisted"`
+	DryRunParityApplied        bool                   `json:"dry_run_parity_applied"`
+	DryRunParityStatus         string                 `json:"dry_run_parity_status,omitempty"`
+}
+
+type runAuditSecurityRoot struct {
+	Label string `json:"label"`
+	Path  string `json:"path"`
+}
+
 type runCompare struct {
 	Sides  []runCompareSide
 	Notice string
@@ -492,6 +603,10 @@ func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w)
 		if isUnsafeRequestPath(r.URL.Path, r.URL.EscapedPath()) {
+			if isRunAuditRequestPath(r.URL.Path, r.URL.EscapedPath()) {
+				s.writeRunAuditExport(w, http.StatusForbidden, deniedRunAuditExport("", "run id denied", "run id is not allowed"))
+				return
+			}
 			s.renderError(w, http.StatusForbidden, errors.New("request path is not allowed"))
 			return
 		}
@@ -502,6 +617,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) routes() {
 	s.mux.HandleFunc("/", s.handleIndex)
 	s.mux.HandleFunc("/runs", s.handleRunsIndex)
+	s.mux.HandleFunc("/runs/audit", s.handleRunAudit)
 	s.mux.HandleFunc("/runs/compare", s.handleRunCompare)
 	s.mux.HandleFunc("/runs/", s.handleRunsPath)
 	s.mux.HandleFunc("/doc", s.handleDoc)
@@ -1000,6 +1116,24 @@ func (s *Server) handleRunCompare(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleRunAudit(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/runs/audit" {
+		http.NotFound(w, r)
+		return
+	}
+	runID, ok, export := auditQueryRunID(r.URL.Query())
+	if !ok {
+		status := http.StatusBadRequest
+		if export.State == "denied" {
+			status = http.StatusForbidden
+		}
+		s.writeRunAuditExport(w, status, export)
+		return
+	}
+	export, status := s.loadRunAuditExport(strings.TrimSpace(runID))
+	s.writeRunAuditExport(w, status, export)
+}
+
 func (s *Server) handleRunsPath(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/runs/"), "/")
 	if rest == "" {
@@ -1016,6 +1150,9 @@ func (s *Server) handleRunsPath(w http.ResponseWriter, r *http.Request) {
 	switch parts[1] {
 	case "manifest":
 		s.handleRunManifest(w, runID)
+	case "audit", "audit.json":
+		export, status := s.loadRunAuditExport(runID)
+		s.writeRunAuditExport(w, status, export)
 	default:
 		http.NotFound(w, r)
 	}
@@ -1063,6 +1200,501 @@ func (s *Server) renderRunDetail(w http.ResponseWriter, runID string) {
 		RunID:     detail.ID,
 		RunDetail: &detail,
 	})
+}
+
+func auditQueryRunID(query url.Values) (string, bool, runAuditExport) {
+	var values []string
+	for _, name := range []string{"run", "id"} {
+		if found, ok := query[name]; ok {
+			values = append(values, found...)
+		}
+	}
+	if len(values) == 0 || (len(values) == 1 && strings.TrimSpace(values[0]) == "") {
+		return "", false, unavailableRunAuditExport("", "run id unavailable", "run id is required")
+	}
+	if len(values) != 1 {
+		return "", false, deniedRunAuditExport("", "run id denied", "exactly one run id is required")
+	}
+	return values[0], true, runAuditExport{}
+}
+
+func (s *Server) loadRunAuditExport(runID string) (runAuditExport, int) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return unavailableRunAuditExport("", "run id unavailable", "run id is required"), http.StatusBadRequest
+	}
+	if err := artifact.ValidateRunID(runID); err != nil || !safeDisplayRunID(runID) {
+		return deniedRunAuditExport("", "run id denied", "run id is not allowed"), http.StatusForbidden
+	}
+	runDir, err := s.runDir(runID)
+	if err != nil {
+		return deniedRunAuditExport("", "run id denied", "run id is not allowed"), http.StatusForbidden
+	}
+	roots := []security.CommandPathRoot{
+		{Path: s.cwd, Label: displayWorkspace},
+		{Path: runDir, Label: ".jj/runs/" + runID},
+	}
+	safeID := sanitizeRunAuditString(runID, roots...)
+	info, err := os.Stat(runDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return unavailableRunAuditExport(safeID, "run unavailable", "run unavailable"), http.StatusNotFound
+	}
+	if err != nil {
+		return deniedRunAuditExport(safeID, "run unavailable", "run unavailable"), http.StatusForbidden
+	}
+	if !info.IsDir() {
+		return unavailableRunAuditExport(safeID, "run unavailable", "run unavailable"), http.StatusNotFound
+	}
+
+	detail := s.loadRunDetail(runID, runDir)
+	export := runAuditExportFromDetail(detail)
+	if detail.ManifestState == "manifest available" {
+		export.State = "available"
+	} else {
+		export.State = "unavailable"
+		if export.Error == "" {
+			export.Error = detail.ManifestState
+		}
+	}
+	if data, err := readRunFile(runDir, "manifest.json"); err == nil {
+		var manifest dashboardManifest
+		if err := json.Unmarshal(data, &manifest); err == nil {
+			export.Security = runAuditSecurityFromManifest(manifest.Security)
+			if export.Security.Summary == "" {
+				export.Security = runAuditSecurityFromDetail(detail)
+			}
+		}
+	}
+	return sanitizeRunAuditExport(export, roots...), http.StatusOK
+}
+
+func unavailableRunAuditExport(runID, manifestState, message string) runAuditExport {
+	return runAuditExport{
+		SchemaVersion: "jj.audit.v1",
+		State:         "unavailable",
+		RunID:         sanitizeRunAuditString(runID),
+		ManifestState: sanitizeRunAuditString(manifestState),
+		Error:         sanitizeRunAuditString(message),
+		Status:        "unknown",
+		Evaluation: runAuditEvaluation{
+			Status:         "unknown",
+			EvidenceStatus: "unknown",
+		},
+		Codex:    runAuditCodex{Status: "unknown"},
+		Security: unavailableRunAuditSecurity(),
+	}
+}
+
+func deniedRunAuditExport(runID, manifestState, message string) runAuditExport {
+	export := unavailableRunAuditExport(runID, manifestState, message)
+	export.State = "denied"
+	return export
+}
+
+func runAuditExportFromDetail(detail runDetail) runAuditExport {
+	export := runAuditExport{
+		SchemaVersion: "jj.audit.v1",
+		State:         "available",
+		RunID:         detail.ID,
+		ManifestState: detail.ManifestState,
+		Error:         detail.Error,
+		Status:        firstNonEmpty(detail.Status, "unknown"),
+		StartedAt:     detail.StartedAt,
+		FinishedAt:    detail.FinishedAt,
+		Duration:      detail.Duration,
+		DryRun:        detail.DryRun,
+		Planner: runAuditPlanner{
+			Provider:                 detail.PlannerProvider,
+			Model:                    detail.PlannerModel,
+			TaskProposalMode:         detail.TaskProposalMode,
+			ResolvedTaskProposalMode: detail.ResolvedTaskProposalMode,
+			SelectedTaskID:           detail.SelectedTaskID,
+		},
+		GeneratedDocs: runAuditLinksFromDetailLinks(detail.Docs),
+		Artifacts:     runAuditLinksFromArtifactStatuses(detail.Artifacts),
+		Evaluation:    runAuditEvaluationFromDetail(detail.Validation),
+		Codex:         runAuditCodexFromDetail(detail.Codex),
+		Commands:      runAuditCommandsFromDetails(detail.Commands),
+		Security:      runAuditSecurityFromDetail(detail),
+		NextActions:   append([]string(nil), detail.NextActions...),
+	}
+	return export
+}
+
+func runAuditLinksFromDetailLinks(links []runDetailLink) []runAuditLink {
+	out := make([]runAuditLink, 0, len(links))
+	for _, link := range links {
+		out = append(out, runAuditLink{
+			Label:     link.Label,
+			Path:      link.Path,
+			URL:       link.URL,
+			Available: link.Available,
+			Status:    firstNonEmpty(link.Status, "unknown"),
+		})
+	}
+	return out
+}
+
+func runAuditLinksFromArtifactStatuses(statuses []runArtifactStatus) []runAuditLink {
+	out := make([]runAuditLink, 0, len(statuses))
+	for _, status := range statuses {
+		out = append(out, runAuditLink{
+			Path:      status.Path,
+			URL:       status.URL,
+			Available: status.Available,
+			Status:    firstNonEmpty(status.Status, "unknown"),
+		})
+	}
+	return out
+}
+
+func runAuditEvaluationFromDetail(detail runValidationDetail) runAuditEvaluation {
+	out := runAuditEvaluation{
+		Status:         firstNonEmpty(detail.Status, "unknown"),
+		EvidenceStatus: firstNonEmpty(detail.EvidenceStatus, "unknown"),
+		Reason:         detail.Reason,
+		Summary:        detail.Summary,
+		CommandCount:   detail.CommandCount,
+		PassedCount:    detail.PassedCount,
+		FailedCount:    detail.FailedCount,
+	}
+	if link := runAuditOptionalLink("Validation results", detail.ResultsPath, detail.ResultsURL); link != nil {
+		out.Results = link
+	}
+	if link := runAuditOptionalLink("Validation summary", detail.SummaryPath, detail.SummaryURL); link != nil {
+		out.SummaryArtifact = link
+	}
+	return out
+}
+
+func runAuditCodexFromDetail(detail runCodexDetail) runAuditCodex {
+	out := runAuditCodex{
+		Ran:      detail.Ran,
+		Skipped:  detail.Skipped,
+		Status:   firstNonEmpty(detail.Status, "unknown"),
+		Model:    detail.Model,
+		ExitCode: detail.ExitCode,
+		Duration: detail.Duration,
+		Error:    detail.Error,
+	}
+	if link := runAuditOptionalLink("Codex events", detail.EventsPath, detail.EventsURL); link != nil {
+		out.Events = link
+	}
+	if link := runAuditOptionalLink("Codex summary", detail.SummaryPath, detail.SummaryURL); link != nil {
+		out.SummaryArtifact = link
+	}
+	if link := runAuditOptionalLink("Codex command metadata", detail.ExitPath, detail.ExitURL); link != nil {
+		out.Exit = link
+	}
+	return out
+}
+
+func runAuditCommandsFromDetails(commands []runCommandDetail) []runAuditCommand {
+	out := make([]runAuditCommand, 0, len(commands))
+	for _, command := range commands {
+		item := runAuditCommand{
+			Source:   command.Source,
+			Label:    command.Label,
+			Name:     command.Name,
+			Provider: command.Provider,
+			Model:    command.Model,
+			CWD:      command.CWD,
+			RunID:    command.RunID,
+			Argv:     append([]string(nil), command.Argv...),
+			Status:   firstNonEmpty(command.Status, "unknown"),
+			ExitCode: command.ExitCode,
+			Duration: command.Duration,
+			Error:    command.Error,
+			Note:     command.Note,
+		}
+		if link := runAuditOptionalLink("stdout", command.StdoutPath, command.StdoutURL); link != nil {
+			item.Stdout = link
+		}
+		if link := runAuditOptionalLink("stderr", command.StderrPath, command.StderrURL); link != nil {
+			item.Stderr = link
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func runAuditOptionalLink(label, path, url string) *runAuditLink {
+	if strings.TrimSpace(path) == "" && strings.TrimSpace(url) == "" {
+		return nil
+	}
+	status := "available"
+	if strings.TrimSpace(url) == "" {
+		status = "unavailable"
+	}
+	return &runAuditLink{Label: label, Path: path, URL: url, Available: url != "", Status: status}
+}
+
+func runAuditSecurityFromDetail(detail runDetail) runAuditSecurity {
+	if detail.SecuritySummary == "" || detail.SecuritySummary == "security diagnostics unavailable" {
+		return unavailableRunAuditSecurity()
+	}
+	return runAuditSecurity{
+		Available: true,
+		Summary:   detail.SecuritySummary,
+		Details:   append([]string(nil), detail.SecurityDetails...),
+	}
+}
+
+func unavailableRunAuditSecurity() runAuditSecurity {
+	return runAuditSecurity{
+		Available: false,
+		Summary:   "security diagnostics unavailable",
+		Details:   []string{"diagnostics unknown"},
+	}
+}
+
+func runAuditSecurityFromManifest(securityMeta runpkg.ManifestSecurity) runAuditSecurity {
+	summary, details := runDetailSecurityDiagnostics(securityMeta)
+	if summary == "" {
+		return unavailableRunAuditSecurity()
+	}
+	diag := securityMeta.Diagnostics
+	redactionCount := securityMeta.RedactionCount
+	if redactionCount < 0 {
+		redactionCount = 0
+	}
+	deniedPathCount := diag.DeniedPathCount
+	if deniedPathCount < 0 {
+		deniedPathCount = 0
+	}
+	return runAuditSecurity{
+		Available:                  true,
+		Summary:                    summary,
+		Details:                    details,
+		RedactionApplied:           securityMeta.RedactionApplied,
+		WorkspaceGuardrailsApplied: securityMeta.WorkspaceGuardrailsApplied,
+		RedactionCount:             redactionCount,
+		SecretMaterialPresent:      diag.SecretMaterialPresent,
+		RootLabels:                 dashboardCategoryList(diag.RootLabels, "root"),
+		GuardedRoots:               runAuditSecurityRoots(diag.GuardedRoots),
+		DeniedPathCount:            deniedPathCount,
+		DeniedPathCategories:       dashboardCategoryList(diag.DeniedPathCategories, "path_denied"),
+		DeniedPathCategoryCounts:   runAuditCategoryCounts(diag.DeniedPathCategoryCounts, "path_denied"),
+		FailureCategories:          dashboardCategoryList(diag.FailureCategories, "security_failure"),
+		FailureCategoryCounts:      runAuditCategoryCounts(diag.FailureCategoryCounts, "security_failure"),
+		CommandRecordCount:         maxInt(diag.CommandRecordCount, 0),
+		CommandMetadataSanitized:   diag.CommandMetadataSanitized,
+		CommandArgvSanitized:       diag.CommandArgvSanitized,
+		CommandCWDLabel:            runAuditSecurityLabel(diag.CommandCWDLabel, "[workspace]"),
+		CommandSanitizationStatus:  dashboardCategory(diag.CommandSanitizationStatus, "unknown"),
+		RawCommandTextPersisted:    diag.RawCommandTextPersisted,
+		RawEnvironmentPersisted:    diag.RawEnvironmentPersisted,
+		DryRunParityApplied:        diag.DryRunParityApplied,
+		DryRunParityStatus:         dashboardCategory(diag.DryRunParityStatus, "unknown"),
+	}
+}
+
+func runAuditSecurityRoots(roots []runpkg.ManifestSecurityRoot) []runAuditSecurityRoot {
+	out := make([]runAuditSecurityRoot, 0, len(roots))
+	seen := map[string]bool{}
+	for _, root := range roots {
+		label := dashboardCategory(root.Label, "")
+		path := runAuditSecurityRootPath(root.Path)
+		if label == "" || path == "" {
+			continue
+		}
+		key := label + "\x00" + path
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, runAuditSecurityRoot{Label: label, Path: path})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Label == out[j].Label {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Label < out[j].Label
+	})
+	return out
+}
+
+func runAuditSecurityRootPath(value string) string {
+	value = strings.TrimSpace(secrets.Redact(value))
+	switch value {
+	case "[workspace]", "[run]", ".jj/runs":
+		return value
+	default:
+		return ""
+	}
+}
+
+func runAuditCategoryCounts(counts map[string]int, fallback string) map[string]int {
+	out := map[string]int{}
+	for key, count := range counts {
+		if count <= 0 {
+			continue
+		}
+		category := dashboardCategory(key, fallback)
+		if category == "" {
+			category = fallback
+		}
+		out[category] += count
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func runAuditSecurityLabel(value, fallback string) string {
+	value = strings.TrimSpace(secrets.Redact(value))
+	if value == "[workspace]" || value == "[run]" {
+		return value
+	}
+	return dashboardCategory(value, fallback)
+}
+
+func sanitizeRunAuditExport(export runAuditExport, roots ...security.CommandPathRoot) runAuditExport {
+	export.SchemaVersion = sanitizeRunAuditString(firstNonEmpty(export.SchemaVersion, "jj.audit.v1"), roots...)
+	export.State = sanitizeRunAuditString(firstNonEmpty(export.State, "unavailable"), roots...)
+	export.RunID = sanitizeRunAuditString(export.RunID, roots...)
+	export.ManifestState = sanitizeRunAuditString(export.ManifestState, roots...)
+	export.Error = sanitizeRunAuditString(export.Error, roots...)
+	export.Status = sanitizeRunAuditString(firstNonEmpty(export.Status, "unknown"), roots...)
+	export.StartedAt = sanitizeRunAuditString(export.StartedAt, roots...)
+	export.FinishedAt = sanitizeRunAuditString(export.FinishedAt, roots...)
+	export.Duration = sanitizeRunAuditString(export.Duration, roots...)
+	export.Planner.Provider = sanitizeRunAuditString(export.Planner.Provider, roots...)
+	export.Planner.Model = sanitizeRunAuditString(export.Planner.Model, roots...)
+	export.Planner.TaskProposalMode = sanitizeRunAuditString(export.Planner.TaskProposalMode, roots...)
+	export.Planner.ResolvedTaskProposalMode = sanitizeRunAuditString(export.Planner.ResolvedTaskProposalMode, roots...)
+	export.Planner.SelectedTaskID = sanitizeRunAuditString(export.Planner.SelectedTaskID, roots...)
+	export.GeneratedDocs = sanitizeRunAuditLinks(export.GeneratedDocs, roots...)
+	export.Artifacts = sanitizeRunAuditLinks(export.Artifacts, roots...)
+	export.Evaluation = sanitizeRunAuditEvaluation(export.Evaluation, roots...)
+	export.Codex = sanitizeRunAuditCodex(export.Codex, roots...)
+	export.Commands = sanitizeRunAuditCommands(export.Commands, roots...)
+	export.Security = sanitizeRunAuditSecurity(export.Security, roots...)
+	export.NextActions = sanitizeRunAuditList(export.NextActions, roots...)
+	return export
+}
+
+func sanitizeRunAuditEvaluation(evaluation runAuditEvaluation, roots ...security.CommandPathRoot) runAuditEvaluation {
+	evaluation.Status = sanitizeRunAuditString(firstNonEmpty(evaluation.Status, "unknown"), roots...)
+	evaluation.EvidenceStatus = sanitizeRunAuditString(firstNonEmpty(evaluation.EvidenceStatus, "unknown"), roots...)
+	evaluation.Reason = sanitizeRunAuditString(evaluation.Reason, roots...)
+	evaluation.Summary = sanitizeRunAuditString(evaluation.Summary, roots...)
+	if evaluation.Results != nil {
+		*evaluation.Results = sanitizeRunAuditLink(*evaluation.Results, roots...)
+	}
+	if evaluation.SummaryArtifact != nil {
+		*evaluation.SummaryArtifact = sanitizeRunAuditLink(*evaluation.SummaryArtifact, roots...)
+	}
+	return evaluation
+}
+
+func sanitizeRunAuditCodex(codex runAuditCodex, roots ...security.CommandPathRoot) runAuditCodex {
+	codex.Status = sanitizeRunAuditString(firstNonEmpty(codex.Status, "unknown"), roots...)
+	codex.Model = sanitizeRunAuditString(codex.Model, roots...)
+	codex.Duration = sanitizeRunAuditString(codex.Duration, roots...)
+	codex.Error = sanitizeRunAuditString(codex.Error, roots...)
+	if codex.Events != nil {
+		*codex.Events = sanitizeRunAuditLink(*codex.Events, roots...)
+	}
+	if codex.SummaryArtifact != nil {
+		*codex.SummaryArtifact = sanitizeRunAuditLink(*codex.SummaryArtifact, roots...)
+	}
+	if codex.Exit != nil {
+		*codex.Exit = sanitizeRunAuditLink(*codex.Exit, roots...)
+	}
+	return codex
+}
+
+func sanitizeRunAuditCommands(commands []runAuditCommand, roots ...security.CommandPathRoot) []runAuditCommand {
+	out := make([]runAuditCommand, 0, len(commands))
+	for _, command := range commands {
+		command.Source = sanitizeRunAuditString(command.Source, roots...)
+		command.Label = sanitizeRunAuditString(command.Label, roots...)
+		command.Name = sanitizeRunAuditString(command.Name, roots...)
+		command.Provider = sanitizeRunAuditString(command.Provider, roots...)
+		command.Model = sanitizeRunAuditString(command.Model, roots...)
+		command.CWD = sanitizeRunAuditString(command.CWD, roots...)
+		command.RunID = sanitizeRunAuditString(command.RunID, roots...)
+		command.Argv = sanitizeRunAuditList(command.Argv, roots...)
+		command.Status = sanitizeRunAuditString(firstNonEmpty(command.Status, "unknown"), roots...)
+		command.Duration = sanitizeRunAuditString(command.Duration, roots...)
+		command.Error = sanitizeRunAuditString(command.Error, roots...)
+		command.Note = sanitizeRunAuditString(command.Note, roots...)
+		if command.Stdout != nil {
+			*command.Stdout = sanitizeRunAuditLink(*command.Stdout, roots...)
+		}
+		if command.Stderr != nil {
+			*command.Stderr = sanitizeRunAuditLink(*command.Stderr, roots...)
+		}
+		out = append(out, command)
+	}
+	return out
+}
+
+func sanitizeRunAuditLinks(links []runAuditLink, roots ...security.CommandPathRoot) []runAuditLink {
+	out := make([]runAuditLink, 0, len(links))
+	for _, link := range links {
+		link = sanitizeRunAuditLink(link, roots...)
+		if link.Path != "" || link.URL != "" || link.Label != "" {
+			out = append(out, link)
+		}
+	}
+	return out
+}
+
+func sanitizeRunAuditLink(link runAuditLink, roots ...security.CommandPathRoot) runAuditLink {
+	link.Label = sanitizeRunAuditString(link.Label, roots...)
+	link.Path = sanitizeRunAuditString(link.Path, roots...)
+	link.URL = sanitizeRunAuditString(link.URL, roots...)
+	link.Status = sanitizeRunAuditString(firstNonEmpty(link.Status, "unknown"), roots...)
+	return link
+}
+
+func sanitizeRunAuditSecurity(securityMeta runAuditSecurity, roots ...security.CommandPathRoot) runAuditSecurity {
+	securityMeta.Summary = sanitizeRunAuditString(firstNonEmpty(securityMeta.Summary, "security diagnostics unavailable"), roots...)
+	securityMeta.Details = sanitizeRunAuditList(securityMeta.Details, roots...)
+	securityMeta.RootLabels = dashboardCategoryList(securityMeta.RootLabels, "root")
+	securityMeta.DeniedPathCategories = dashboardCategoryList(securityMeta.DeniedPathCategories, "path_denied")
+	securityMeta.DeniedPathCategoryCounts = runAuditCategoryCounts(securityMeta.DeniedPathCategoryCounts, "path_denied")
+	securityMeta.FailureCategories = dashboardCategoryList(securityMeta.FailureCategories, "security_failure")
+	securityMeta.FailureCategoryCounts = runAuditCategoryCounts(securityMeta.FailureCategoryCounts, "security_failure")
+	securityMeta.CommandCWDLabel = runAuditSecurityLabel(securityMeta.CommandCWDLabel, "")
+	securityMeta.CommandSanitizationStatus = dashboardCategory(securityMeta.CommandSanitizationStatus, "")
+	securityMeta.DryRunParityStatus = dashboardCategory(securityMeta.DryRunParityStatus, "")
+	if securityMeta.RedactionCount < 0 {
+		securityMeta.RedactionCount = 0
+	}
+	if securityMeta.DeniedPathCount < 0 {
+		securityMeta.DeniedPathCount = 0
+	}
+	if securityMeta.CommandRecordCount < 0 {
+		securityMeta.CommandRecordCount = 0
+	}
+	return securityMeta
+}
+
+func sanitizeRunAuditString(value string, roots ...security.CommandPathRoot) string {
+	return strings.TrimSpace(sanitizeRunDetailText(value, roots...))
+}
+
+func sanitizeRunAuditList(items []string, roots ...security.CommandPathRoot) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if text := sanitizeRunAuditString(item, roots...); text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+func (s *Server) writeRunAuditExport(w http.ResponseWriter, status int, export runAuditExport) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	export = sanitizeRunAuditExport(export, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace})
+	if err := json.NewEncoder(w).Encode(export); err != nil {
+		http.Error(w, sanitizeDashboardText(err.Error(), security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}), http.StatusInternalServerError)
+	}
 }
 
 func (s *Server) loadRunCompare(query url.Values) runCompare {
@@ -2674,6 +3306,13 @@ func formatDurationMS(ms int64) string {
 	return (time.Duration(ms) * time.Millisecond).String()
 }
 
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func safeRunDetailPath(path string, roots ...security.CommandPathRoot) (string, bool) {
 	sanitized := sanitizeDashboardText(path, roots...)
 	if sanitized == "" || sanitized != path || strings.Contains(sanitized, security.RedactionMarker) {
@@ -3049,6 +3688,20 @@ func isUnsafeRequestPath(rawPath, escapedPath string) bool {
 	return false
 }
 
+func isRunAuditRequestPath(rawPath, escapedPath string) bool {
+	lowerRaw := strings.ToLower(rawPath)
+	lowerEscaped := strings.ToLower(escapedPath)
+	if lowerRaw == "/runs/audit" || lowerEscaped == "/runs/audit" {
+		return true
+	}
+	for _, suffix := range []string{"/audit", "/audit.json"} {
+		if strings.HasSuffix(lowerRaw, suffix) || strings.HasSuffix(lowerEscaped, suffix) {
+			return strings.HasPrefix(lowerRaw, "/runs/") || strings.HasPrefix(lowerEscaped, "/runs/")
+		}
+	}
+	return false
+}
+
 func renderMarkdown(content string) template.HTML {
 	var b strings.Builder
 	inList := false
@@ -3386,7 +4039,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
       {{end}}
       </div>
     {{else if .RunDetail}}
-      <p><a href="/">← dashboard</a> · <a href="/runs">all runs</a>{{if eq .RunDetail.ManifestState "manifest available"}} · <a href="/runs/{{q .RunDetail.ID}}/manifest">Raw manifest</a>{{end}}</p>
+      <p><a href="/">← dashboard</a> · <a href="/runs">all runs</a> · <a href="/runs/audit?run={{q .RunDetail.ID}}">Audit export</a>{{if eq .RunDetail.ManifestState "manifest available"}} · <a href="/runs/{{q .RunDetail.ID}}/manifest">Raw manifest</a>{{end}}</p>
       <section>
         <h2>Overview</h2>
         <p><strong>{{.RunDetail.ID}}</strong> <span class="muted">{{.RunDetail.Status}}</span></p>

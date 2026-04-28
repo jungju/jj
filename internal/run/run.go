@@ -293,16 +293,27 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	fmt.Fprintf(cfg.Stdout, "jj: reading %s\n", planInput.Path)
 	originalPlan := planInput.Content
 	continuationContext := strings.TrimSpace(redactSecrets(cfg.AdditionalPlanContext))
-	priorityTask, err := LoadPriorityTask(cfg.CWD)
-	if err != nil {
-		return nil, validationError(err)
-	}
 	stateBefore := loadStateSnapshot(cfg.CWD)
-	planningContext := buildPlanningContext(originalPlan, stateBefore.SpecBefore, stateBefore.TasksBefore, continuationContext, priorityTask.Content)
+	existingSelectedTask, useExistingTask := selectExistingRunnableTask(stateBefore.TasksBefore)
+	nextIntent := NextIntentInput{}
+	intentContent := ""
+	if !useExistingTask {
+		nextIntent, err = LoadNextIntent(cfg.CWD)
+		if err != nil {
+			return nil, validationError(err)
+		}
+		intentContent = nextIntent.Content
+	}
+	planningContext := buildPlanningContext(originalPlan, stateBefore.SpecBefore, stateBefore.TasksBefore, continuationContext, intentContent)
 	providerPlan := redactSecrets(planningContext)
-	proposalEvidence := buildTaskProposalEvidence(stateBefore.SpecBefore, stateBefore.TasksBefore, continuationContext, priorityTask.Content)
+	proposalEvidence := buildTaskProposalEvidence(stateBefore.SpecBefore, stateBefore.TasksBefore, continuationContext, intentContent)
 	proposal := ResolveTaskProposalMode(cfg.TaskProposalMode, proposalEvidence)
-	proposalPrompt := TaskProposalPromptContext(proposal, priorityTask.Content)
+	if useExistingTask {
+		proposal.Resolved = taskMode(existingSelectedTask, proposal)
+		proposal.SelectedTaskID = existingSelectedTask.ID
+		proposal.Reason = firstNonEmptyString(proposal.Reason, "selected existing runnable task before proposing new work")
+	}
+	proposalPrompt := TaskProposalPromptContext(proposal, intentContent)
 	fmt.Fprintln(cfg.Stdout, "jj: checking git workspace")
 	gitState, err := InspectGit(ctx, cfg.CWD, cfg.GitRunner)
 	if err != nil {
@@ -636,11 +647,11 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	} else {
 		record("input_plan", p)
 	}
-	if priorityTask.Active() {
-		if p, err := store.WriteString("input/priority-task.md", redactSecrets(priorityTask.Content)); err != nil {
+	if nextIntent.Active() {
+		if p, err := store.WriteString("input/next-intent.md", redactSecrets(nextIntent.Content)); err != nil {
 			return fail(StatusPartial, err)
 		} else {
-			record("input_priority_task", p)
+			record("input_next_intent", p)
 		}
 	}
 	writeManifest(StatusPlanning, false)
@@ -681,39 +692,6 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	writeManifest(StatusPlanning, false)
 
-	fmt.Fprintf(cfg.Stdout, "jj: running %d planning agents\n", cfg.PlanningAgents)
-	drafts, agentResults, err := runPlanningAgents(ctx, planner, store, cfg.OpenAIModel, providerPlan, proposal, proposalPrompt, cfg.PlanningAgents, record)
-	manifest.Planning.Agents = agentResults
-	if err != nil {
-		return fail(StatusPlanningFailed, err)
-	}
-	for _, draft := range drafts {
-		addRisks(draft.Risks...)
-	}
-	writeManifest(StatusPlanning, false)
-
-	fmt.Fprintln(cfg.Stdout, "jj: merging planning outputs")
-	merged, raw, err := planner.Merge(ctx, ai.MergeRequest{
-		Model:                    cfg.OpenAIModel,
-		Plan:                     providerPlan,
-		Drafts:                   drafts,
-		TaskProposalMode:         string(proposal.Selected),
-		ResolvedTaskProposalMode: string(proposal.Resolved),
-		TaskProposalInstruction:  proposalPrompt,
-	})
-	recordMergeOutput := func(raw []byte) error {
-		if p, err := store.WriteFile("planning/merge.json", redactBytes(raw)); err != nil {
-			return err
-		} else {
-			record("planning_merge", p)
-		}
-		if p, err := store.WriteFile("planning/merged.json", redactBytes(raw)); err != nil {
-			return err
-		} else {
-			record("planning_merged", p)
-		}
-		return nil
-	}
 	recordPlanningOutput := func(planningArtifact normalizedPlanningResult) error {
 		if p, err := writeRedactedJSON(store, "planning.json", planningArtifact); err != nil {
 			return err
@@ -727,41 +705,98 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		}
 		return nil
 	}
-	if err != nil {
-		if len(raw) > 0 {
-			if p, writeErr := store.WriteFile("planning/raw_response_merge.txt", redactBytes(raw)); writeErr == nil {
-				record("planning_merge_raw_response", p)
-			}
-		}
-		return fail(StatusPlanningFailed, fmt.Errorf("merge planning outputs: %w", err))
-	}
-	if err := recordMergeOutput(raw); err != nil {
-		return fail(StatusPlanningFailed, err)
-	}
-	if err := validateMergeResult(merged); err != nil {
-		if len(raw) > 0 {
-			if p, writeErr := store.WriteFile("planning/raw_response_merge.txt", redactBytes(raw)); writeErr == nil {
-				record("planning_merge_raw_response", p)
-			}
-		}
-		if writeErr := recordPlanningOutput(normalizedPlanning(plannerSelection.Provider, drafts, merged, proposal)); writeErr != nil {
-			return fail(StatusPlanningFailed, writeErr)
-		}
-		return fail(StatusPlanningFailed, fmt.Errorf("merge planning outputs: %w", err))
-	}
+
 	stateNow := time.Now().UTC()
-	plannedSpecState := buildSpecState(originalPlan, merged, drafts, proposal, stateBefore.SpecBefore, stateNow)
-	tasksState, selectedTask := buildTaskState(stateBefore.TasksBefore, originalPlan, merged, drafts, proposal, cfg.RunID, !cfg.DryRun, stateNow)
-	manifest.SelectedTaskID = selectedTask.ID
-	if err := writeRunEvent("task.proposed", map[string]string{
-		"task_id": selectedTask.ID,
-		"mode":    string(proposal.Resolved),
-	}); err != nil {
-		return fail(StatusPlanningFailed, err)
-	}
-	planningArtifact := normalizedPlanning(plannerSelection.Provider, drafts, merged, proposal)
-	if err := recordPlanningOutput(planningArtifact); err != nil {
-		return fail(StatusPlanningFailed, err)
+	var plannedSpecState SpecState
+	var tasksState TaskState
+	var selectedTask TaskRecord
+	if useExistingTask {
+		var ok bool
+		plannedSpecState = stateBefore.SpecBefore
+		tasksState, selectedTask, ok = buildExistingRunnableTaskState(stateBefore.TasksBefore, proposal, !cfg.DryRun, stateNow)
+		if !ok {
+			return fail(StatusPlanningFailed, errors.New("selected existing runnable task disappeared before execution"))
+		}
+		manifest.SelectedTaskID = selectedTask.ID
+		if err := writeRunEvent("task.selected", map[string]string{
+			"task_id": selectedTask.ID,
+			"mode":    selectedTask.Mode,
+			"source":  "existing",
+		}); err != nil {
+			return fail(StatusPlanningFailed, err)
+		}
+		if err := recordPlanningOutput(normalizedExistingTaskPlanning(selectedTask, plannedSpecState, tasksState, proposal)); err != nil {
+			return fail(StatusPlanningFailed, err)
+		}
+	} else {
+		fmt.Fprintf(cfg.Stdout, "jj: running %d planning agents\n", cfg.PlanningAgents)
+		drafts, agentResults, err := runPlanningAgents(ctx, planner, store, cfg.OpenAIModel, providerPlan, proposal, proposalPrompt, cfg.PlanningAgents, record)
+		manifest.Planning.Agents = agentResults
+		if err != nil {
+			return fail(StatusPlanningFailed, err)
+		}
+		for _, draft := range drafts {
+			addRisks(draft.Risks...)
+		}
+		writeManifest(StatusPlanning, false)
+
+		fmt.Fprintln(cfg.Stdout, "jj: merging planning outputs")
+		merged, raw, err := planner.Merge(ctx, ai.MergeRequest{
+			Model:                    cfg.OpenAIModel,
+			Plan:                     providerPlan,
+			Drafts:                   drafts,
+			TaskProposalMode:         string(proposal.Selected),
+			ResolvedTaskProposalMode: string(proposal.Resolved),
+			TaskProposalInstruction:  proposalPrompt,
+		})
+		recordMergeOutput := func(raw []byte) error {
+			if p, err := store.WriteFile("planning/merge.json", redactBytes(raw)); err != nil {
+				return err
+			} else {
+				record("planning_merge", p)
+			}
+			if p, err := store.WriteFile("planning/merged.json", redactBytes(raw)); err != nil {
+				return err
+			} else {
+				record("planning_merged", p)
+			}
+			return nil
+		}
+		if err != nil {
+			if len(raw) > 0 {
+				if p, writeErr := store.WriteFile("planning/raw_response_merge.txt", redactBytes(raw)); writeErr == nil {
+					record("planning_merge_raw_response", p)
+				}
+			}
+			return fail(StatusPlanningFailed, fmt.Errorf("merge planning outputs: %w", err))
+		}
+		if err := recordMergeOutput(raw); err != nil {
+			return fail(StatusPlanningFailed, err)
+		}
+		if err := validateMergeResult(merged); err != nil {
+			if len(raw) > 0 {
+				if p, writeErr := store.WriteFile("planning/raw_response_merge.txt", redactBytes(raw)); writeErr == nil {
+					record("planning_merge_raw_response", p)
+				}
+			}
+			if writeErr := recordPlanningOutput(normalizedPlanning(plannerSelection.Provider, drafts, merged, proposal)); writeErr != nil {
+				return fail(StatusPlanningFailed, writeErr)
+			}
+			return fail(StatusPlanningFailed, fmt.Errorf("merge planning outputs: %w", err))
+		}
+		plannedSpecState = buildSpecState(originalPlan, merged, drafts, proposal, stateBefore.SpecBefore, stateNow)
+		tasksState, selectedTask = buildTaskState(stateBefore.TasksBefore, originalPlan, merged, drafts, proposal, cfg.RunID, !cfg.DryRun, stateNow)
+		manifest.SelectedTaskID = selectedTask.ID
+		if err := writeRunEvent("task.proposed", map[string]string{
+			"task_id": selectedTask.ID,
+			"mode":    string(proposal.Resolved),
+		}); err != nil {
+			return fail(StatusPlanningFailed, err)
+		}
+		planningArtifact := normalizedPlanning(plannerSelection.Provider, drafts, merged, proposal)
+		if err := recordPlanningOutput(planningArtifact); err != nil {
+			return fail(StatusPlanningFailed, err)
+		}
 	}
 	if p, err := writeSnapshotJSON(store, "snapshots/spec.planned.json", plannedSpecState); err != nil {
 		return fail(StatusPlanningFailed, err)
@@ -1057,12 +1092,12 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	} else if err := recordUntrackedEvidence(finalUntracked); err != nil {
 		return fail(StatusImplementationFailed, err)
 	}
-	if priorityTask.Active() && codexErr == nil && manifest.Validation.Status == validationStatusPassed {
-		if err := clearPriorityTask(cfg.CWD); err != nil {
+	if nextIntent.Active() && codexErr == nil && manifest.Validation.Status == validationStatusPassed {
+		if err := clearNextIntent(cfg.CWD); err != nil {
 			return fail(StatusPartial, err)
 		}
-		if err := writeRunEvent("priority_task.cleared", map[string]string{
-			"path": DefaultPriorityTaskPath,
+		if err := writeRunEvent("next_intent.cleared", map[string]string{
+			"path": DefaultNextIntentPath,
 		}); err != nil {
 			return fail(StatusPartial, err)
 		}
@@ -1302,6 +1337,7 @@ func writeRedactedJSON(store artifact.Store, rel string, value any) (string, err
 
 type normalizedPlanningResult struct {
 	Provider                 string             `json:"provider"`
+	Source                   string             `json:"source,omitempty"`
 	TaskProposalMode         string             `json:"task_proposal_mode,omitempty"`
 	ResolvedTaskProposalMode string             `json:"resolved_task_proposal_mode,omitempty"`
 	TaskProposalReason       string             `json:"task_proposal_reason,omitempty"`
@@ -1340,6 +1376,30 @@ func normalizedPlanning(provider string, drafts []ai.PlanningDraft, merged ai.Me
 		out.TestGuidance = appendUniquePlanning(out.TestGuidance, seenTests, draft.TestPlan...)
 	}
 	return out
+}
+
+func normalizedExistingTaskPlanning(selected TaskRecord, spec SpecState, tasks TaskState, proposal TaskProposalResolution) normalizedPlanningResult {
+	specJSON := mustCompactJSON(spec)
+	taskJSON := mustCompactJSON(TaskState{
+		Version:      tasks.Version,
+		ActiveTaskID: tasks.ActiveTaskID,
+		Tasks:        []TaskRecord{selected},
+	})
+	return normalizedPlanningResult{
+		Provider:                 "existing_task",
+		Source:                   "existing_task",
+		TaskProposalMode:         string(proposal.Selected),
+		ResolvedTaskProposalMode: string(proposal.Resolved),
+		TaskProposalReason:       proposal.Reason,
+		SelectedTaskID:           selected.ID,
+		Spec:                     specJSON,
+		Task:                     taskJSON,
+		Merge: ai.MergeResult{
+			Spec:  specJSON,
+			Task:  taskJSON,
+			Notes: []string{"Selected existing runnable task before proposing new work."},
+		},
+	}
 }
 
 func appendUniquePlanning(dst []string, seen map[string]bool, items ...string) []string {

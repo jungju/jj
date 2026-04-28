@@ -12,14 +12,14 @@ func TestUpdateTaskAfterValidationPassedMarksDone(t *testing.T) {
 	state := TaskState{
 		Version: 1,
 		Tasks: []TaskRecord{{
-			ID:     "T-SEC-001",
+			ID:     "TASK-0001",
 			Status: "in_progress",
 		}},
 	}
-	active := "T-SEC-001"
+	active := "TASK-0001"
 	state.ActiveTaskID = &active
 
-	updated := updateTaskAfterValidation(state, "T-SEC-001", "run-1", ManifestValidation{Status: validationStatusPassed}, "", time.Unix(0, 0).UTC())
+	updated := updateTaskAfterValidation(state, "TASK-0001", "run-1", ManifestValidation{Status: validationStatusPassed}, "", time.Unix(0, 0).UTC())
 
 	if updated.ActiveTaskID != nil {
 		t.Fatalf("active task should be cleared: %#v", updated.ActiveTaskID)
@@ -36,7 +36,7 @@ func TestBuildTaskStatePreservesDoneTaskAndRenumbersPlannerCollision(t *testing.
 	before := TaskState{
 		Version: 1,
 		Tasks: []TaskRecord{{
-			ID:        "T-SEC-001",
+			ID:        "TASK-0001",
 			Title:     "Add security boundary",
 			Mode:      "security",
 			Status:    "done",
@@ -49,7 +49,7 @@ func TestBuildTaskStatePreservesDoneTaskAndRenumbersPlannerCollision(t *testing.
 		"version": 1,
 		"active_task_id": null,
 		"tasks": [{
-			"id": "T-SEC-001",
+			"id": "TASK-0001",
 			"title": "Centralize secret redaction",
 			"mode": "security",
 			"priority": "high",
@@ -68,13 +68,13 @@ func TestBuildTaskStatePreservesDoneTaskAndRenumbersPlannerCollision(t *testing.
 	if len(state.Tasks) != 2 {
 		t.Fatalf("expected done history plus new task, got %#v", state.Tasks)
 	}
-	if state.Tasks[0].ID != "T-SEC-001" || state.Tasks[0].Status != "done" {
+	if state.Tasks[0].ID != "TASK-0001" || state.Tasks[0].Status != "done" {
 		t.Fatalf("existing terminal task should be preserved, got %#v", state.Tasks[0])
 	}
-	if selected.ID != "T-SEC-002" || selected.Status != "in_progress" {
+	if selected.ID != "TASK-0002" || selected.Status != "in_progress" {
 		t.Fatalf("new colliding task should be renumbered and selected, got %#v", selected)
 	}
-	if state.ActiveTaskID == nil || *state.ActiveTaskID != "T-SEC-002" {
+	if state.ActiveTaskID == nil || *state.ActiveTaskID != "TASK-0002" {
 		t.Fatalf("active task should point at new task, got %#v", state.ActiveTaskID)
 	}
 }
@@ -83,7 +83,7 @@ func TestBuildTaskStateAlwaysAppendsDuplicateTaskIntent(t *testing.T) {
 	before := TaskState{
 		Version: 1,
 		Tasks: []TaskRecord{{
-			ID:     "T-SEC-001",
+			ID:     "TASK-0001",
 			Title:  "Centralize secret redaction",
 			Mode:   "security",
 			Status: "done",
@@ -92,7 +92,7 @@ func TestBuildTaskStateAlwaysAppendsDuplicateTaskIntent(t *testing.T) {
 	planned := `{
 		"version": 1,
 		"tasks": [{
-			"id": "T-SEC-001",
+			"id": "TASK-0001",
 			"title": "Centralize secret redaction",
 			"mode": "security",
 			"priority": "high",
@@ -113,26 +113,26 @@ func TestBuildTaskStateAlwaysAppendsDuplicateTaskIntent(t *testing.T) {
 	if state.Tasks[0].Status != "done" {
 		t.Fatalf("terminal task should remain done, got %#v", state.Tasks[0])
 	}
-	if selected.ID != "T-SEC-002" || selected.Status != "in_progress" || selected.Title != "Centralize secret redaction" {
+	if selected.ID != "TASK-0002" || selected.Status != "in_progress" || selected.Title != "Centralize secret redaction" {
 		t.Fatalf("duplicate proposal should be renumbered and selected, got %#v", selected)
 	}
-	if state.ActiveTaskID == nil || *state.ActiveTaskID != "T-SEC-002" {
+	if state.ActiveTaskID == nil || *state.ActiveTaskID != "TASK-0002" {
 		t.Fatalf("active task should point at appended duplicate, got %#v", state.ActiveTaskID)
 	}
 }
 
 func TestBuildTaskStateDemotesExistingActiveAndSelectsNewProposal(t *testing.T) {
-	active := "T-FEATURE-001"
+	active := "TASK-0001"
 	before := TaskState{
 		Version:      1,
 		ActiveTaskID: &active,
 		Tasks: []TaskRecord{{
-			ID:     "T-FEATURE-001",
+			ID:     "TASK-0001",
 			Title:  "Old active work",
 			Mode:   "feature",
 			Status: "in_progress",
 		}, {
-			ID:     "T-FEATURE-002",
+			ID:     "TASK-0002",
 			Title:  "Existing queued work",
 			Mode:   "feature",
 			Status: "queued",
@@ -141,7 +141,7 @@ func TestBuildTaskStateDemotesExistingActiveAndSelectsNewProposal(t *testing.T) 
 	planned := `{
 		"version": 1,
 		"tasks": [{
-			"id": "T-FEATURE-001",
+			"id": "TASK-0001",
 			"title": "Fresh proposal",
 			"mode": "feature",
 			"priority": "high",
@@ -162,10 +162,10 @@ func TestBuildTaskStateDemotesExistingActiveAndSelectsNewProposal(t *testing.T) 
 	if state.Tasks[0].Status != "queued" || state.Tasks[1].Status != "queued" {
 		t.Fatalf("existing active/in-progress task should be queued without losing history, got %#v", state.Tasks[:2])
 	}
-	if selected.ID != "T-FEATURE-003" || selected.Title != "Fresh proposal" || selected.Status != "in_progress" {
+	if selected.ID != "TASK-0003" || selected.Title != "Fresh proposal" || selected.Status != "in_progress" {
 		t.Fatalf("new proposal should be selected with fresh id, got %#v", selected)
 	}
-	if state.ActiveTaskID == nil || *state.ActiveTaskID != "T-FEATURE-003" {
+	if state.ActiveTaskID == nil || *state.ActiveTaskID != "TASK-0003" {
 		t.Fatalf("active task should point at fresh proposal, got %#v", state.ActiveTaskID)
 	}
 }
@@ -174,7 +174,7 @@ func TestBuildTaskStateAppendsMultiplePlannerTasksAndSelectsFirst(t *testing.T) 
 	before := TaskState{
 		Version: 1,
 		Tasks: []TaskRecord{{
-			ID:     "T-DOCS-001",
+			ID:     "TASK-0001",
 			Title:  "Existing docs work",
 			Mode:   "docs",
 			Status: "done",
@@ -209,21 +209,21 @@ func TestBuildTaskStateAppendsMultiplePlannerTasksAndSelectsFirst(t *testing.T) 
 	if len(state.Tasks) != 3 {
 		t.Fatalf("expected all proposed tasks to be appended, got %#v", state.Tasks)
 	}
-	if selected.ID != "T-DOCS-002" || selected.Title != "First proposed docs task" || selected.Status != "in_progress" {
+	if selected.ID != "TASK-0002" || selected.Title != "First proposed docs task" || selected.Status != "in_progress" {
 		t.Fatalf("first appended task should be selected, got %#v", selected)
 	}
-	if state.Tasks[2].ID != "T-DOCS-003" || state.Tasks[2].Title != "Second proposed docs task" || state.Tasks[2].Status != "queued" {
+	if state.Tasks[2].ID != "TASK-0003" || state.Tasks[2].Title != "Second proposed docs task" || state.Tasks[2].Status != "queued" {
 		t.Fatalf("second proposed task should be appended as queued with fresh id, got %#v", state.Tasks[2])
 	}
 }
 
 func TestBuildTaskStateDryRunAppendsQueuedProposalWithoutChangingActive(t *testing.T) {
-	active := "T-FEATURE-001"
+	active := "TASK-0001"
 	before := TaskState{
 		Version:      1,
 		ActiveTaskID: &active,
 		Tasks: []TaskRecord{{
-			ID:     "T-FEATURE-001",
+			ID:     "TASK-0001",
 			Title:  "Existing active work",
 			Mode:   "feature",
 			Status: "in_progress",
@@ -249,11 +249,99 @@ func TestBuildTaskStateDryRunAppendsQueuedProposalWithoutChangingActive(t *testi
 	if len(state.Tasks) != 2 {
 		t.Fatalf("expected dry-run proposal snapshot to append one task, got %#v", state.Tasks)
 	}
-	if state.Tasks[0].Status != "in_progress" || state.ActiveTaskID == nil || *state.ActiveTaskID != "T-FEATURE-001" {
+	if state.Tasks[0].Status != "in_progress" || state.ActiveTaskID == nil || *state.ActiveTaskID != "TASK-0001" {
 		t.Fatalf("dry-run should preserve existing active task in snapshot, got state=%#v active=%#v", state.Tasks[0], state.ActiveTaskID)
 	}
-	if selected.ID != "T-FEATURE-002" || selected.Title != "Dry-run proposal" || selected.Status != "queued" {
+	if selected.ID != "TASK-0002" || selected.Title != "Dry-run proposal" || selected.Status != "queued" {
 		t.Fatalf("dry-run selected task should describe the appended queued proposal, got %#v", selected)
+	}
+}
+
+func TestNextTaskIDUsesGlobalSequence(t *testing.T) {
+	if got := nextTaskID(TaskState{Version: 1}, TaskProposalModeFeature); got != "TASK-0001" {
+		t.Fatalf("empty state should start global sequence, got %q", got)
+	}
+	if got := nextTaskID(TaskState{Version: 1, Tasks: []TaskRecord{{ID: "TASK-0001"}}}, TaskProposalModeSecurity); got != "TASK-0002" {
+		t.Fatalf("existing TASK id should increment globally, got %q", got)
+	}
+	legacyOnly := TaskState{Version: 1, Tasks: []TaskRecord{{ID: "T-SEC-001"}, {ID: "T-FEATURE-001"}, {ID: "T-DOCS-001"}}}
+	if got := nextTaskID(legacyOnly, TaskProposalModeDocs); got != "TASK-0004" {
+		t.Fatalf("legacy-only state should continue after task count, got %q", got)
+	}
+	mixed := TaskState{Version: 1, Tasks: []TaskRecord{{ID: "T-SEC-001"}, {ID: "TASK-0007"}, {ID: "T-FEATURE-001"}}}
+	if got := nextTaskID(mixed, TaskProposalModeFeature); got != "TASK-0008" {
+		t.Fatalf("mixed state should continue after highest TASK id, got %q", got)
+	}
+}
+
+func TestSelectExistingRunnableTaskActiveIDWins(t *testing.T) {
+	active := "TASK-0002"
+	selected, ok := selectExistingRunnableTask(TaskState{
+		Version:      1,
+		ActiveTaskID: &active,
+		Tasks: []TaskRecord{{
+			ID:     "TASK-0001",
+			Status: "in_progress",
+		}, {
+			ID:     "TASK-0002",
+			Status: "queued",
+		}},
+	})
+	if !ok || selected.ID != "TASK-0002" {
+		t.Fatalf("active_task_id should win when runnable, got ok=%t task=%#v", ok, selected)
+	}
+}
+
+func TestSelectExistingRunnableTaskFallsBackFromStaleActiveID(t *testing.T) {
+	active := "TASK-0099"
+	selected, ok := selectExistingRunnableTask(TaskState{
+		Version:      1,
+		ActiveTaskID: &active,
+		Tasks: []TaskRecord{{
+			ID:     "TASK-0001",
+			Status: "done",
+		}, {
+			ID:     "TASK-0002",
+			Status: "active",
+		}},
+	})
+	if !ok || selected.ID != "TASK-0002" {
+		t.Fatalf("stale active_task_id should fall back to active task, got ok=%t task=%#v", ok, selected)
+	}
+}
+
+func TestSelectExistingRunnableTaskSelectsQueuedWhenNoActive(t *testing.T) {
+	selected, ok := selectExistingRunnableTask(TaskState{
+		Version: 1,
+		Tasks: []TaskRecord{{
+			ID:     "TASK-0001",
+			Status: "done",
+		}, {
+			ID:     "TASK-0002",
+			Status: "queued",
+		}},
+	})
+	if !ok || selected.ID != "TASK-0002" {
+		t.Fatalf("queued task should be selected when no active task exists, got ok=%t task=%#v", ok, selected)
+	}
+}
+
+func TestSelectExistingRunnableTaskIgnoresTerminalTasks(t *testing.T) {
+	_, ok := selectExistingRunnableTask(TaskState{
+		Version: 1,
+		Tasks: []TaskRecord{{
+			ID:     "TASK-0001",
+			Status: "done",
+		}, {
+			ID:     "TASK-0002",
+			Status: "blocked",
+		}, {
+			ID:     "TASK-0003",
+			Status: "failed",
+		}},
+	})
+	if ok {
+		t.Fatal("terminal tasks should not be selected")
 	}
 }
 
@@ -291,27 +379,27 @@ func TestBuildPlanningContextBootstrapsFromPlanWithoutSpec(t *testing.T) {
 	}
 }
 
-func TestBuildPlanningContextIncludesPriorityTaskIntentOverrideFirst(t *testing.T) {
-	context := buildPlanningContext("Initial product vision.", SpecState{Version: 1}, TaskState{Version: 1}, "", "Ship the priority task.\n")
+func TestBuildPlanningContextIncludesNextIntentOverrideFirst(t *testing.T) {
+	context := buildPlanningContext("Initial product vision.", SpecState{Version: 1}, TaskState{Version: 1}, "", "Ship the next intent.\n")
 
-	priorityIndex := strings.Index(context, "# Priority Task Intent Override")
+	intentIndex := strings.Index(context, "# Next Intent Override")
 	specIndex := strings.Index(context, "# Current SPEC State")
-	if priorityIndex < 0 || specIndex < 0 || priorityIndex > specIndex {
-		t.Fatalf("priority task intent override should appear before normal context:\n%s", context)
+	if intentIndex < 0 || specIndex < 0 || intentIndex > specIndex {
+		t.Fatalf("next intent override should appear before normal context:\n%s", context)
 	}
-	for _, want := range []string{"Ship the priority task.", "highest-priority next-turn planning input", "Scope the first proposed runnable task to this intent", "Ignore task-proposal-mode"} {
+	for _, want := range []string{"Ship the next intent.", "highest-priority next-turn planning input", "Scope the first proposed runnable task to this intent", "Ignore task-proposal-mode"} {
 		if !strings.Contains(context, want) {
-			t.Fatalf("priority task context missing %q:\n%s", want, context)
+			t.Fatalf("next intent context missing %q:\n%s", want, context)
 		}
 	}
 }
 
-func TestTaskProposalEvidenceIncludesPriorityTaskIntentOverride(t *testing.T) {
-	evidence := buildTaskProposalEvidence(SpecState{Version: 1}, TaskState{Version: 1}, "", "Implement the priority override.")
+func TestTaskProposalEvidenceIncludesNextIntentOverride(t *testing.T) {
+	evidence := buildTaskProposalEvidence(SpecState{Version: 1}, TaskState{Version: 1}, "", "Implement the next intent.")
 
-	for _, want := range []string{"Priority task intent override from .jj/priority-task.md", "override task-proposal-mode", "Implement the priority override."} {
+	for _, want := range []string{"Next intent override from .jj/next-intent.md", "override task-proposal-mode", "Implement the next intent."} {
 		if !strings.Contains(evidence, want) {
-			t.Fatalf("priority task evidence missing %q:\n%s", want, evidence)
+			t.Fatalf("next intent evidence missing %q:\n%s", want, evidence)
 		}
 	}
 }
@@ -320,7 +408,7 @@ func TestTaskProposalEvidenceIgnoresCompletedSecurityHistoryForAutoMode(t *testi
 	evidence := buildTaskProposalEvidence(SpecState{Version: 1}, TaskState{
 		Version: 1,
 		Tasks: []TaskRecord{{
-			ID:     "T-SEC-001",
+			ID:     "TASK-0001",
 			Title:  "Fix secret redaction security risk",
 			Mode:   "security",
 			Status: "done",

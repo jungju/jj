@@ -46,7 +46,7 @@ func TestSecurityRegressionServeGuardedDocsAndArtifacts(t *testing.T) {
 		want   string
 	}{
 		{"/doc?path=README.md", "<h1>Root</h1>"},
-		{"/doc?path=.jj/tasks.json", "T-SEC-001"},
+		{"/doc?path=.jj/tasks.json", "TASK-0001"},
 		{"/runs/" + runID + "/manifest", security.RedactionMarker},
 		{"/artifact?run=" + runID + "&path=validation/summary.md", security.RedactionMarker},
 	}
