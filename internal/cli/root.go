@@ -17,11 +17,13 @@ import (
 	"github.com/jungju/jj/internal/artifact"
 	"github.com/jungju/jj/internal/run"
 	"github.com/jungju/jj/internal/secrets"
+	"github.com/jungju/jj/internal/security"
 	"github.com/jungju/jj/internal/serve"
 )
 
 type executor func(context.Context, run.Config) (*run.Result, error)
 type serveExecutor func(context.Context, serve.Config) error
+type statusExecutor func(context.Context, serve.Config) (serve.StatusSummary, error)
 
 // NewRootCommand builds the jj CLI.
 func NewRootCommand() *cobra.Command {
@@ -37,6 +39,10 @@ func newRootCommandWithServe(exec executor, serveExec serveExecutor) *cobra.Comm
 }
 
 func newRootCommandWithServeAndIO(exec executor, serveExec serveExecutor, stdout, stderr io.Writer) *cobra.Command {
+	return newRootCommandWithExecutors(exec, serveExec, serve.LoadStatusSummary, stdout, stderr)
+}
+
+func newRootCommandWithExecutors(exec executor, serveExec serveExecutor, statusExec statusExecutor, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "jj",
 		Short:         "Run a planning-to-Codex implementation pipeline",
@@ -48,6 +54,7 @@ func newRootCommandWithServeAndIO(exec executor, serveExec serveExecutor, stdout
 	cmd.SetErr(stderr)
 	cmd.AddCommand(newRunCommand(exec, stdout, stderr))
 	cmd.AddCommand(newServeCommand(serveExec, stdout))
+	cmd.AddCommand(newStatusCommand(statusExec, stdout))
 	return cmd
 }
 
@@ -388,4 +395,166 @@ func newServeCommand(exec serveExecutor, stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&cfg.RunID, "run-id", "", "run id to highlight by default")
 
 	return cmd
+}
+
+func newStatusCommand(exec statusExecutor, stdout io.Writer) *cobra.Command {
+	cfg := serve.Config{}
+
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Print a compact sanitized jj workspace summary",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.CWDExplicit = cmd.Flags().Changed("cwd")
+			if cwd, err := os.Getwd(); err == nil {
+				cfg.ConfigSearchDir = cwd
+			} else {
+				return err
+			}
+			summary, err := exec(cmd.Context(), cfg)
+			if err != nil {
+				return err
+			}
+			writeStatusSummary(stdout, summary)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&cfg.CWD, "cwd", "", "directory containing jj state and .jj/runs (defaults to current directory)")
+	return cmd
+}
+
+func writeStatusSummary(w io.Writer, summary serve.StatusSummary) {
+	if w == nil {
+		w = io.Discard
+	}
+	task := summary.Task
+	fmt.Fprintf(w, "TASK: state=%s total=%d done=%d in_progress=%d pending=%d blocked=%d\n",
+		statusOutputValue(task.State, "unknown"),
+		maxInt(task.Total, 0),
+		maxInt(task.Done, 0),
+		maxInt(task.InProgress, 0),
+		maxInt(task.Pending, 0),
+		maxInt(task.Blocked, 0),
+	)
+	if task.Next != nil {
+		fmt.Fprintf(w, "TASK Next: id=%s status=%s category=%s\n",
+			statusOutputValue(task.Next.ID, "unknown"),
+			statusOutputValue(task.Next.Status, "unknown"),
+			statusOutputValue(task.Next.Category, "unknown"),
+		)
+	}
+
+	latest := summary.LatestRun
+	fmt.Fprintf(w, "Latest Run: state=%s run=%s status=%s provider_or_result=%s evaluation=%s timestamp=%s\n",
+		statusOutputValue(latest.State, "unknown"),
+		statusOutputValue(latest.RunID, "none"),
+		statusOutputValue(latest.Status, "unknown"),
+		statusOutputValue(latest.ProviderOrResult, "unknown"),
+		statusOutputValue(latest.EvaluationState, "unknown"),
+		statusOutputValue(latest.TimestampLabel, "unknown"),
+	)
+
+	next := summary.NextAction
+	fmt.Fprintf(w, "Next Action: state=%s label=%s",
+		statusOutputValue(next.State, "unknown"),
+		statusOutputValue(next.Label, "Next Action Unknown"),
+	)
+	if next.RunID != "" {
+		fmt.Fprintf(w, " run=%s", statusOutputValue(next.RunID, "unknown"))
+	}
+	if next.Task != nil {
+		fmt.Fprintf(w, " task=%s status=%s category=%s",
+			statusOutputValue(next.Task.ID, "unknown"),
+			statusOutputValue(next.Task.Status, "unknown"),
+			statusOutputValue(next.Task.Category, "unknown"),
+		)
+	}
+	if next.Message != "" {
+		fmt.Fprintf(w, " message=%s", statusOutputValue(next.Message, "Next action state is unavailable."))
+	}
+	fmt.Fprintln(w)
+
+	active := summary.ActiveRuns
+	if len(active.Items) == 0 {
+		fmt.Fprintf(w, "Active Run: state=%s\n", statusOutputValue(active.State, "none"))
+	} else {
+		for i, item := range active.Items {
+			label := "Active Run"
+			if len(active.Items) > 1 {
+				label = fmt.Sprintf("Active Run %d", i+1)
+			}
+			fmt.Fprintf(w, "%s: state=available run=%s status=%s provider_or_result=%s evaluation=%s timestamp=%s\n",
+				label,
+				statusOutputValue(item.RunID, "unknown"),
+				statusOutputValue(item.Status, "unknown"),
+				statusOutputValue(item.ProviderOrResult, "unknown"),
+				statusOutputValue(item.EvaluationState, "unknown"),
+				statusOutputValue(item.TimestampLabel, "unknown"),
+			)
+		}
+	}
+
+	validation := summary.ValidationStatus
+	if len(validation.Items) == 0 {
+		fmt.Fprintf(w, "Validation Status: state=%s", statusOutputValue(validation.State, "none"))
+		if validation.Message != "" {
+			fmt.Fprintf(w, " message=%s", statusOutputValue(validation.Message, "Validation metadata unavailable."))
+		}
+		fmt.Fprintln(w)
+		return
+	}
+	for i, item := range validation.Items {
+		label := "Validation Status"
+		if len(validation.Items) > 1 {
+			label = fmt.Sprintf("Validation Status %d", i+1)
+		}
+		fmt.Fprintf(w, "%s: state=%s run=%s",
+			label,
+			statusOutputValue(item.ValidationState, "unknown"),
+			statusOutputValue(item.RunID, "unknown"),
+		)
+		if item.CountsLabel != "" {
+			fmt.Fprintf(w, " counts=%s", statusOutputValue(item.CountsLabel, ""))
+		}
+		fmt.Fprintf(w, " timestamp=%s\n", statusOutputValue(item.TimestampLabel, "unknown"))
+	}
+}
+
+func statusOutputValue(value, fallback string) string {
+	value = strings.TrimSpace(secrets.Redact(value))
+	if value == "" {
+		return fallback
+	}
+	lower := strings.ToLower(value)
+	for _, token := range []string{
+		security.RedactionMarker,
+		"sensitive value removed",
+		"unsafe value removed",
+		"[redacted]",
+		"[omitted]",
+		"[hidden]",
+		"[removed]",
+		"{redacted}",
+		"{omitted}",
+		"{hidden}",
+		"{removed}",
+		"<redacted>",
+		"<omitted>",
+		"<hidden>",
+		"<removed>",
+		"[path]",
+	} {
+		if strings.Contains(lower, strings.ToLower(token)) {
+			return fallback
+		}
+	}
+	return value
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

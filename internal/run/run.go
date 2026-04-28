@@ -1126,16 +1126,6 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	} else if err := recordUntrackedEvidence(finalUntracked); err != nil {
 		return fail(StatusImplementationFailed, err)
 	}
-	if nextIntent.Active() && codexErr == nil && manifest.Validation.Status == validationStatusPassed {
-		if err := clearNextIntent(cfg.CWD); err != nil {
-			return fail(StatusPartial, err)
-		}
-		if err := writeRunEvent("next_intent.cleared", map[string]string{
-			"path": DefaultNextIntentPath,
-		}); err != nil {
-			return fail(StatusPartial, err)
-		}
-	}
 	status := StatusCompleted
 	validationResultForCommit := strings.ToUpper(emptyFallback(manifest.Validation.Status, "unknown"))
 	if codexErr != nil {

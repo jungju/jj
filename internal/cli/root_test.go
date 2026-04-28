@@ -322,6 +322,174 @@ func TestRunCommandHelp(t *testing.T) {
 	}
 }
 
+func TestStatusCommandPrintsSanitizedSummary(t *testing.T) {
+	dir := newStatusWorkspace(t, "- [~] TASK-0053 [feature] Add sanitized status\n- [x] TASK-0001 [security] Done\n")
+	writeStatusFile(t, dir, ".jj/runs/20260428-120000-good/manifest.json", `{
+		"run_id":"20260428-120000-good",
+		"status":"complete",
+		"started_at":"2026-04-28T12:00:00Z",
+		"planner_provider":"openai",
+		"artifacts":{"manifest":"manifest.json"},
+		"validation":{"ran":true,"status":"passed","evidence_status":"recorded","command_count":2,"passed_count":2,"failed_count":0}
+	}`)
+
+	out := runStatusCommandOutput(t, dir)
+	for _, want := range []string{
+		"TASK: state=available total=2 done=1 in_progress=1 pending=0 blocked=0",
+		"TASK Next: id=TASK-0053 status=in-progress category=feature",
+		"Latest Run: state=available run=20260428-120000-good status=complete provider_or_result=openai evaluation=passed timestamp=2026-04-28T12:00:00Z",
+		"Next Action: state=continue_task label=Continue Task task=TASK-0053 status=in-progress category=feature",
+		"Active Run: state=none",
+		"Validation Status: state=passed run=20260428-120000-good counts=commands 2",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status output missing %q:\n%s", want, out)
+		}
+	}
+	assertStatusOutputSafe(t, out, dir)
+}
+
+func TestStatusCommandNoRuns(t *testing.T) {
+	dir := newStatusWorkspace(t, "- [x] TASK-0001 [feature] Done\n")
+
+	out := runStatusCommandOutput(t, dir)
+	for _, want := range []string{
+		"TASK: state=available total=1 done=1 in_progress=0 pending=0 blocked=0",
+		"Latest Run: state=none run=none status=none provider_or_result=none evaluation=none timestamp=none",
+		"Active Run: state=none",
+		"Validation Status: state=none",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status output missing %q:\n%s", want, out)
+		}
+	}
+	assertStatusOutputSafe(t, out, dir)
+}
+
+func TestStatusCommandActiveRunPresent(t *testing.T) {
+	dir := newStatusWorkspace(t, "- [ ] TASK-0053 [feature] Add status\n")
+	writeStatusFile(t, dir, ".jj/runs/20260428-130000-active/manifest.json", `{
+		"run_id":"20260428-130000-active",
+		"status":"running",
+		"started_at":"2026-04-28T13:00:00Z",
+		"planner_provider":"openai",
+		"artifacts":{"manifest":"manifest.json"}
+	}`)
+
+	out := runStatusCommandOutput(t, dir)
+	if !strings.Contains(out, "Active Run: state=available run=20260428-130000-active status=running provider_or_result=openai evaluation=unknown timestamp=2026-04-28T13:00:00Z") {
+		t.Fatalf("status output missing active run:\n%s", out)
+	}
+	assertStatusOutputSafe(t, out, dir)
+}
+
+func TestStatusCommandValidationMetadataPresent(t *testing.T) {
+	dir := newStatusWorkspace(t, "- [x] TASK-0001 [feature] Done\n")
+	writeStatusFile(t, dir, ".jj/runs/20260428-140000-validation/manifest.json", `{
+		"run_id":"20260428-140000-validation",
+		"status":"failed",
+		"started_at":"2026-04-28T14:00:00Z",
+		"artifacts":{"manifest":"manifest.json"},
+		"validation":{"ran":true,"status":"failed","evidence_status":"recorded","command_count":3,"passed_count":1,"failed_count":2}
+	}`)
+
+	out := runStatusCommandOutput(t, dir)
+	if !strings.Contains(out, "Validation Status: state=failed run=20260428-140000-validation counts=commands 3") ||
+		!strings.Contains(out, "failed 2") {
+		t.Fatalf("status output missing validation metadata:\n%s", out)
+	}
+	assertStatusOutputSafe(t, out, dir)
+}
+
+func TestStatusCommandMalformedMetadata(t *testing.T) {
+	dir := newStatusWorkspace(t, "- [x] TASK-0001 [feature] Done\n")
+	writeStatusFile(t, dir, ".jj/runs/20260428-150000-malformed/manifest.json", `{"run_id":"20260428-150000-malformed","status":"complete",`)
+
+	out := runStatusCommandOutput(t, dir)
+	for _, want := range []string{
+		"Latest Run: state=unavailable run=20260428-150000-malformed status=unavailable provider_or_result=unavailable",
+		"Validation Status: state=unavailable run=20260428-150000-malformed",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status output missing %q:\n%s", want, out)
+		}
+	}
+	assertStatusOutputSafe(t, out, dir)
+}
+
+func TestStatusCommandDeniedRunMetadata(t *testing.T) {
+	dir := newStatusWorkspace(t, "- [x] TASK-0001 [feature] Done\n")
+	runDir := filepath.Join(dir, ".jj", "runs", "20260428-160000-denied")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside-sk-proj-denied1234567890.json")
+	if err := os.WriteFile(outside, []byte(`{"status":"secret"}`), 0o644); err != nil {
+		t.Fatalf("write outside manifest: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(runDir, "manifest.json")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	out := runStatusCommandOutput(t, dir)
+	if !strings.Contains(out, "Latest Run: state=denied run=20260428-160000-denied") ||
+		!strings.Contains(out, "Validation Status: state=denied run=20260428-160000-denied") {
+		t.Fatalf("status output missing denied state:\n%s", out)
+	}
+	assertStatusOutputSafe(t, out, dir, outside, "sk-proj-denied1234567890")
+}
+
+func TestStatusCommandHostileLabelsAreSanitized(t *testing.T) {
+	dir := newStatusWorkspace(t, "- [ ] TASK-0053 [feature] Add status\n")
+	secret := "sk-proj-statushostile1234567890"
+	writeStatusFile(t, dir, ".jj/runs/20260428-170000-hostile/manifest.json", fmt.Sprintf(`{
+		"run_id":"20260428-170000-hostile",
+		"status":"complete",
+		"started_at":"2026-04-28T17:00:00Z",
+		"planner_provider":"Authorization: Bearer %s",
+		"artifacts":{"manifest":"manifest.json"},
+		"validation":{"ran":true,"status":"passed","commands":[{"label":"API_KEY=%s","status":"passed"}]}
+	}`, secret, secret))
+
+	out := runStatusCommandOutput(t, dir)
+	if !strings.Contains(out, "Latest Run: state=available run=20260428-170000-hostile status=complete provider_or_result=result complete evaluation=passed") {
+		t.Fatalf("status output did not use deterministic sanitized labels:\n%s", out)
+	}
+	assertStatusOutputSafe(t, out, dir, secret, "Authorization", "API_KEY=")
+}
+
+func TestStatusCommandTokenLikeRunIDIsNotRendered(t *testing.T) {
+	dir := newStatusWorkspace(t, "- [x] TASK-0001 [feature] Done\n")
+	tokenRunID := "sk-proj-tokenlike1234567890"
+	writeStatusFile(t, dir, ".jj/runs/"+tokenRunID+"/manifest.json", fmt.Sprintf(`{"run_id":%q,"status":"complete","artifacts":{"manifest":"manifest.json"}}`, tokenRunID))
+
+	out := runStatusCommandOutput(t, dir)
+	if !strings.Contains(out, "Latest Run: state=none run=none") {
+		t.Fatalf("token-like run id should not be rendered:\n%s", out)
+	}
+	assertStatusOutputSafe(t, out, dir, tokenRunID)
+}
+
+func TestStatusCommandDeterministicLabels(t *testing.T) {
+	dir := newStatusWorkspace(t, "- [x] TASK-0001 [feature] Done\n")
+	for _, runID := range []string{"20260428-180000-a", "20260428-180000-b"} {
+		writeStatusFile(t, dir, ".jj/runs/"+runID+"/manifest.json", fmt.Sprintf(`{
+			"run_id":%q,
+			"status":"complete",
+			"started_at":"not-a-time",
+			"artifacts":{"manifest":"manifest.json"},
+			"validation":{"ran":true,"status":"passed","evidence_status":"recorded"}
+		}`, runID))
+	}
+
+	out := runStatusCommandOutput(t, dir)
+	if !strings.Contains(out, "Latest Run: state=available run=20260428-180000-b") ||
+		strings.Contains(out, "Latest Run: state=available run=20260428-180000-a") {
+		t.Fatalf("status output did not use deterministic run label ordering:\n%s", out)
+	}
+	assertStatusOutputSafe(t, out, dir)
+}
+
 type cliLoopFakeExecutor struct {
 	calls       []run.Config
 	statuses    []string
@@ -368,6 +536,64 @@ func writeCLILoopFile(path, data string) error {
 		return err
 	}
 	return os.WriteFile(path, []byte(data), 0o644)
+}
+
+func newStatusWorkspace(t *testing.T, taskMarkdown string) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeStatusFile(t, dir, "docs/TASK.md", "# Current TASK\n\n"+taskMarkdown)
+	return dir
+}
+
+func runStatusCommandOutput(t *testing.T, dir string) string {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	cmd := newRootCommandWithServeAndIO(
+		func(_ context.Context, _ run.Config) (*run.Result, error) {
+			t.Fatal("run executor should not be called")
+			return nil, nil
+		},
+		serve.Execute,
+		&stdout,
+		&stderr,
+	)
+	cmd.SetArgs([]string{"status", "--cwd", dir})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("status command failed: %v stderr=%s", err, stderr.String())
+	}
+	return stdout.String()
+}
+
+func writeStatusFile(t *testing.T, root, rel, data string) {
+	t.Helper()
+	if err := writeCLILoopFile(filepath.Join(root, filepath.FromSlash(rel)), data); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+}
+
+func assertStatusOutputSafe(t *testing.T, out string, forbidden ...string) {
+	t.Helper()
+	defaultForbidden := []string{
+		"sk-proj-",
+		"ghp_",
+		"BEGIN PRIVATE KEY",
+		"raw command text",
+		"raw environment",
+		"raw artifact body",
+		"raw diff body",
+		"[jj-omitted]",
+		"[REDACTED]",
+		"[redacted]",
+		"[omitted]",
+		"sensitive value removed",
+		"unsafe value removed",
+	}
+	forbidden = append(defaultForbidden, forbidden...)
+	for _, value := range forbidden {
+		if value != "" && strings.Contains(out, value) {
+			t.Fatalf("status output leaked %q:\n%s", value, out)
+		}
+	}
 }
 
 func TestServeCommandParsesFlags(t *testing.T) {

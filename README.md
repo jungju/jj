@@ -181,7 +181,7 @@ Other useful intent examples:
 UI만 개선해
 ```
 
-When `.jj/next-intent.md` is non-empty, it is the highest-priority planning input. The first proposed runnable task must be scoped to that intent, and `task-proposal-mode`, resolved mode, and auto/balanced detection are ignored for choosing what to plan. Mode still remains useful afterward as inferred category metadata, task ID/title fallback guidance, stored task metadata, and compatibility behavior. A successful full run with passed validation empties the file; dry-runs, planning failures, Codex failures, validation failures, and reconciliation failures preserve it.
+When `.jj/next-intent.md` is non-empty, it is the highest-priority planning input. The first proposed runnable task must be scoped to that intent, and `task-proposal-mode`, resolved mode, and auto/balanced detection are ignored for choosing what to plan. Mode still remains useful afterward as inferred category metadata, task ID/title fallback guidance, stored task metadata, and compatibility behavior. `jj run` preserves the file after every outcome; edit it or empty it yourself when you want to change or disable the intent.
 
 ## Task Proposal Mode
 

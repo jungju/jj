@@ -4,10 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/jungju/jj/internal/artifact"
 	"github.com/jungju/jj/internal/security"
 )
 
@@ -39,24 +37,6 @@ func LoadNextIntent(cwd string) (NextIntentInput, error) {
 		Content: redactSecrets(string(data)),
 		Path:    path,
 	}, nil
-}
-
-func clearNextIntent(cwd string) error {
-	path, err := nextIntentPath(cwd)
-	if err != nil {
-		return fmt.Errorf("clear %s: %w", DefaultNextIntentPath, err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), artifact.PrivateDirMode); err != nil {
-		return fmt.Errorf("clear %s: %w", DefaultNextIntentPath, err)
-	}
-	path, err = nextIntentPath(cwd)
-	if err != nil {
-		return fmt.Errorf("clear %s: %w", DefaultNextIntentPath, err)
-	}
-	if err := artifact.AtomicWriteFile(path, nil, artifact.PrivateFileMode); err != nil {
-		return fmt.Errorf("clear %s: %w", DefaultNextIntentPath, err)
-	}
-	return nil
 }
 
 func nextIntentPath(cwd string) (string, error) {

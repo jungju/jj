@@ -375,11 +375,12 @@ func TestExecuteTaskProposalModeCriticalBlockerOverridesConcreteMode(t *testing.
 	assertNoFile(t, filepath.Join(dir, ".jj", "eval.json"))
 }
 
-func TestExecuteNextIntentOverridePersistsContextAndClearsOnPassedValidation(t *testing.T) {
+func TestExecuteNextIntentOverridePersistsContextAndPreservesOnPassedValidation(t *testing.T) {
 	dir := initGit(t)
 	writePlan(t, dir, "plan.md")
 	secret := "sk-proj-prioritysecret1234567890"
-	writeNextIntent(t, dir, "Web UI About page feature only.\nOPENAI_API_KEY="+secret+"\n")
+	intent := "Web UI About page feature only.\nOPENAI_API_KEY=" + secret + "\n"
+	writeNextIntent(t, dir, intent)
 	planner := &fakePlanner{}
 
 	_, err := Execute(context.Background(), Config{
@@ -398,8 +399,8 @@ func TestExecuteNextIntentOverridePersistsContextAndClearsOnPassedValidation(t *
 	}
 
 	runDir := filepath.Join(dir, ".jj", "runs", "next-intent-success")
-	if got := readFile(t, filepath.Join(dir, DefaultNextIntentPath)); got != "" {
-		t.Fatalf("next intent should be cleared after passed validation, got %q", got)
+	if got := readFile(t, filepath.Join(dir, DefaultNextIntentPath)); got != intent {
+		t.Fatalf("next intent should be preserved after passed validation, got %q", got)
 	}
 	manifest := readManifest(t, filepath.Join(runDir, "manifest.json"))
 	if manifest.TaskProposalMode != TaskProposalModeSecurity || manifest.ResolvedTaskProposalMode != TaskProposalModeSecurity {
@@ -435,8 +436,8 @@ func TestExecuteNextIntentOverridePersistsContextAndClearsOnPassedValidation(t *
 		}
 	}
 	events := readFile(t, filepath.Join(runDir, "events.jsonl"))
-	if !strings.Contains(events, "next_intent.cleared") {
-		t.Fatalf("events should record next intent clearing:\n%s", events)
+	if strings.Contains(events, "next_intent.cleared") {
+		t.Fatalf("events should not record next intent clearing:\n%s", events)
 	}
 }
 
