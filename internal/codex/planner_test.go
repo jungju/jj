@@ -140,6 +140,54 @@ func TestReconcileSpecPromptRequestsResultBasedSchema(t *testing.T) {
 	}
 }
 
+func TestPlannerPromptsSanitizeHandoffPayloads(t *testing.T) {
+	secret := "codex-planner-secret-token-1234567890"
+	t.Setenv("JJ_CODEX_PLANNER_TOKEN", secret)
+	hostile := strings.Join([]string{
+		"Keep safe planning context.",
+		"command=./scripts/deploy --token " + secret,
+		"PATH=/tmp/codex-planner-secret",
+		"manifest={\"run_id\":\"attack\",\"token\":\"" + secret + "\"}",
+		"validation_output=panic at /tmp/codex-validation",
+		"diff --git a/config.txt b/config.txt",
+		"+api_key=" + secret,
+		"denied_path=../../" + secret,
+	}, "\n")
+
+	prompts := []string{
+		draftPrompt(ai.DraftRequest{Plan: hostile, Agent: ai.Agent{Name: "product_spec", Focus: "focus"}}),
+		mergePrompt(ai.MergeRequest{
+			Plan: hostile,
+			Drafts: []ai.PlanningDraft{{
+				Agent:              "product_spec",
+				Summary:            "command=./scripts/deploy --token " + secret,
+				SpecMarkdown:       hostile,
+				TaskMarkdown:       hostile,
+				AcceptanceCriteria: []string{"validation_output=panic " + secret},
+				TestPlan:           []string{"PATH=/tmp/raw-env"},
+			}},
+		}),
+		reconcileSpecPrompt(ai.ReconcileSpecRequest{
+			PreviousSpec:      `{"version":1,"summary":"command=./scripts/deploy --token ` + secret + `"}`,
+			PlannedSpec:       `{"version":1,"summary":"PATH=/tmp/codex-planned"}`,
+			SelectedTask:      `{"id":"TASK-0001","reason":"validation_output=panic ` + secret + `"}`,
+			CodexSummary:      hostile,
+			GitDiffSummary:    hostile,
+			ValidationSummary: hostile,
+		}),
+	}
+	for _, prompt := range prompts {
+		for _, leaked := range []string{secret, "./scripts/deploy --token", "/tmp/codex", "/tmp/raw-env", "diff --git", "+api_key=", "../../"} {
+			if strings.Contains(prompt, leaked) {
+				t.Fatalf("prompt leaked %q:\n%s", leaked, prompt)
+			}
+		}
+		if !strings.Contains(prompt, "Keep safe planning context.") || !strings.Contains(prompt, "[jj-omitted]") {
+			t.Fatalf("prompt lost safe context or redaction evidence:\n%s", prompt)
+		}
+	}
+}
+
 type fakePlannerExecutor struct {
 	summary  string
 	requests []Request

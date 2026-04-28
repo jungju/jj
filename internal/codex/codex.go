@@ -123,7 +123,7 @@ func (Runner) Run(ctx context.Context, req Request) (Result, error) {
 	}
 	summaryBytes, readErr := os.ReadFile(lastMessageTempPath)
 	if readErr == nil {
-		redactedSummary := security.RedactContent(req.OutputLastMessage, summaryBytes)
+		redactedSummary := security.SanitizeHandoffContent(req.OutputLastMessage, summaryBytes)
 		if writeErr := artifact.AtomicWriteFile(req.OutputLastMessage, redactedSummary, artifact.PrivateFileMode); writeErr != nil {
 			return Result{ExitCode: exitCode(err), DurationMS: time.Since(start).Milliseconds()}, fmt.Errorf("write redacted codex summary: %w", writeErr)
 		}
@@ -199,7 +199,7 @@ func publishRedactedQuarantine(tempPath, finalPath string) error {
 	if err != nil {
 		return fmt.Errorf("read codex quarantine output: %w", err)
 	}
-	if err := artifact.AtomicWriteFile(finalPath, security.RedactContent(finalPath, data), artifact.PrivateFileMode); err != nil {
+	if err := artifact.AtomicWriteFile(finalPath, security.SanitizeHandoffContent(finalPath, data), artifact.PrivateFileMode); err != nil {
 		return fmt.Errorf("write redacted codex output: %w", err)
 	}
 	return nil

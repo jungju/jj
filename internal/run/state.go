@@ -131,7 +131,7 @@ func buildPlanningContext(plan string, spec SpecState, tasks TaskState, continua
 	if strings.TrimSpace(nextIntent) != "" {
 		b.WriteString("# Next Intent Override\n\n")
 		b.WriteString("The following local operator intent from .jj/next-intent.md is the highest-priority next-turn planning input. Scope the first proposed runnable task to this intent. Ignore task-proposal-mode, resolved mode, and auto/balanced detection when choosing what to plan; use mode only after the intent is satisfied as category metadata or fallback guidance.\n\n")
-		b.WriteString(truncateString(redactSecrets(nextIntent), 16000))
+		b.WriteString(truncateString(sanitizeHandoffText(nextIntent), 16000))
 		b.WriteString("\n\n")
 	}
 	if specHasContent(spec) {
@@ -147,7 +147,7 @@ func buildPlanningContext(plan string, spec SpecState, tasks TaskState, continua
 	b.WriteString("\n\n")
 	if strings.TrimSpace(continuation) != "" {
 		b.WriteString("# Recent Run Evidence\n\n")
-		b.WriteString(truncateString(redactSecrets(continuation), 16000))
+		b.WriteString(truncateString(sanitizeHandoffText(continuation), 16000))
 		b.WriteString("\n\n")
 	}
 	if specHasContent(spec) {
@@ -155,9 +155,9 @@ func buildPlanningContext(plan string, spec SpecState, tasks TaskState, continua
 	} else {
 		b.WriteString("# plan.md Seed (initial source of truth)\n\n")
 	}
-	b.WriteString(truncateString(redactSecrets(plan), 16000))
+	b.WriteString(truncateString(sanitizeHandoffText(plan), 16000))
 	b.WriteString("\n")
-	return redactSecrets(b.String())
+	return sanitizeHandoffText(b.String())
 }
 
 func buildTaskProposalEvidence(spec SpecState, tasks TaskState, continuation string, nextIntent string) string {
@@ -166,7 +166,7 @@ func buildTaskProposalEvidence(spec SpecState, tasks TaskState, continuation str
 		b.WriteString("Next intent override from .jj/next-intent.md:\n")
 		b.WriteString("- This free-form intent is the highest-priority next task input and should override task-proposal-mode, resolved mode, and auto/balanced detection when choosing what to plan.\n")
 		b.WriteString("- Scope the first proposed runnable task to this intent; use mode only afterward as category metadata or fallback guidance.\n")
-		for _, line := range strings.Split(truncateString(redactSecrets(nextIntent), 4000), "\n") {
+		for _, line := range strings.Split(truncateString(sanitizeHandoffText(nextIntent), 4000), "\n") {
 			if trimmed := strings.TrimSpace(line); trimmed != "" {
 				b.WriteString("- ")
 				b.WriteString(trimmed)
@@ -180,7 +180,7 @@ func buildTaskProposalEvidence(spec SpecState, tasks TaskState, continuation str
 		for _, item := range append(append([]string{}, spec.Requirements...), spec.OpenQuestions...) {
 			if trimmed := strings.TrimSpace(item); trimmed != "" {
 				b.WriteString("- ")
-				b.WriteString(redactSecrets(trimmed))
+				b.WriteString(sanitizeHandoffText(trimmed))
 				b.WriteByte('\n')
 			}
 		}
@@ -192,7 +192,7 @@ func buildTaskProposalEvidence(spec SpecState, tasks TaskState, continuation str
 		if !taskRunnable(task.Status) {
 			continue
 		}
-		fmt.Fprintf(&b, "- %s [%s/%s] %s\n", task.ID, task.Mode, task.Status, redactSecrets(task.Title))
+		fmt.Fprintf(&b, "- %s [%s/%s] %s\n", task.ID, task.Mode, task.Status, sanitizeHandoffText(task.Title))
 	}
 	closedCount := 0
 	for _, task := range tasks.Tasks {
@@ -205,7 +205,7 @@ func buildTaskProposalEvidence(spec SpecState, tasks TaskState, continuation str
 		b.WriteString("\nRecent failure evidence:\n")
 		b.WriteString(recent)
 	}
-	return redactSecrets(b.String())
+	return sanitizeHandoffText(b.String())
 }
 
 func specHasContent(spec SpecState) bool {
@@ -234,7 +234,7 @@ func taskStateSummary(tasks TaskState, includeCompletedTitles bool) string {
 		}
 	}
 	if tasks.ActiveTaskID != nil {
-		fmt.Fprintf(&b, "Active task id: %s\n", redactSecrets(*tasks.ActiveTaskID))
+		fmt.Fprintf(&b, "Active task id: %s\n", sanitizeHandoffText(*tasks.ActiveTaskID))
 	}
 	b.WriteString("\nRunnable tasks:\n")
 	runnable := 0
@@ -243,7 +243,7 @@ func taskStateSummary(tasks TaskState, includeCompletedTitles bool) string {
 			continue
 		}
 		runnable++
-		fmt.Fprintf(&b, "- %s [%s/%s] %s\n", task.ID, task.Mode, task.Status, redactSecrets(task.Title))
+		fmt.Fprintf(&b, "- %s [%s/%s] %s\n", task.ID, task.Mode, task.Status, sanitizeHandoffText(task.Title))
 	}
 	if runnable == 0 {
 		b.WriteString("- none\n")
@@ -254,7 +254,7 @@ func taskStateSummary(tasks TaskState, includeCompletedTitles bool) string {
 		for i := len(tasks.Tasks) - 1; i >= 0 && wrote < 10; i-- {
 			task := tasks.Tasks[i]
 			if strings.EqualFold(strings.TrimSpace(task.Status), "done") {
-				fmt.Fprintf(&b, "- %s [%s] %s\n", task.ID, task.Mode, redactSecrets(task.Title))
+				fmt.Fprintf(&b, "- %s [%s] %s\n", task.ID, task.Mode, sanitizeHandoffText(task.Title))
 				wrote++
 			}
 		}
@@ -369,9 +369,9 @@ func buildReconciledSpecState(previous, planned SpecState, result ai.ReconcileSp
 }
 
 func redactSpecState(state SpecState) SpecState {
-	data, _ := json.Marshal(state)
+	data, _ := json.Marshal(security.SanitizeHandoffJSONValue(state))
 	var out SpecState
-	_ = json.Unmarshal([]byte(redactSecrets(string(data))), &out)
+	_ = json.Unmarshal([]byte(sanitizeHandoffText(string(data))), &out)
 	return out
 }
 
@@ -781,30 +781,30 @@ func validationTaskVerdict(validation ManifestValidation) string {
 }
 
 func redactTaskState(state TaskState) TaskState {
-	data, _ := json.Marshal(state)
+	data, _ := json.Marshal(security.SanitizeHandoffJSONValue(state))
 	var out TaskState
-	_ = json.Unmarshal([]byte(redactSecrets(string(data))), &out)
+	_ = json.Unmarshal([]byte(sanitizeHandoffText(string(data))), &out)
 	return out
 }
 
 func mustCompactJSON(value any) string {
-	data, err := json.MarshalIndent(security.RedactJSONValue(value), "", "  ")
+	data, err := json.MarshalIndent(security.SanitizeHandoffJSONValue(value), "", "  ")
 	if err != nil {
 		return "{}"
 	}
-	return redactSecrets(string(data))
+	return sanitizeHandoffText(string(data))
 }
 
 func codexJSONPrompt(spec SpecState, task TaskRecord, proposal TaskProposalResolution) string {
-	specSummary, _ := json.MarshalIndent(struct {
+	specSummary, _ := json.MarshalIndent(security.SanitizeHandoffJSONValue(struct {
 		Title              string   `json:"title"`
 		Summary            string   `json:"summary"`
 		Goals              []string `json:"goals,omitempty"`
 		Requirements       []string `json:"requirements,omitempty"`
 		AcceptanceCriteria []string `json:"acceptance_criteria,omitempty"`
-	}{spec.Title, spec.Summary, spec.Goals, spec.Requirements, spec.AcceptanceCriteria}, "", "  ")
-	taskJSON, _ := json.MarshalIndent(task, "", "  ")
-	return redactSecrets(fmt.Sprintf(`You are running inside jj, a Go CLI that orchestrates planning, implementation, and validation.
+	}{spec.Title, spec.Summary, spec.Goals, spec.Requirements, spec.AcceptanceCriteria}), "", "  ")
+	taskJSON, _ := json.MarshalIndent(security.SanitizeHandoffJSONValue(task), "", "  ")
+	return sanitizeHandoffText(fmt.Sprintf(`You are running inside jj, a Go CLI that orchestrates planning, implementation, and validation.
 
 Implement the selected task using this compact JSON context.
 
@@ -898,7 +898,7 @@ func uniqueStrings(items ...string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(items))
 	for _, item := range items {
-		item = strings.TrimSpace(redactSecrets(item))
+		item = strings.TrimSpace(sanitizeHandoffText(item))
 		if item == "" || seen[item] {
 			continue
 		}
@@ -926,7 +926,7 @@ func changedFilesFromNameStatus(nameStatus string) []string {
 		if len(fields) == 0 {
 			continue
 		}
-		out = append(out, redactSecrets(fields[len(fields)-1]))
+		out = append(out, sanitizeHandoffText(fields[len(fields)-1]))
 	}
 	return uniqueStrings(out...)
 }

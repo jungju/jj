@@ -68,11 +68,13 @@ func (p Planner) ReconcileSpec(ctx context.Context, req ai.ReconcileSpecRequest)
 }
 
 func (p Planner) runJSON(ctx context.Context, stage, prompt string, target any) ([]byte, error) {
-	eventsPath, err := p.Store.Path(fmt.Sprintf("planning/%s.events.jsonl", stage))
+	eventsRel := fmt.Sprintf("planning/%s.events.jsonl", stage)
+	lastMessageRel := fmt.Sprintf("planning/%s.last-message.txt", stage)
+	eventsPath, err := p.Store.Path(eventsRel)
 	if err != nil {
 		return nil, err
 	}
-	lastMessagePath, err := p.Store.Path(fmt.Sprintf("planning/%s.last-message.txt", stage))
+	lastMessagePath, err := p.Store.Path(lastMessageRel)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +86,7 @@ func (p Planner) runJSON(ctx context.Context, stage, prompt string, target any) 
 		Bin:               p.Bin,
 		CWD:               p.CWD,
 		Model:             p.Model,
-		Prompt:            prompt,
+		Prompt:            security.SanitizeHandoffString(prompt, plannerHandoffRoots(p.Store, p.CWD)...),
 		EventsPath:        eventsPath,
 		OutputLastMessage: lastMessagePath,
 		AllowNoGit:        p.AllowNoGit,
@@ -109,8 +111,8 @@ func (p Planner) runJSON(ctx context.Context, stage, prompt string, target any) 
 		p.Record("planning_"+stage+"_events", eventsPath)
 		p.Record("planning_"+stage+"_last_message", lastMessagePath)
 	}
-	_ = redactArtifact(eventsPath)
-	_ = redactArtifact(lastMessagePath)
+	_ = sanitizePlannerArtifact(p.Store, eventsRel)
+	_ = sanitizePlannerArtifact(p.Store, lastMessageRel)
 	raw := []byte(secrets.Redact(result.Summary))
 	if strings.TrimSpace(string(raw)) == "" {
 		if data, err := os.ReadFile(lastMessagePath); err == nil {
@@ -126,19 +128,35 @@ func (p Planner) runJSON(ctx context.Context, stage, prompt string, target any) 
 	return raw, nil
 }
 
-func redactArtifact(path string) error {
-	if strings.TrimSpace(path) == "" {
+func sanitizePlannerArtifact(store artifact.Store, rel string) error {
+	if strings.TrimSpace(rel) == "" {
 		return nil
+	}
+	path, err := store.Path(rel)
+	if err != nil {
+		return err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	redacted := security.RedactContent(path, data)
+	redacted, report := security.SanitizeHandoffContentWithReport(rel, data, plannerHandoffRoots(store, store.CWD)...)
+	store.RecordRedactionReport(report)
 	if string(redacted) == string(data) {
 		return nil
 	}
+	path, err = store.Path(rel)
+	if err != nil {
+		return err
+	}
 	return artifact.AtomicWriteFile(path, redacted, artifact.PrivateFileMode)
+}
+
+func plannerHandoffRoots(store artifact.Store, cwd string) []security.CommandPathRoot {
+	return []security.CommandPathRoot{
+		{Path: store.RunDir, Label: "[run]"},
+		{Path: cwd, Label: "[workspace]"},
+	}
 }
 
 func mustPrettyJSON(value any) []byte {
@@ -175,7 +193,7 @@ Planning context:
 
 When a current .jj/spec.json state is present, treat it as the source of truth. Treat plan.md as product vision/background only. Do not propose tasks already completed unless fixing a regression.
 
-Produce an implementation-ready planning draft.`, req.Agent.Name, req.Agent.Focus, taskProposalPromptBlock(req.TaskProposalMode, req.ResolvedTaskProposalMode, req.TaskProposalInstruction), req.Plan)
+Produce an implementation-ready planning draft.`, handoffString(req.Agent.Name), handoffString(req.Agent.Focus), taskProposalPromptBlock(req.TaskProposalMode, req.ResolvedTaskProposalMode, req.TaskProposalInstruction), handoffString(req.Plan))
 }
 
 func mergePrompt(req ai.MergeRequest) string {
@@ -206,10 +224,10 @@ The task JSON must include version, active_task_id, and tasks. Treat this as app
 
 Planning context:
 `)
-	b.WriteString(req.Plan)
+	b.WriteString(handoffString(req.Plan))
 	b.WriteString("\n\nDrafts:\n")
 	for _, draft := range req.Drafts {
-		data, _ := json.MarshalIndent(draft, "", "  ")
+		data, _ := json.MarshalIndent(security.SanitizeHandoffJSONValue(draft), "", "  ")
 		b.Write(data)
 		b.WriteString("\n\n")
 	}
@@ -251,7 +269,7 @@ Git diff summary:
 %s
 
 Validation summary:
-%s`, req.PreviousSpec, req.PlannedSpec, req.SelectedTask, req.CodexSummary, req.GitDiffSummary, req.ValidationSummary)
+%s`, handoffJSONText(req.PreviousSpec), handoffJSONText(req.PlannedSpec), handoffJSONText(req.SelectedTask), handoffString(req.CodexSummary), handoffString(req.GitDiffSummary), handoffString(req.ValidationSummary))
 }
 
 func taskProposalPromptBlock(selected, resolved, instruction string) string {
@@ -264,18 +282,26 @@ func taskProposalPromptBlock(selected, resolved, instruction string) string {
 	var b strings.Builder
 	if selected != "" {
 		b.WriteString("Task Proposal Mode: ")
-		b.WriteString(selected)
+		b.WriteString(handoffString(selected))
 		b.WriteByte('\n')
 	}
 	if resolved != "" {
 		b.WriteString("Resolved Mode: ")
-		b.WriteString(resolved)
+		b.WriteString(handoffString(resolved))
 		b.WriteByte('\n')
 	}
 	if instruction != "" {
-		b.WriteString(instruction)
+		b.WriteString(handoffString(instruction))
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func handoffString(s string) string {
+	return security.SanitizeHandoffString(s)
+}
+
+func handoffJSONText(s string) string {
+	return security.SanitizeHandoffJSONText(s)
 }
 
 func commandStatus(err error) string {

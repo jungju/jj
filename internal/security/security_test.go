@@ -460,6 +460,73 @@ func TestSanitizeDisplayStringWithReportLabelsPathsAndCountsRedactions(t *testin
 	}
 }
 
+func TestSanitizeHandoffContentScrubsPayloadBoundaries(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside-secret.txt")
+	secret := "handoff-secret-token-1234567890"
+	t.Setenv("JJ_HANDOFF_SECRET_TOKEN", secret)
+
+	input := strings.Join([]string{
+		"Keep product context.",
+		"command=./scripts/deploy --token " + secret,
+		"PATH=" + outside,
+		"manifest={\"run_id\":\"attack\",\"error\":\"" + secret + "\"}",
+		"validation_output=panic at " + outside,
+		"workspace=" + filepath.Join(root, "plan.md"),
+		"diff --git a/config.txt b/config.txt",
+		"@@ -1 +1 @@",
+		"+api_key=" + secret,
+		"denied_path=../../" + secret,
+	}, "\n")
+
+	got, report := SanitizeHandoffStringWithReport(input, CommandPathRoot{Path: root, Label: "[workspace]"})
+	for _, leaked := range []string{secret, outside, filepath.ToSlash(outside), "./scripts/deploy --token", "PATH=", "diff --git", "api_key=", "../../"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("handoff sanitizer leaked %q:\n%s", leaked, got)
+		}
+	}
+	if !strings.Contains(got, "Keep product context.") || !strings.Contains(got, "[workspace]/plan.md") || !strings.Contains(got, RedactionMarker) {
+		t.Fatalf("handoff sanitizer removed safe context or redaction evidence:\n%s", got)
+	}
+	if report.Kinds["handoff_payload"] == 0 || report.Kinds["path_label"] == 0 || report.Kinds["absolute_path"] == 0 {
+		t.Fatalf("handoff report missing safe categories: %#v", report.Kinds)
+	}
+}
+
+func TestSanitizeHandoffJSONValueOmitsPromptAndRawOutputFields(t *testing.T) {
+	root := t.TempDir()
+	secret := "handoff-json-secret-token-1234567890"
+	t.Setenv("JJ_HANDOFF_JSON_TOKEN", secret)
+
+	input := map[string]any{
+		"prompt":          "raw prompt " + secret,
+		"stdout":          "command stdout " + secret,
+		"validation_body": "validation payload " + secret,
+		"safe_path":       filepath.Join(root, "validation", "summary.md"),
+		"summary":         "command=./scripts/deploy --token " + secret,
+		"visible":         "safe category",
+	}
+	sanitized, report := SanitizeHandoffJSONValueWithReport(input, CommandPathRoot{Path: root, Label: "[workspace]"})
+	data, err := json.Marshal(sanitized)
+	if err != nil {
+		t.Fatalf("marshal sanitized handoff json: %v", err)
+	}
+	got := string(data)
+	for _, leaked := range []string{secret, "raw prompt", "command stdout", "validation payload", "./scripts/deploy --token", root, filepath.ToSlash(root)} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("handoff json leaked %q:\n%s", leaked, got)
+		}
+	}
+	for _, want := range []string{RedactionMarker, "[path]", "safe category"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("handoff json missing %q:\n%s", want, got)
+		}
+	}
+	if report.Kinds["handoff_payload"] == 0 || report.Kinds["absolute_path"] == 0 {
+		t.Fatalf("handoff json report missing categories: %#v", report.Kinds)
+	}
+}
+
 func TestRedactTokenLikePreservesHexCommit(t *testing.T) {
 	sha := "0123456789abcdef0123456789abcdef01234567"
 	got := RedactString("commit " + sha)

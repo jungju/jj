@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -120,6 +121,166 @@ func TestSecurityRegressionDryRunAndFullRunRedactPersistedSurfaces(t *testing.T)
 			if !containsString(diag.RootLabels, "workspace") || !containsString(diag.RootLabels, "run_artifacts") || !containsString(diag.RootLabels, "current_run") {
 				t.Fatalf("manifest should expose guarded root labels only: %#v", diag.RootLabels)
 			}
+		})
+	}
+}
+
+func TestSecurityRegressionPlannerAndImplementationHandoffsAreSanitized(t *testing.T) {
+	secret := "handoff-regression-secret-value"
+	openAIKey := "sk-proj-handoffregression1234567890"
+	tokenLike := "AbCdEfGhIjKlMnOpQrStUvWxYz1234567890QwErTy"
+	t.Setenv("JJ_HANDOFF_REGRESSION_TOKEN", secret)
+	for _, tc := range []struct {
+		name   string
+		dryRun bool
+	}{
+		{name: "dry-run", dryRun: true},
+		{name: "full-run", dryRun: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writePlan(t, dir, "plan.md")
+			if !tc.dryRun {
+				writeValidationScript(t, dir, "printf 'ok\\n'")
+			}
+			hostile := hostileHandoffPayload(t, secret, openAIKey, tokenLike)
+			if err := os.WriteFile(filepath.Join(dir, "plan.md"), []byte("Plan safely.\n"+hostile+"\n"), 0o644); err != nil {
+				t.Fatalf("write hostile plan: %v", err)
+			}
+			taskJSON := `{"version":1,"tasks":[{"title":"Handoff task","mode":"security","priority":"high","status":"queued","reason":` +
+				strconv.Quote(hostile) + `,"acceptance_criteria":[` + strconv.Quote(hostile) + `],"validation_command":"./scripts/validate.sh"}]}`
+			planner := &fakePlanner{secret: secret, mergeTask: taskJSON}
+			codexRunner := &fakeCodexRunner{}
+
+			result, err := Execute(context.Background(), Config{
+				PlanPath:               filepath.Join(dir, "plan.md"),
+				CWD:                    dir,
+				RunID:                  "handoff-regression-" + strings.ReplaceAll(tc.name, "-", ""),
+				PlanningAgents:         1,
+				PlanningAgentsExplicit: true,
+				OpenAIModel:            "test-model",
+				AllowNoGit:             true,
+				AllowNoGitExplicit:     true,
+				DryRun:                 tc.dryRun,
+				DryRunExplicit:         true,
+				AdditionalPlanContext:  hostile,
+				Stdout:                 io.Discard,
+				Stderr:                 io.Discard,
+				Planner:                planner,
+				CodexRunner:            codexRunner,
+			})
+			if err != nil {
+				t.Fatalf("execute handoff regression run: %v", err)
+			}
+			for _, req := range planner.draftRequests {
+				assertHandoffClean(t, "draft request", req.Plan, secret, openAIKey, tokenLike)
+			}
+			assertHandoffClean(t, "merge request", planner.lastMergeRequest.Plan, secret, openAIKey, tokenLike)
+			if tc.dryRun {
+				if codexRunner.called {
+					t.Fatal("dry-run should not invoke implementation Codex")
+				}
+			} else {
+				if !codexRunner.called {
+					t.Fatal("full-run should invoke implementation Codex")
+				}
+				assertHandoffClean(t, "implementation prompt", codexRunner.lastRequest.Prompt, secret, openAIKey, tokenLike)
+				if len(planner.reconcileRequests) != 1 {
+					t.Fatalf("expected one sanitized reconcile request, got %d", len(planner.reconcileRequests))
+				}
+				reconcile := planner.reconcileRequests[0]
+				assertHandoffClean(t, "reconcile codex summary", reconcile.CodexSummary, secret, openAIKey, tokenLike)
+				assertHandoffClean(t, "reconcile git diff", reconcile.GitDiffSummary, secret, openAIKey, tokenLike)
+				assertHandoffClean(t, "reconcile validation", reconcile.ValidationSummary, secret, openAIKey, tokenLike)
+			}
+			assertTreeCleanOfSecurityLeaks(t, result.RunDir, []string{
+				secret,
+				openAIKey,
+				tokenLike,
+				"-----BEGIN PRIVATE KEY-----",
+				"handoff-private-key-body",
+				"./scripts/deploy --token",
+				"PATH=/tmp/handoff-env",
+				"diff --git",
+				"+api_key=",
+				"../../" + secret,
+			})
+		})
+	}
+}
+
+func TestSecurityRegressionCodexFallbackPlannerPromptsAreSanitized(t *testing.T) {
+	secret := "fallback-handoff-secret-value"
+	openAIKey := "sk-proj-fallbackhandoff1234567890"
+	tokenLike := "QwErTyUiOpAsDfGhJkLzXcVbNm1234567890AaBb"
+	t.Setenv("JJ_FALLBACK_HANDOFF_TOKEN", secret)
+	for _, tc := range []struct {
+		name   string
+		dryRun bool
+	}{
+		{name: "dry-run", dryRun: true},
+		{name: "full-run", dryRun: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writePlan(t, dir, "plan.md")
+			if !tc.dryRun {
+				writeValidationScript(t, dir, "printf 'ok\\n'")
+			}
+			hostile := hostileHandoffPayload(t, secret, openAIKey, tokenLike)
+			if err := os.WriteFile(filepath.Join(dir, "plan.md"), []byte("Fallback planning.\n"+hostile+"\n"), 0o644); err != nil {
+				t.Fatalf("write hostile fallback plan: %v", err)
+			}
+			plannerRunner := &scriptedCodexPlannerRunner{}
+			implementationRunner := &fakeCodexRunner{}
+
+			result, err := Execute(context.Background(), Config{
+				PlanPath:               filepath.Join(dir, "plan.md"),
+				CWD:                    dir,
+				RunID:                  "fallback-handoff-" + strings.ReplaceAll(tc.name, "-", ""),
+				PlanningAgents:         1,
+				PlanningAgentsExplicit: true,
+				CodexModel:             "codex-test-model",
+				AllowNoGit:             true,
+				AllowNoGitExplicit:     true,
+				DryRun:                 tc.dryRun,
+				DryRunExplicit:         true,
+				AdditionalPlanContext:  hostile,
+				Stdout:                 io.Discard,
+				Stderr:                 io.Discard,
+				PlannerCodexRunner:     plannerRunner,
+				CodexRunner:            implementationRunner,
+			})
+			if err != nil {
+				t.Fatalf("execute fallback handoff run: %v", err)
+			}
+			plannerRunner.mu.Lock()
+			calls := append([]codex.Request(nil), plannerRunner.calls...)
+			plannerRunner.mu.Unlock()
+			if len(calls) == 0 {
+				t.Fatal("expected Codex fallback planner calls")
+			}
+			for _, call := range calls {
+				assertHandoffClean(t, filepath.Base(call.OutputLastMessage), call.Prompt, secret, openAIKey, tokenLike)
+			}
+			if !tc.dryRun {
+				if !implementationRunner.called {
+					t.Fatal("full-run should invoke implementation Codex")
+				}
+				assertHandoffClean(t, "implementation prompt", implementationRunner.lastRequest.Prompt, secret, openAIKey, tokenLike)
+			}
+			assertTreeCleanOfSecurityLeaks(t, result.RunDir, []string{
+				secret,
+				openAIKey,
+				tokenLike,
+				"-----BEGIN PRIVATE KEY-----",
+				"handoff-private-key-body",
+				"./scripts/deploy --token",
+				"PATH=/tmp/handoff-env",
+				"diff --git",
+				"+api_key=",
+				"../../" + secret,
+			})
 		})
 	}
 }
@@ -653,6 +814,49 @@ func writeSecurityRegressionPlan(t *testing.T, dir, secret, openAIKey, privateKe
 	}, "\n")
 	if err := os.WriteFile(filepath.Join(dir, "plan.md"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write security plan: %v", err)
+	}
+}
+
+func hostileHandoffPayload(t *testing.T, secret, openAIKey, tokenLike string) string {
+	t.Helper()
+	privateKey := "-----BEGIN PRIVATE KEY-----\nhandoff-private-key-body\n-----END PRIVATE KEY-----"
+	unsafeAbs := filepath.Join(t.TempDir(), "outside", "secret.txt")
+	return strings.Join([]string{
+		"Keep safe handoff context.",
+		"Authorization: Bearer " + secret,
+		"api_key=" + secret,
+		openAIKey,
+		tokenLike,
+		privateKey,
+		"command=./scripts/deploy --token " + secret,
+		"PATH=/tmp/handoff-env-" + secret,
+		"validation_output=panic at " + unsafeAbs,
+		"manifest={\"run_id\":\"attack\",\"error\":\"" + secret + "\"}",
+		"diff --git a/config.txt b/config.txt",
+		"@@ -1 +1 @@",
+		"+api_key=" + secret,
+		"denied_path=../../" + secret,
+		"unsafe_path=" + unsafeAbs,
+	}, "\n")
+}
+
+func assertHandoffClean(t *testing.T, label, text, secret, openAIKey, tokenLike string) {
+	t.Helper()
+	for _, leaked := range []string{
+		secret,
+		openAIKey,
+		tokenLike,
+		"-----BEGIN PRIVATE KEY-----",
+		"handoff-private-key-body",
+		"./scripts/deploy --token",
+		"PATH=/tmp/handoff-env",
+		"diff --git",
+		"+api_key=",
+		"../../" + secret,
+	} {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("%s leaked %q:\n%s", label, leaked, text)
+		}
 	}
 }
 

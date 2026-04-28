@@ -97,6 +97,54 @@ func TestReconcileSpecPromptRequestsResultBasedSchema(t *testing.T) {
 	}
 }
 
+func TestPromptsSanitizeHandoffPayloads(t *testing.T) {
+	secret := "openai-prompt-secret-token-1234567890"
+	t.Setenv("JJ_OPENAI_PROMPT_TOKEN", secret)
+	hostile := strings.Join([]string{
+		"Keep safe planning context.",
+		"command=./scripts/deploy --token " + secret,
+		"PATH=/tmp/openai-prompt-secret",
+		"manifest={\"run_id\":\"attack\",\"token\":\"" + secret + "\"}",
+		"validation_output=panic at /tmp/openai-validation",
+		"diff --git a/config.txt b/config.txt",
+		"+api_key=" + secret,
+		"denied_path=../../" + secret,
+	}, "\n")
+
+	prompts := []string{
+		draftPrompt(DraftRequest{Plan: hostile, Agent: Agent{Name: "product_spec", Focus: "focus"}}),
+		mergePrompt(MergeRequest{
+			Plan: hostile,
+			Drafts: []PlanningDraft{{
+				Agent:              "product_spec",
+				Summary:            "command=./scripts/deploy --token " + secret,
+				SpecMarkdown:       hostile,
+				TaskMarkdown:       hostile,
+				AcceptanceCriteria: []string{"validation_output=panic " + secret},
+				TestPlan:           []string{"PATH=/tmp/raw-env"},
+			}},
+		}),
+		reconcileSpecPrompt(ReconcileSpecRequest{
+			PreviousSpec:      `{"version":1,"summary":"command=./scripts/deploy --token ` + secret + `"}`,
+			PlannedSpec:       `{"version":1,"summary":"PATH=/tmp/openai-planned"}`,
+			SelectedTask:      `{"id":"TASK-0001","reason":"validation_output=panic ` + secret + `"}`,
+			CodexSummary:      hostile,
+			GitDiffSummary:    hostile,
+			ValidationSummary: hostile,
+		}),
+	}
+	for _, prompt := range prompts {
+		for _, leaked := range []string{secret, "./scripts/deploy --token", "/tmp/openai", "/tmp/raw-env", "diff --git", "+api_key=", "../../"} {
+			if strings.Contains(prompt, leaked) {
+				t.Fatalf("prompt leaked %q:\n%s", leaked, prompt)
+			}
+		}
+		if !strings.Contains(prompt, "Keep safe planning context.") || !strings.Contains(prompt, "[jj-omitted]") {
+			t.Fatalf("prompt lost safe context or redaction evidence:\n%s", prompt)
+		}
+	}
+}
+
 func TestDecodeStructuredInvalidJSON(t *testing.T) {
 	var draft PlanningDraft
 	if err := DecodeStructured([]byte(`{"agent":`), &draft); err == nil {

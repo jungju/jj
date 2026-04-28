@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/jungju/jj/internal/security"
 )
 
 // TaskProposalMode controls the direction jj asks planning to prefer when
@@ -212,7 +214,7 @@ func TaskProposalPromptContext(resolution TaskProposalResolution, nextIntent ...
 	fmt.Fprintf(&b, "Task Proposal Mode: %s\n", selected)
 	fmt.Fprintf(&b, "Resolved Mode: %s\n", resolved)
 	if strings.TrimSpace(resolution.Reason) != "" {
-		fmt.Fprintf(&b, "Resolution Reason: %s\n", resolution.Reason)
+		fmt.Fprintf(&b, "Resolution Reason: %s\n", security.SanitizeHandoffString(resolution.Reason))
 	}
 	fmt.Fprintf(&b, "Recommended Task ID Format: %s\n", TaskProposalTaskID(resolved))
 	fmt.Fprintf(&b, "Instruction: %s", selected.PromptInstruction())

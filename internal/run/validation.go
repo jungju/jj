@@ -96,7 +96,7 @@ func runValidationEvidenceCommands(ctx context.Context, cfg Config, store artifa
 	command, supported := supportedValidationCommand(commands[0])
 	if !supported {
 		validation.EvidenceStatus = validationEvidenceSkipped
-		validation.Reason = "validation command is not supported for automatic execution: " + redactSecrets(commands[0])
+		validation.Reason = "validation command is not supported for automatic execution: " + sanitizeHandoffText(commands[0])
 		validation.Summary = "Raw validation evidence was skipped because the declared validation command is not supported for automatic execution."
 		validation.Commands = []ManifestValidationCommand{{
 			Label:    validationLabel(commands[0]),
@@ -264,7 +264,7 @@ func executeValidationCommand(ctx context.Context, cfg Config, command string, s
 		case errors.Is(cmdCtx.Err(), context.Canceled):
 			result.Error = "validation command cancelled"
 		default:
-			result.Error = redactSecrets(err.Error())
+			result.Error = sanitizeHandoffText(err.Error())
 		}
 	}
 	result.Summary = validationCommandSummary(result, len(stdout.Bytes()), len(stderr.Bytes()))
@@ -370,15 +370,15 @@ func renderValidationSummary(validation ManifestValidation) string {
 	b.WriteString("- Status: " + emptyFallback(validation.Status, validationStatusSkipped) + "\n")
 	b.WriteString("- Evidence: " + emptyFallback(validation.EvidenceStatus, validationEvidenceSkipped) + "\n")
 	if validation.Reason != "" {
-		b.WriteString("- Reason: " + redactSecrets(validation.Reason) + "\n")
+		b.WriteString("- Reason: " + sanitizeHandoffText(validation.Reason) + "\n")
 	}
 	if validation.Summary != "" {
-		b.WriteString("- Summary: " + redactSecrets(validation.Summary) + "\n")
+		b.WriteString("- Summary: " + sanitizeHandoffText(validation.Summary) + "\n")
 	}
 	b.WriteString("\n## Commands\n\n")
 	if len(validation.Commands) == 0 {
 		b.WriteString("- (none)\n")
-		return redactSecrets(b.String())
+		return sanitizeHandoffText(b.String())
 	}
 	for _, command := range validation.Commands {
 		b.WriteString("- ")
@@ -387,7 +387,7 @@ func renderValidationSummary(validation ManifestValidation) string {
 		b.WriteString(command.Status)
 		if command.Command != "" {
 			b.WriteString(" command `")
-			b.WriteString(redactSecrets(command.Command))
+			b.WriteString(sanitizeHandoffText(command.Command))
 			b.WriteString("`")
 		}
 		b.WriteString(fmt.Sprintf(" exit %d duration %dms", command.ExitCode, command.DurationMS))
@@ -401,11 +401,11 @@ func renderValidationSummary(validation ManifestValidation) string {
 		}
 		if command.Error != "" {
 			b.WriteString(" error ")
-			b.WriteString(redactSecrets(command.Error))
+			b.WriteString(sanitizeHandoffText(command.Error))
 		}
 		b.WriteByte('\n')
 	}
-	return redactSecrets(b.String())
+	return sanitizeHandoffText(b.String())
 }
 
 func validationEvidenceMarkdown(validation ManifestValidation) []string {

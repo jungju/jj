@@ -316,7 +316,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		intentContent = nextIntent.Content
 	}
 	planningContext := buildPlanningContext(originalPlan, stateBefore.SpecBefore, stateBefore.TasksBefore, continuationContext, intentContent)
-	providerPlan := redactSecrets(planningContext)
+	providerPlan := sanitizeHandoffText(planningContext)
 	proposalEvidence := buildTaskProposalEvidence(stateBefore.SpecBefore, stateBefore.TasksBefore, continuationContext, intentContent)
 	proposal := ResolveTaskProposalMode(cfg.TaskProposalMode, proposalEvidence)
 	if useExistingTask {
@@ -380,7 +380,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		InputSource:              planInput.Source,
 		TaskProposalMode:         proposal.Selected,
 		ResolvedTaskProposalMode: proposal.Resolved,
-		TaskProposalReason:       proposal.Reason,
+		TaskProposalReason:       sanitizeHandoffText(proposal.Reason),
 		SelectedTaskID:           proposal.SelectedTaskID,
 		Repository: func() ManifestRepository {
 			if repoRuntime == nil {
@@ -444,13 +444,13 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		}
 		manifestMu.Lock()
 		defer manifestMu.Unlock()
-		manifest.Errors = append(manifest.Errors, redactSecrets(err.Error()))
+		manifest.Errors = append(manifest.Errors, sanitizeHandoffText(err.Error()))
 	}
 	addRisks := func(items ...string) {
 		manifestMu.Lock()
 		defer manifestMu.Unlock()
 		for _, item := range items {
-			item = strings.TrimSpace(redactSecrets(item))
+			item = strings.TrimSpace(sanitizeHandoffText(item))
 			if item == "" {
 				continue
 			}
@@ -557,10 +557,10 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			manifest.FailurePhase = currentStage
 		}
 		if manifest.ErrorSummary == "" && err != nil {
-			manifest.ErrorSummary = redactSecrets(err.Error())
+			manifest.ErrorSummary = sanitizeHandoffText(err.Error())
 		}
 		if manifest.FailureMessage == "" && err != nil {
-			manifest.FailureMessage = redactSecrets(err.Error())
+			manifest.FailureMessage = sanitizeHandoffText(err.Error())
 		}
 		manifestMu.Unlock()
 		if !cfg.DryRun {
@@ -575,7 +575,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			}
 		}
 		writeManifest(status, true)
-		safeErr := redactSecrets(err.Error())
+		safeErr := sanitizeHandoffText(err.Error())
 		fmt.Fprintf(cfg.Stderr, "jj: failed: %s\nstatus=%s\nworkspace_modified=%t\npartial_artifacts=%s\n", safeErr, status, workspaceModified, store.RunDir)
 		return &Result{RunID: cfg.RunID, RunDir: store.RunDir}, errors.New(safeErr)
 	}
@@ -586,7 +586,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			"time": time.Now().UTC().Format(time.RFC3339),
 		}
 		for key, value := range fields {
-			value = strings.TrimSpace(redactSecrets(value))
+			value = strings.TrimSpace(sanitizeHandoffText(value))
 			if value != "" {
 				event[key] = value
 			}
@@ -638,28 +638,28 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		record("snapshot_tasks_before", p)
 	}
 
-	if p, err := store.WriteString("input-original.md", redactSecrets(originalPlan)); err != nil {
+	if p, err := store.WriteString("input-original.md", sanitizeHandoffText(originalPlan)); err != nil {
 		return fail(StatusPartial, err)
 	} else {
 		record("input_original", p)
 	}
-	if p, err := store.WriteString("input-context.md", continuationContext+"\n"); err != nil {
+	if p, err := store.WriteString("input-context.md", sanitizeHandoffText(continuationContext)+"\n"); err != nil {
 		return fail(StatusPartial, err)
 	} else {
 		record("input_context", p)
 	}
-	if p, err := store.WriteString("input.md", redactSecrets(planningContext)); err != nil {
+	if p, err := store.WriteString("input.md", sanitizeHandoffText(planningContext)); err != nil {
 		return fail(StatusPartial, err)
 	} else {
 		record("input", p)
 	}
-	if p, err := store.WriteString("input/plan.md", redactSecrets(originalPlan)); err != nil {
+	if p, err := store.WriteString("input/plan.md", sanitizeHandoffText(originalPlan)); err != nil {
 		return fail(StatusPartial, err)
 	} else {
 		record("input_plan", p)
 	}
 	if nextIntent.Active() {
-		if p, err := store.WriteString("input/next-intent.md", redactSecrets(nextIntent.Content)); err != nil {
+		if p, err := store.WriteString("input/next-intent.md", sanitizeHandoffText(nextIntent.Content)); err != nil {
 			return fail(StatusPartial, err)
 		} else {
 			record("input_next_intent", p)
@@ -704,12 +704,12 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	writeManifest(StatusPlanning, false)
 
 	recordPlanningOutput := func(planningArtifact normalizedPlanningResult) error {
-		if p, err := writeRedactedJSON(store, "planning.json", planningArtifact); err != nil {
+		if p, err := writeHandoffJSON(store, "planning.json", planningArtifact); err != nil {
 			return err
 		} else {
 			record("planning", p)
 		}
-		if p, err := writeRedactedJSON(store, "planning/planning.json", planningArtifact); err != nil {
+		if p, err := writeHandoffJSON(store, "planning/planning.json", planningArtifact); err != nil {
 			return err
 		} else {
 			record("planning_normalized", p)
@@ -755,18 +755,18 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		merged, raw, err := planner.Merge(ctx, ai.MergeRequest{
 			Model:                    cfg.OpenAIModel,
 			Plan:                     providerPlan,
-			Drafts:                   drafts,
+			Drafts:                   sanitizePlanningDrafts(drafts),
 			TaskProposalMode:         string(proposal.Selected),
 			ResolvedTaskProposalMode: string(proposal.Resolved),
 			TaskProposalInstruction:  proposalPrompt,
 		})
 		recordMergeOutput := func(raw []byte) error {
-			if p, err := store.WriteFile("planning/merge.json", redactBytes(raw)); err != nil {
+			if p, err := writeHandoffFile(store, "planning/merge.json", raw); err != nil {
 				return err
 			} else {
 				record("planning_merge", p)
 			}
-			if p, err := store.WriteFile("planning/merged.json", redactBytes(raw)); err != nil {
+			if p, err := writeHandoffFile(store, "planning/merged.json", raw); err != nil {
 				return err
 			} else {
 				record("planning_merged", p)
@@ -775,7 +775,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		}
 		if err != nil {
 			if len(raw) > 0 {
-				if p, writeErr := store.WriteFile("planning/raw_response_merge.txt", redactBytes(raw)); writeErr == nil {
+				if p, writeErr := writeHandoffFile(store, "planning/raw_response_merge.txt", raw); writeErr == nil {
 					record("planning_merge_raw_response", p)
 				}
 			}
@@ -786,7 +786,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		}
 		if err := validateMergeResult(merged); err != nil {
 			if len(raw) > 0 {
-				if p, writeErr := store.WriteFile("planning/raw_response_merge.txt", redactBytes(raw)); writeErr == nil {
+				if p, writeErr := writeHandoffFile(store, "planning/raw_response_merge.txt", raw); writeErr == nil {
 					record("planning_merge_raw_response", p)
 				}
 			}
@@ -795,6 +795,8 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			}
 			return fail(StatusPlanningFailed, fmt.Errorf("merge planning outputs: %w", err))
 		}
+		merged = sanitizeMergeResult(merged)
+		drafts = sanitizePlanningDrafts(drafts)
 		plannedSpecState = buildSpecState(originalPlan, merged, drafts, proposal, stateBefore.SpecBefore, stateNow)
 		tasksState, selectedTask = buildTaskState(stateBefore.TasksBefore, originalPlan, merged, drafts, proposal, cfg.RunID, !cfg.DryRun, stateNow)
 		manifest.SelectedTaskID = selectedTask.ID
@@ -981,10 +983,13 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			codexResult.Summary = string(data)
 		}
 	}
-	codexResult.Summary = redactSecrets(codexResult.Summary)
+	codexResult.Summary = sanitizeHandoffText(codexResult.Summary,
+		security.CommandPathRoot{Path: store.RunDir, Label: "[run]"},
+		security.CommandPathRoot{Path: cfg.CWD, Label: "[workspace]"},
+	)
 	manifest.Codex.Summary = truncateString(codexResult.Summary, 2000)
 	if codexErr != nil {
-		safeCodexErr := redactSecrets(codexErr.Error())
+		safeCodexErr := sanitizeHandoffText(codexErr.Error())
 		manifest.Codex.Error = safeCodexErr
 		if manifest.FailedStage == "" {
 			manifest.FailedStage = StatusImplementing
@@ -1084,15 +1089,15 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		fmt.Fprintln(cfg.Stdout, "jj: reconciling spec from validated result")
 		reconciled, raw, err := planner.ReconcileSpec(ctx, ai.ReconcileSpecRequest{
 			Model:             cfg.OpenAIModel,
-			PreviousSpec:      mustCompactJSON(stateBefore.SpecBefore),
-			PlannedSpec:       mustCompactJSON(plannedSpecState),
-			SelectedTask:      mustCompactJSON(selectedTask),
-			CodexSummary:      truncateString(codexResult.Summary, 12000),
-			GitDiffSummary:    truncateString(diff.Markdown(), 12000),
-			ValidationSummary: truncateString(validationEvidenceForPrompt(manifest.Validation), 12000),
+			PreviousSpec:      sanitizeHandoffText(mustCompactJSON(stateBefore.SpecBefore)),
+			PlannedSpec:       sanitizeHandoffText(mustCompactJSON(plannedSpecState)),
+			SelectedTask:      sanitizeHandoffText(mustCompactJSON(selectedTask)),
+			CodexSummary:      truncateString(sanitizeHandoffText(codexResult.Summary), 12000),
+			GitDiffSummary:    truncateString(sanitizeHandoffText(diff.Markdown()), 12000),
+			ValidationSummary: truncateString(sanitizeHandoffText(validationEvidenceForPrompt(manifest.Validation)), 12000),
 		})
 		if len(raw) > 0 {
-			if p, writeErr := store.WriteFile("planning/spec-reconcile.json", redactBytes(raw)); writeErr == nil {
+			if p, writeErr := writeHandoffFile(store, "planning/spec-reconcile.json", raw); writeErr == nil {
 				record("planning_spec_reconcile", p)
 			}
 		}
@@ -1205,7 +1210,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		return &Result{RunID: cfg.RunID, RunDir: store.RunDir}, finalErr
 	}
 	if codexErr != nil {
-		return &Result{RunID: cfg.RunID, RunDir: store.RunDir}, errors.New(redactSecrets(codexErr.Error()))
+		return &Result{RunID: cfg.RunID, RunDir: store.RunDir}, errors.New(sanitizeHandoffText(codexErr.Error()))
 	}
 	return &Result{RunID: cfg.RunID, RunDir: store.RunDir}, nil
 }
@@ -1282,7 +1287,7 @@ func codexExitArtifact(runID, runDir string, req codex.Request, status string, r
 		DurationMS: result.DurationMS,
 	}
 	if err != nil {
-		record.Error = redactSecrets(err.Error())
+		record.Error = sanitizeHandoffText(err.Error())
 	}
 	return record
 }
@@ -1315,7 +1320,11 @@ func redactArtifactFile(store artifact.Store, rel string) error {
 	if err != nil {
 		return err
 	}
-	redacted := security.RedactContent(rel, data)
+	redacted, report := security.SanitizeHandoffContentWithReport(rel, data,
+		security.CommandPathRoot{Path: store.RunDir, Label: "[run]"},
+		security.CommandPathRoot{Path: store.CWD, Label: "[workspace]"},
+	)
+	store.RecordRedactionReport(report)
 	if string(redacted) == string(data) {
 		return nil
 	}
@@ -1332,7 +1341,7 @@ func ensureCodexArtifacts(store artifact.Store, result codex.Result, runErr erro
 	}
 	summary := strings.TrimSpace(result.Summary)
 	if runErr != nil {
-		errText := redactSecrets(runErr.Error())
+		errText := sanitizeHandoffText(runErr.Error())
 		if summary == "" {
 			summary = "Codex failed before producing a summary."
 		}
@@ -1343,7 +1352,10 @@ func ensureCodexArtifacts(store artifact.Store, result codex.Result, runErr erro
 	if summary == "" {
 		summary = "Codex completed without producing a summary."
 	}
-	return ensureArtifactFileIfMissing(store, "codex/summary.md", redactSecrets(summary)+"\n")
+	return ensureArtifactFileIfMissing(store, "codex/summary.md", sanitizeHandoffText(summary,
+		security.CommandPathRoot{Path: store.RunDir, Label: "[run]"},
+		security.CommandPathRoot{Path: store.CWD, Label: "[workspace]"},
+	)+"\n")
 }
 
 func ensureArtifactFileIfMissing(store artifact.Store, rel, content string) error {
@@ -1370,11 +1382,41 @@ func ensureArtifactFileIfMissing(store artifact.Store, rel, content string) erro
 	if err != nil {
 		return err
 	}
-	return artifact.AtomicWriteFile(path, []byte(redactSecrets(content)), artifact.PrivateFileMode)
+	safeContent := sanitizeHandoffText(content,
+		security.CommandPathRoot{Path: store.RunDir, Label: "[run]"},
+		security.CommandPathRoot{Path: store.CWD, Label: "[workspace]"},
+	)
+	return artifact.AtomicWriteFile(path, []byte(safeContent), artifact.PrivateFileMode)
 }
 
 func redactBytes(data []byte) []byte {
 	return []byte(redactSecrets(string(data)))
+}
+
+func sanitizeHandoffText(s string, roots ...security.CommandPathRoot) string {
+	return security.SanitizeHandoffString(s, roots...)
+}
+
+func writeHandoffFile(store artifact.Store, rel string, data []byte) (string, error) {
+	sanitized, report := security.SanitizeHandoffContentWithReport(rel, data,
+		security.CommandPathRoot{Path: store.RunDir, Label: "[run]"},
+		security.CommandPathRoot{Path: store.CWD, Label: "[workspace]"},
+	)
+	store.RecordRedactionReport(report)
+	return store.WriteFile(rel, sanitized)
+}
+
+func writeHandoffJSON(store artifact.Store, rel string, value any) (string, error) {
+	sanitized, report := security.SanitizeHandoffJSONValueWithReport(value,
+		security.CommandPathRoot{Path: store.RunDir, Label: "[run]"},
+		security.CommandPathRoot{Path: store.CWD, Label: "[workspace]"},
+	)
+	store.RecordRedactionReport(report)
+	data, err := json.MarshalIndent(sanitized, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return store.WriteFile(rel, append(data, '\n'))
 }
 
 func writeRedactedJSON(store artifact.Store, rel string, value any) (string, error) {
@@ -1386,6 +1428,32 @@ func writeRedactedJSON(store artifact.Store, rel string, value any) (string, err
 	}
 	data = append([]byte(redactSecrets(string(data))), '\n')
 	return store.WriteFile(rel, data)
+}
+
+func sanitizePlanningDraft(draft ai.PlanningDraft) ai.PlanningDraft {
+	var out ai.PlanningDraft
+	data, err := json.Marshal(security.SanitizeHandoffJSONValue(draft))
+	if err != nil || json.Unmarshal(data, &out) != nil {
+		return draft
+	}
+	return out
+}
+
+func sanitizePlanningDrafts(drafts []ai.PlanningDraft) []ai.PlanningDraft {
+	out := make([]ai.PlanningDraft, len(drafts))
+	for i, draft := range drafts {
+		out[i] = sanitizePlanningDraft(draft)
+	}
+	return out
+}
+
+func sanitizeMergeResult(merged ai.MergeResult) ai.MergeResult {
+	var out ai.MergeResult
+	data, err := json.Marshal(security.SanitizeHandoffJSONValue(merged))
+	if err != nil || json.Unmarshal(data, &out) != nil {
+		return merged
+	}
+	return out
 }
 
 type normalizedPlanningResult struct {
@@ -1553,38 +1621,39 @@ func runPlanningAgents(ctx context.Context, planner PlanningClient, store artifa
 			if err != nil {
 				errText := fmt.Sprintf("agent %s failed: %v", agent.Name, err)
 				if len(raw) > 0 {
-					errText += "\n\nraw response excerpt:\n" + truncateString(string(raw), 4000)
-					if path, writeErr := store.WriteFile(fmt.Sprintf("planning/raw_response_%s.txt", agent.Name), redactBytes(raw)); writeErr == nil {
+					errText += "\n\nraw response excerpt:\n" + truncateString(sanitizeHandoffText(string(raw)), 4000)
+					if path, writeErr := writeHandoffFile(store, fmt.Sprintf("planning/raw_response_%s.txt", agent.Name), raw); writeErr == nil {
 						record("planning_"+agent.Name+"_raw_response", path)
 					}
 				}
-				path, writeErr := store.WriteString(fmt.Sprintf("planning/%s.error.txt", agent.Name), redactSecrets(errText)+"\n")
+				path, writeErr := store.WriteString(fmt.Sprintf("planning/%s.error.txt", agent.Name), sanitizeHandoffText(errText)+"\n")
 				if writeErr == nil {
 					record("planning_"+agent.Name+"_error", path)
 					results[i].Artifact = relArtifactPath(store, path)
 				}
-				results[i].Error = redactSecrets(err.Error())
+				results[i].Error = sanitizeHandoffText(err.Error())
 				errs <- fmt.Errorf("%s planning failed: %w", agent.Name, err)
 				return
 			}
+			draft = sanitizePlanningDraft(draft)
 			if strings.TrimSpace(draft.Agent) == "" {
 				draft.Agent = agent.Name
 			}
 			if err := validatePlanningDraft(agent.Name, draft); err != nil {
 				errText := fmt.Sprintf("agent %s returned incomplete planning draft: %v", agent.Name, err)
-				path, writeErr := store.WriteString(fmt.Sprintf("planning/%s.error.txt", agent.Name), redactSecrets(errText)+"\n")
+				path, writeErr := store.WriteString(fmt.Sprintf("planning/%s.error.txt", agent.Name), sanitizeHandoffText(errText)+"\n")
 				if writeErr == nil {
 					record("planning_"+agent.Name+"_error", path)
 					results[i].Artifact = relArtifactPath(store, path)
 				}
-				results[i].Error = redactSecrets(err.Error())
+				results[i].Error = sanitizeHandoffText(err.Error())
 				errs <- fmt.Errorf("%s planning failed: %w", agent.Name, err)
 				return
 			}
-			path, err := store.WriteFile(name, redactBytes(raw))
+			path, err := writeHandoffFile(store, name, raw)
 			if err != nil {
 				errs <- err
-				results[i].Error = redactSecrets(err.Error())
+				results[i].Error = sanitizeHandoffText(err.Error())
 				return
 			}
 			record("planning_"+agent.Name, path)
