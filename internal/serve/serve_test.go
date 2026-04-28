@@ -1105,6 +1105,9 @@ func TestRunDetailShowsManifestMetadataAndGuardedLinks(t *testing.T) {
 			t.Fatalf("detail missing %q:\n%s", want, body)
 		}
 	}
+	if !strings.Contains(body, `href="/runs/audit?run=`+runID+`"`) {
+		t.Fatalf("detail missing guarded audit export link:\n%s", body)
+	}
 	for _, leaked := range []string{
 		secret,
 		"OPENAI_API_KEY=",
@@ -1119,6 +1122,252 @@ func TestRunDetailShowsManifestMetadataAndGuardedLinks(t *testing.T) {
 	}
 	if !strings.Contains(body, `href="/artifact?run=`+runID) || strings.Contains(body, "validation/unlisted") {
 		t.Fatalf("detail did not use guarded artifact links:\n%s", body)
+	}
+}
+
+func TestRunAuditExportShowsSanitizedRunSummary(t *testing.T) {
+	dir := newTestWorkspace(t)
+	runID := "20260428-140000-audit"
+	secret := "sk-proj-auditsecret1234567890"
+	artifactBody := "audit artifact body should not be embedded"
+	t.Setenv("JJ_RUN_AUDIT_SECRET", secret)
+	writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", fmt.Sprintf(`{
+		"run_id": %q,
+		"status": "complete",
+		"started_at": "2026-04-28T14:00:00Z",
+		"finished_at": "2026-04-28T14:00:03Z",
+		"duration_ms": 3456,
+		"dry_run": true,
+		"planner_provider": "openai",
+		"task_proposal_mode": "feature",
+		"resolved_task_proposal_mode": "feature",
+		"selected_task_id": "TASK-0024",
+		"planner": {"provider": "openai", "model": "gpt-audit"},
+		"workspace": {"spec_path": ".jj/spec.json", "task_path": ".jj/tasks.json", "spec_written": true, "task_written": true},
+		"artifacts": {
+			"manifest": "manifest.json",
+			"snapshot_spec_after": "snapshots/spec.after.json",
+			"snapshot_tasks_after": "snapshots/tasks.after.json",
+			"validation_summary": "validation/summary.md",
+			"validation_results": "validation/results.json",
+			"validation_stdout": "validation/001-validate.stdout.txt",
+			"validation_stderr": "validation/001-validate.stderr.txt",
+			"codex_summary": "codex/summary.md",
+			"codex_events": "codex/events.jsonl",
+			"codex_exit": "codex/exit.json"
+		},
+		"validation": {
+			"ran": true,
+			"status": "passed",
+			"evidence_status": "recorded",
+			"summary": "validate passed",
+			"results_path": "validation/results.json",
+			"summary_path": "validation/summary.md",
+			"command_count": 1,
+			"passed_count": 1,
+			"commands": [{
+				"label": "validate",
+				"name": "validate.sh",
+				"command": "OPENAI_API_KEY=%s ./scripts/validate.sh",
+				"provider": "local",
+				"cwd": %q,
+				"run_id": %q,
+				"argv": ["./scripts/validate.sh", "--token", "%s"],
+				"exit_code": 0,
+				"duration_ms": 1200,
+				"status": "passed",
+				"stdout_path": "validation/001-validate.stdout.txt",
+				"stderr_path": "validation/001-validate.stderr.txt"
+			}]
+		},
+		"codex": {
+			"ran": true,
+			"status": "success",
+			"model": "gpt-codex-audit",
+			"exit_code": 0,
+			"duration_ms": 2200,
+			"events_path": "codex/events.jsonl",
+			"summary_path": "codex/summary.md",
+			"exit_path": "codex/exit.json"
+		},
+		"security": {
+			"redaction_applied": true,
+			"workspace_guardrails_applied": true,
+			"redaction_count": 6,
+			"diagnostics": {
+				"version": "1",
+				"redacted": true,
+				"secret_material_present": true,
+				"root_labels": ["workspace", "run_artifacts", "token=%s"],
+				"guarded_roots": [
+					{"label": "workspace", "path": "[workspace]"},
+					{"label": "run_artifacts", "path": ".jj/runs"},
+					{"label": "unsafe", "path": %q}
+				],
+				"denied_path_count": 2,
+				"denied_path_categories": ["outside_workspace", "token=%s"],
+				"denied_path_category_counts": {"outside_workspace": 1, "token=%s": 1},
+				"failure_categories": ["symlink_path"],
+				"failure_category_counts": {"symlink_path": 1},
+				"command_record_count": 2,
+				"command_metadata_sanitized": true,
+				"command_argv_sanitized": true,
+				"command_cwd_label": "[workspace]",
+				"command_sanitization_status": "sanitized",
+				"raw_command_text_persisted": false,
+				"raw_environment_persisted": false,
+				"dry_run_parity_applied": true,
+				"dry_run_parity_status": "equivalent"
+			}
+		}
+	}`, runID, secret, dir, runID, secret, secret, filepath.Join(dir, "outside-"+secret), secret, secret))
+	writeFile(t, dir, ".jj/runs/"+runID+"/snapshots/spec.after.json", `{"title":"SPEC"}`)
+	writeFile(t, dir, ".jj/runs/"+runID+"/snapshots/tasks.after.json", `{"tasks":[{"id":"TASK-0024"}]}`)
+	writeFile(t, dir, ".jj/runs/"+runID+"/validation/summary.md", artifactBody+" "+secret+"\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/validation/results.json", `{"status":"passed"}`)
+	writeFile(t, dir, ".jj/runs/"+runID+"/validation/001-validate.stdout.txt", "ok\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/validation/001-validate.stderr.txt", "\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/codex/summary.md", "codex summary "+secret+"\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/codex/events.jsonl", `{"type":"done"}`+"\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/codex/exit.json", fmt.Sprintf(`{"provider":"codex","name":"codex","model":"gpt-codex-audit","cwd":%q,"run_id":%q,"argv":["codex","--api-key=%s","exec"],"status":"success","exit_code":0,"duration_ms":2200}`, dir, runID, secret))
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `href="/runs/audit?run=`+runID+`"`) {
+		t.Fatalf("detail did not link audit export: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	export, body := getRunAuditExport(t, server, "/runs/audit?run="+runID, http.StatusOK)
+	if export.SchemaVersion != "jj.audit.v1" || export.State != "available" || export.RunID != runID || export.Status != "complete" {
+		t.Fatalf("unexpected export overview: %#v\n%s", export, body)
+	}
+	if !export.DryRun || export.StartedAt == "" || export.FinishedAt == "" || export.Duration != "3.456s" {
+		t.Fatalf("export missing timing/dry-run fields: %#v", export)
+	}
+	if export.Planner.Provider != "openai" || export.Planner.Model != "gpt-audit" || export.Planner.SelectedTaskID != "TASK-0024" {
+		t.Fatalf("export missing planner metadata: %#v", export.Planner)
+	}
+	if len(export.GeneratedDocs) == 0 || len(export.Artifacts) == 0 || export.Evaluation.Status != "passed" || export.Evaluation.Results == nil || export.Evaluation.SummaryArtifact == nil {
+		t.Fatalf("export missing doc/artifact/evaluation metadata: %#v", export)
+	}
+	if !export.Codex.Ran || export.Codex.Status != "success" || export.Codex.Model != "gpt-codex-audit" || export.Codex.Exit == nil {
+		t.Fatalf("export missing codex metadata: %#v", export.Codex)
+	}
+	if len(export.Commands) < 2 || export.Commands[0].Note != "raw command text not shown" {
+		t.Fatalf("export missing sanitized command metadata: %#v", export.Commands)
+	}
+	if !export.Security.Available || export.Security.RedactionCount != 6 || export.Security.DeniedPathCount != 2 || !export.Security.CommandMetadataSanitized || export.Security.RawCommandTextPersisted || export.Security.RawEnvironmentPersisted {
+		t.Fatalf("export missing security diagnostics: %#v", export.Security)
+	}
+	if export.Security.DeniedPathCategoryCounts["outside_workspace"] != 1 || export.Security.DeniedPathCategoryCounts["path_denied"] != 1 {
+		t.Fatalf("export did not sanitize denied path category counts: %#v", export.Security.DeniedPathCategoryCounts)
+	}
+	if len(export.NextActions) == 0 {
+		t.Fatalf("export should include safe next-action hints: %#v", export)
+	}
+	for _, leaked := range []string{
+		secret,
+		"OPENAI_API_KEY",
+		artifactBody,
+		dir,
+		filepath.ToSlash(dir),
+		security.RedactionMarker,
+		"[REDACTED]",
+		"[omitted]",
+		"{removed}",
+	} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("audit export leaked %q:\n%s", leaked, body)
+		}
+	}
+
+	alias, _ := getRunAuditExport(t, server, "/runs/"+runID+"/audit.json", http.StatusOK)
+	if alias.RunID != runID || alias.State != "available" {
+		t.Fatalf("guarded path audit export mismatch: %#v", alias)
+	}
+}
+
+func TestRunAuditExportRendersUnavailableManifestStates(t *testing.T) {
+	dir := newTestWorkspace(t)
+	secret := "sk-proj-auditbad1234567890"
+	writeFile(t, dir, ".jj/runs/20260428-141000-badjson/manifest.json", `{"run_id":"20260428-141000-badjson","status":"`+secret+`",`)
+	writeFile(t, dir, ".jj/runs/20260428-142000-partial/manifest.json", `{"run_id":"20260428-142000-partial","status":"success"}`)
+	writeFile(t, dir, ".jj/runs/20260428-143000-legacy/manifest.json", `{"run_id":"20260428-143000-legacy","status":"success","started_at":"2026-04-28T14:30:00Z","artifacts":{"manifest":"manifest.json"}}`)
+	if err := os.MkdirAll(filepath.Join(dir, ".jj/runs/20260428-144000-missing"), 0o755); err != nil {
+		t.Fatalf("mkdir missing manifest run: %v", err)
+	}
+	server := newTestServer(t, dir, "")
+
+	probes := []struct {
+		name          string
+		target        string
+		status        int
+		state         string
+		manifestState string
+		security      string
+	}{
+		{name: "missing manifest", target: "/runs/audit?run=20260428-144000-missing", status: http.StatusOK, state: "unavailable", manifestState: "manifest unavailable", security: "security diagnostics unavailable"},
+		{name: "malformed manifest", target: "/runs/audit?run=20260428-141000-badjson", status: http.StatusOK, state: "unavailable", manifestState: "manifest is malformed", security: "security diagnostics unavailable"},
+		{name: "partial manifest", target: "/runs/audit?run=20260428-142000-partial", status: http.StatusOK, state: "unavailable", manifestState: "manifest is incomplete: missing artifacts", security: "security diagnostics unavailable"},
+		{name: "older manifest", target: "/runs/audit?run=20260428-143000-legacy", status: http.StatusOK, state: "available", manifestState: "manifest available", security: "security diagnostics unavailable"},
+		{name: "missing run", target: "/runs/audit?run=20260428-149999-notfound", status: http.StatusNotFound, state: "unavailable", manifestState: "run unavailable", security: "security diagnostics unavailable"},
+	}
+	for _, probe := range probes {
+		t.Run(probe.name, func(t *testing.T) {
+			export, body := getRunAuditExport(t, server, probe.target, probe.status)
+			if export.State != probe.state || export.ManifestState != probe.manifestState || export.Security.Summary != probe.security {
+				t.Fatalf("unexpected unavailable export: %#v\n%s", export, body)
+			}
+			for _, leaked := range []string{secret, security.RedactionMarker, dir, filepath.ToSlash(dir)} {
+				if strings.Contains(body, leaked) {
+					t.Fatalf("unavailable audit export leaked %q:\n%s", leaked, body)
+				}
+			}
+		})
+	}
+}
+
+func TestRunAuditExportDeniesUnsafeRunInputs(t *testing.T) {
+	dir := newTestWorkspace(t)
+	outside := t.TempDir()
+	secret := "run-audit-outside-secret"
+	target := filepath.Join(outside, "target")
+	writeFile(t, target, "manifest.json", `{"run_id":"20260428-145000-link","status":"complete","artifacts":{"manifest":"manifest.json"}}`)
+	writeFile(t, target, "secret.txt", secret)
+	if err := os.Symlink(target, filepath.Join(dir, ".jj/runs/20260428-145000-link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	server := newTestServer(t, dir, "")
+	absolute := filepath.Join(outside, "target-"+secret)
+
+	probes := []struct {
+		name   string
+		target string
+		status int
+		state  string
+	}{
+		{name: "missing query", target: "/runs/audit", status: http.StatusBadRequest, state: "unavailable"},
+		{name: "duplicate query", target: "/runs/audit?run=20260425-120000-bbbbbb&run=20260425-110000-aaaaaa", status: http.StatusForbidden, state: "denied"},
+		{name: "relative traversal query", target: "/runs/audit?run=..%2f" + url.QueryEscape(secret), status: http.StatusForbidden, state: "denied"},
+		{name: "absolute query", target: "/runs/audit?run=" + url.QueryEscape(absolute), status: http.StatusForbidden, state: "denied"},
+		{name: "encoded slash query", target: "/runs/audit?run=20260428-145000-link%2f..%2fother", status: http.StatusForbidden, state: "denied"},
+		{name: "encoded route traversal", target: "/runs/%2e%2e/audit", status: http.StatusForbidden, state: "denied"},
+		{name: "symlink run root", target: "/runs/audit?run=20260428-145000-link", status: http.StatusForbidden, state: "denied"},
+	}
+	for _, probe := range probes {
+		t.Run(probe.name, func(t *testing.T) {
+			export, body := getRunAuditExport(t, server, probe.target, probe.status)
+			if export.State != probe.state {
+				t.Fatalf("audit export state = %q, want %q: %#v\n%s", export.State, probe.state, export, body)
+			}
+			for _, leaked := range []string{secret, "../", absolute, filepath.ToSlash(absolute), outside, filepath.ToSlash(outside), dir, filepath.ToSlash(dir), security.RedactionMarker} {
+				if strings.Contains(body, leaked) {
+					t.Fatalf("unsafe audit export leaked %q:\n%s", leaked, body)
+				}
+			}
+		})
 	}
 }
 
@@ -2231,6 +2480,28 @@ func getRunStatus(t *testing.T, server *Server, runID string) webRunView {
 		t.Fatalf("decode status: %v\n%s", err, body)
 	}
 	return status
+}
+
+func getRunAuditExport(t *testing.T, server *Server, target string, wantStatus int) (runAuditExport, string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != wantStatus {
+		t.Fatalf("audit export status for %s = %d, want %d body=%s", target, rec.Code, wantStatus, body)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Fatalf("audit export content type = %q body=%s", got, body)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("audit export Cache-Control = %q, want no-store", got)
+	}
+	var export runAuditExport
+	if err := json.Unmarshal([]byte(body), &export); err != nil {
+		t.Fatalf("decode audit export: %v\n%s", err, body)
+	}
+	return export, body
 }
 
 func getRunStatusBody(t *testing.T, server *Server, runID string) string {

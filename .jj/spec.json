@@ -22,7 +22,13 @@
     "Invalid, missing, malformed, partial, older, identical, traversal, absolute, encoded, or symlinked run inputs render deterministic unavailable or denied states without server errors.",
     "The run comparison page does not render raw secrets, token-like values, raw commands, raw environment values, unsafe absolute paths, omission placeholders, raw artifact contents, or attacker-controlled denied path payloads.",
     "Run history or run detail pages provide safe compare entry points derived only from validated run IDs.",
-    "Security behavior is covered by focused Go tests for redaction, path guards, artifact writing, manifest scrubbing, command metadata, dry-run and non-dry-run parity, diagnostics, serve access, run detail access, run history access, and run comparison access.",
+    "jj serve exposes a guarded sanitized JSON audit export endpoint for exactly one requested run ID.",
+    "Valid audit exports are derived only from sanitized run detail or dashboard DTO fields and include run status, timestamps, dry-run mode, planner/provider metadata, doc and artifact availability, evaluation state, Codex metadata, sanitized command metadata, security diagnostics, and safe next-action hints when available.",
+    "Run detail pages link to the audit export endpoint only for validated run IDs through guarded routes.",
+    "Missing, malformed, partial, older, traversal, absolute, encoded, or symlinked audit export inputs return deterministic unavailable or denied JSON without server errors or raw path/query reflection.",
+    "The audit export response contains no raw secrets, token-like values, raw command text, raw environment values, unsafe absolute paths, omission placeholders, raw artifact contents, or attacker-controlled denied path payloads.",
+    "Security behavior is covered by focused Go tests for redaction, path guards, artifact writing, manifest scrubbing, command metadata, dry-run and non-dry-run parity, diagnostics, serve access, run detail access, run history access, run comparison access, and run audit export access.",
+    "Focused Go tests cover valid audit export shape, missing/malformed/partial/older manifests, traversal/absolute/encoded/symlink denial, dashboard link presence, and secret/path/command redaction in the JSON response.",
     "go test ./..., go vet ./..., and go build -o jj ./cmd/jj pass."
   ],
   "created_at": "2026-04-28",
@@ -35,7 +41,8 @@
     "Expose useful disclosure-safe security diagnostics in manifests and dashboard views using counts, booleans, labels, relative-safe roots, and sanitized categories only.",
     "Let users drill from the dashboard into guarded per-run detail pages that summarize run status, artifacts, evaluation, provider metadata, command metadata, Codex metadata, and safe health diagnostics.",
     "Let users browse and filter guarded run history from jj serve without manually opening .jj/runs.",
-    "Let users compare exactly two guarded runs side by side using sanitized manifest-derived fields only."
+    "Let users compare exactly two guarded runs side by side using sanitized manifest-derived fields only.",
+    "Let users export a guarded sanitized JSON audit summary for exactly one validated run ID using the same disclosure-safe run metadata shown by jj serve."
   ],
   "non_goals": [
     "Provide a hosted cloud service.",
@@ -44,9 +51,10 @@
     "Become a general-purpose workflow engine.",
     "Add unrelated user-facing features while unresolved security risks remain.",
     "Expose raw commands, environment dumps, secret values, sensitive absolute paths, private key material, token-like strings, omission placeholders, or attacker-controlled denied path payloads as diagnostics.",
-    "Add new security scanners or change redaction algorithms as part of run history, run detail, or run comparison features.",
+    "Add new security scanners or change redaction algorithms as part of run history, run detail, run comparison, or run audit export features.",
     "Add client-side full-text search over raw artifacts or manifests.",
-    "Add raw artifact diffing or full-text document comparison as part of the guarded run comparison page."
+    "Add raw artifact diffing or full-text document comparison as part of the guarded run comparison page.",
+    "Add raw manifest export, raw artifact export, or artifact content bundling as part of the guarded run audit JSON export."
   ],
   "open_questions": [
     "Should explicitly provided plan files outside --cwd remain allowed as read-only inputs after canonicalization?",
@@ -76,10 +84,16 @@
     "The run comparison page must resolve both run IDs only beneath the guarded .jj/runs root using existing path guards and sanitized run DTO construction.",
     "The run comparison page must render side-by-side sanitized status, timestamps, dry-run mode, planner/provider metadata, generated doc availability, artifact availability, evaluation state, Codex result metadata, command metadata, and disclosure-safe security diagnostic summaries.",
     "Invalid, missing, identical, malformed, partial, older, traversal, absolute, encoded, or symlinked run inputs must render deterministic unavailable or denied states without server errors or raw query reflection.",
-    "Run history or run detail pages must provide safe compare entry points derived only from validated run IDs and guarded routes."
+    "Run history or run detail pages must provide safe compare entry points derived only from validated run IDs and guarded routes.",
+    "jj serve must expose a guarded sanitized JSON audit export endpoint for exactly one requested run ID.",
+    "The run audit export must resolve the requested run ID only beneath the guarded .jj/runs root using existing path guards and sanitized run DTO construction.",
+    "Valid run audit exports must be derived only from sanitized run detail or dashboard DTO fields and include run status, timestamps, dry-run mode, planner/provider metadata, generated doc and artifact availability, evaluation state, Codex metadata, sanitized command metadata, disclosure-safe security diagnostics, and safe next-action hints when available.",
+    "Run detail pages must link to the run audit export endpoint only for validated run IDs through guarded routes.",
+    "Missing, malformed, partial, older, traversal, absolute, encoded, or symlinked run inputs for audit export must return deterministic unavailable or denied JSON without server errors or raw path/query reflection.",
+    "The run audit export must not include raw artifact contents, raw manifest contents, raw secrets, token-like values, raw command text, raw environment values, unsafe absolute paths, omission placeholders, or attacker-controlled denied path payloads."
   ],
-  "summary": "jj is a CLI that turns a user planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains a core constraint, and jj serve includes guarded per-run detail pages, a guarded run history browser, and a guarded two-run comparison view for inspecting recent and older runs, filtering by safe manifest-derived fields, comparing run outcomes, and reviewing artifacts, evaluation status, command metadata, Codex metadata, and disclosure-safe security diagnostics without opening raw manifest files manually.",
+  "summary": "jj is a CLI that turns a user planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains a core constraint, and jj serve includes guarded per-run detail pages, a guarded run history browser, a guarded two-run comparison view, and a guarded sanitized JSON audit export for a single run, enabling users to inspect, compare, share, or archive disclosure-safe run metadata without opening raw manifest files or artifacts manually.",
   "title": "jj Security Boundary and Dashboard Run Inspection",
-  "updated_at": "2026-04-28T15:09:25Z",
+  "updated_at": "2026-04-28T16:09:56Z",
   "version": 1
 }

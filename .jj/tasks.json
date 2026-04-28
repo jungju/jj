@@ -1,5 +1,5 @@
 {
-  "active_task_id": "TASK-0024",
+  "active_task_id": null,
   "tasks": [
     {
       "acceptance_criteria": [
@@ -362,7 +362,7 @@
         "Wire redaction into manifest writing, planner output persistence, command capture, Codex events/summaries, eval output, dashboard JSON, rendered HTML, and CLI errors.",
         "Wire path containment into plan input resolution, docs writes, .jj/runs artifact creation, and jj serve file lookup.",
         "Ensure jj serve binds to 127.0.0.1 by default and rejects traversal, absolute path, same-prefix sibling, and symlink escape requests without leaking file contents.",
-        "Ensure jj run --dry-run writes planning artifacts only under .jj/runs/<run-id>/ and does not modify workspace docs.",
+        "Ensure jj run --dry-run writes planning artifacts only under .jj/runs/\u003crun-id\u003e/ and does not modify workspace docs.",
         "Ensure command execution uses argv-style invocation and logged command/environment data excludes secret values.",
         "Add regression tests for fake secrets in env/config/logs/artifacts/dashboard responses and for unsafe artifact/dashboard paths.",
         "Update docs/SPEC.md and docs/TASK.md to document the security baseline.",
@@ -650,7 +650,7 @@
     },
     {
       "acceptance_criteria": [
-        "jj serve exposes a guarded run comparison route for exactly two run IDs, such as /runs/compare?left=<run-id>&right=<run-id>.",
+        "jj serve exposes a guarded run comparison route for exactly two run IDs, such as /runs/compare?left=\u003crun-id\u003e\u0026right=\u003crun-id\u003e.",
         "Both run IDs are resolved only under the configured .jj/runs root using existing path guards and sanitized run DTO construction.",
         "A valid comparison page shows sanitized side-by-side run status, timestamps, dry-run mode, planner/provider metadata, evaluation state, artifact availability, command metadata, Codex metadata, and disclosure-safe security diagnostic summaries.",
         "Invalid, missing, identical, malformed, partial, older, traversal, absolute, encoded, or symlinked run inputs render deterministic unavailable or denied states without server errors or raw query reflection.",
@@ -688,7 +688,7 @@
         "go test ./..., go vet ./..., and go build -o jj ./cmd/jj pass."
       ],
       "commit": null,
-      "completed_by_run": null,
+      "completed_by_run": "autopilot-20260428-160202",
       "completed_by_turn": null,
       "created_at": "2026-04-28T15:32:42Z",
       "created_by_run": "autopilot-20260428-153107",
@@ -699,11 +699,11 @@
       "reason": "Run detail, history, and comparison views are complete; the next most useful user-facing capability is a small guarded JSON export that lets users share or archive the same disclosure-safe run summary without opening raw manifests or artifacts.",
       "resolved_task_proposal_mode": "feature",
       "selected_task_proposal_mode": "feature",
-      "status": "in_progress",
+      "status": "done",
       "title": "Add guarded sanitized run audit export to jj serve",
-      "updated_at": "2026-04-28T15:32:42Z",
+      "updated_at": "2026-04-28T16:08:50Z",
       "validation_command": "./scripts/validate.sh",
-      "verdict": null
+      "verdict": "passed"
     }
   ],
   "version": 1
