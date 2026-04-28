@@ -289,6 +289,13 @@ jj serve --cwd . --host 127.0.0.1 --port 7331
 
 The dashboard reads `.jj/spec.json`, `.jj/tasks.json`, and run manifests directly. Project state routes are limited to `README.md`, `plan.md`, `docs/SPEC.md`, `docs/TASK.md`, `.jj/spec.json`, and `.jj/tasks.json`.
 
+Run inspection routes are guarded and manifest-derived:
+
+- `/runs` lists discoverable runs newest first with allowlisted status, dry-run, planner provider, evaluation, and run-id substring filters.
+- `/runs/<run-id>` shows sanitized per-run metadata, guarded doc/artifact links, command metadata, security diagnostics, and next-action hints.
+- `/runs/compare?left=<run-id>&right=<run-id>` compares exactly two validated run IDs side by side using sanitized manifest fields only.
+- `/runs/audit?run=<run-id>` exports the same disclosure-safe run summary as JSON without embedding raw artifacts or raw manifest content.
+
 ## Security
 
 `jj` redacts secrets before persistence, before model context, and before dashboard rendering. It does not dump raw environments into prompts, logs, manifests, artifacts, or served HTML.
@@ -298,6 +305,8 @@ Redaction covers string, byte, JSON, JSONL, manifest, command output, planner ou
 When unstructured text needs an omission marker, jj uses the fixed `[jj-omitted]` marker and normalizes legacy generic redaction placeholders to that marker. It does not preserve original secret lengths.
 
 Artifact writes are resolved through the run directory and fail closed when a path is absolute, traverses with `..`, contains encoded traversal, uses hidden artifact segments, or follows a symlink outside the run root. `jj serve` applies the same style of resolver for reads and serves only allowlisted workspace state plus manifest-listed run artifacts for the selected workspace.
+
+Run IDs may contain only letters, numbers, dots, underscores, and dashes, must not use traversal-like reserved forms, and are rejected if they match configured secrets or common token patterns.
 
 The dashboard binds to localhost by default, sends `Cache-Control: no-store`, escapes rendered content, redacts artifact bodies before display, and returns sanitized errors for rejected artifact or document paths. External commands are launched with explicit binaries and args, resolved working directories, timeouts, context cancellation, filtered environments, and sanitized stdout/stderr capture.
 

@@ -2,7 +2,7 @@
 
 ## Current Task
 
-### T-SEC-014: Implement workspace, artifact, and dashboard security baseline
+### TASK-0015: Harden jj secret, workspace, command, artifact, and dashboard boundaries
 
 - Mode: security
 - Status: done
@@ -18,8 +18,10 @@
 - Relative plan paths continue to resolve from the invocation directory, but the resolved plan file must remain inside the resolved target workspace; absolute plan paths must also resolve inside `--cwd`.
 - Artifact writes reject absolute paths, traversal, unsafe segments, Windows drive prefixes, hidden artifact names, and symlink escapes.
 - Codex output artifacts must resolve under `.jj/runs/<run-id>/` and may not traverse symlinked output parents.
+- Run IDs reject traversal-like values, invalid characters, configured secret values, and common token patterns without echoing the rejected value in validation errors.
 - `jj run --dry-run` writes planning artifacts and state snapshots only under `.jj/runs/<run-id>/`; it does not write or update `.jj/spec.json`, `.jj/tasks.json`, `docs/SPEC.md`, or `docs/TASK.md`.
 - `jj serve` defaults to a local-only bind, serves only approved project docs/state and manifest-listed run artifacts, blocks traversal and dotfile browsing, escapes rendered content, and sends `Cache-Control: no-store`.
+- `jj serve` exposes guarded run history, run detail, two-run comparison, and sanitized JSON audit export routes derived from validated run IDs and sanitized manifest fields only.
 - Codex, Git, repository, and validation commands use explicit argv/env handling through `exec.CommandContext`, resolved command working directories, filtered environments, and timeouts.
 - Command and environment metadata is sanitized before persistence, including paired sensitive argv fragments such as `--token <value>` and inline values such as `--api-key=value`.
 - Manifest configuration is produced through a shared SafeConfig projection that keeps non-secret fields and key presence metadata while omitting runtime secret values.
@@ -35,6 +37,7 @@
 - `.jj/tasks.json` is append-only task proposal history: every run appends fresh task records, full runs select the first newly proposed task, and previous `active` or `in_progress` tasks are returned to `queued`.
 - Run artifacts are stored under `.jj/runs/<run-id>/`.
 - Dashboard routes are intentionally narrow: `README.md`, `plan.md`, `docs/SPEC.md`, `docs/TASK.md`, `.jj/spec.json`, `.jj/tasks.json`, and manifest-listed run artifacts.
+- Run inspection routes are intentionally manifest-derived: `/runs`, `/runs/<run-id>`, `/runs/compare?left=<run-id>&right=<run-id>`, and `/runs/audit?run=<run-id>`.
 - Dashboard display paths use `[workspace]`, `.jj/runs/<run-id>`, and `[path]` instead of raw absolute workspace paths.
 - Limitation: redaction is best-effort pattern and configured-secret matching; it is not a substitute for avoiding intentional persistence of unnecessary raw credentials.
 

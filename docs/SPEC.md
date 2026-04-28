@@ -71,6 +71,13 @@ The dashboard:
 - Uses safe display labels such as `[workspace]`, `.jj/runs/<run-id>`, and `[path]` instead of raw absolute workspace paths.
 - Sends `Cache-Control: no-store` on dashboard, JSON, and artifact responses so local review pages are not cached.
 
+Run inspection routes stay inside the guarded `.jj/runs` root:
+
+- `/runs` lists discoverable runs newest first and supports only allowlisted status, dry-run, planner provider, evaluation, and run-id substring filters.
+- `/runs/<run-id>` renders sanitized manifest-derived detail, guarded artifact links, evaluation metadata, Codex metadata, sanitized command metadata, security diagnostics, and next-action hints.
+- `/runs/compare?left=<run-id>&right=<run-id>` compares exactly two validated run IDs using sanitized manifest fields only.
+- `/runs/audit?run=<run-id>` returns a sanitized JSON audit summary for one validated run ID and never embeds raw artifact bodies or raw manifest content.
+
 ## Command Policy
 
 Codex, Git, validation, and repository commands are launched through structured `exec.CommandContext` calls with explicit binary and arg slices. Command working directories are resolved and validated before execution, and long-running child commands are bounded by command-specific timeouts.
@@ -82,6 +89,8 @@ Command metadata stored in artifacts includes sanitized argv, safe path labels, 
 `manifest.json` includes sanitized run status, SafeConfig configuration metadata, git metadata, planner provider, Codex result, validation result, artifacts, risks, errors, and security metadata.
 
 SafeConfig records non-secret fields such as planning agent count, model names when they do not match configured secret material, Codex binary when safe, task proposal mode, config file path when safe, OpenAI key environment variable name, OpenAI key presence as a boolean, no-git mode, and canonical state paths. It never stores runtime secret values such as API keys or GitHub tokens.
+
+Run IDs may contain only letters, numbers, dots, underscores, and dashes. Reserved traversal-like IDs, encoded/path-shaped values, and IDs matching configured secrets or common token patterns are rejected before run directory creation or dashboard resolution.
 
 Security metadata records:
 

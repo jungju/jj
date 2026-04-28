@@ -1828,6 +1828,44 @@ func TestPathTraversalRejected(t *testing.T) {
 	}
 }
 
+func TestServeRejectsSecretLookingRunIDsWithoutReflection(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServer(t, dir, "")
+	runID := "sk-proj-serverunid1234567890"
+
+	probes := []struct {
+		method string
+		target string
+		body   string
+	}{
+		{method: http.MethodGet, target: "/runs/" + runID},
+		{method: http.MethodGet, target: "/runs/" + runID + "/manifest"},
+		{method: http.MethodGet, target: "/artifact?run=" + runID + "&path=snapshots/tasks.after.json"},
+		{method: http.MethodGet, target: "/run/status?id=" + runID},
+		{method: http.MethodPost, target: "/run/start", body: runStartPromptForm(runID, "Build from prompt.\n", true, false, false, 0)},
+	}
+	for _, probe := range probes {
+		t.Run(probe.method+" "+probe.target, func(t *testing.T) {
+			reqBody := strings.NewReader(probe.body)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(probe.method, probe.target, reqBody)
+			if probe.body != "" {
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			}
+			server.Handler().ServeHTTP(rec, req)
+			body := rec.Body.String()
+			if rec.Code < 400 {
+				t.Fatalf("expected rejection, got %d body=%s", rec.Code, body)
+			}
+			for _, leaked := range []string{runID, "sk-proj", security.RedactionMarker, dir, filepath.ToSlash(dir)} {
+				if strings.Contains(body, leaked) {
+					t.Fatalf("secret-looking run id rejection leaked %q:\n%s", leaked, body)
+				}
+			}
+		})
+	}
+}
+
 func TestArtifactHTTPStackRejectsUnsafePathsWithoutLeaks(t *testing.T) {
 	dir := newTestWorkspace(t)
 	secret := "unsafe-secret-token-1234567890"

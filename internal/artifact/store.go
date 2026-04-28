@@ -84,10 +84,14 @@ func ValidateRunID(runID string) error {
 		return errors.New("run id is required")
 	}
 	if runID == "." || runID == ".." || strings.HasPrefix(runID, ".") || strings.Contains(runID, "..") {
-		return fmt.Errorf("run id %q is reserved", security.RedactString(runID))
+		return errors.New("run id is reserved")
 	}
 	if !runIDPattern.MatchString(runID) {
-		return fmt.Errorf("run id %q may only contain letters, numbers, dots, underscores, and dashes", security.RedactString(runID))
+		return errors.New("run id may only contain letters, numbers, dots, underscores, and dashes")
+	}
+	redacted := security.RedactString(runID)
+	if redacted != runID || strings.Contains(redacted, security.RedactionMarker) {
+		return errors.New("run id is not allowed")
 	}
 	return nil
 }

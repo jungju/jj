@@ -427,7 +427,7 @@
         "./scripts/validate.sh passes and covers go test ./..., go vet ./..., and go build -o jj ./cmd/jj."
       ],
       "commit": null,
-      "completed_by_run": null,
+      "completed_by_run": "autopilot-20260428-160202-t02",
       "completed_by_turn": null,
       "created_at": "2026-04-28T12:50:10Z",
       "created_by_run": "autopilot-20260428-124152-t02",
@@ -438,11 +438,11 @@
       "reason": "Security is the correct next category because jj handles secrets, workspace file access, local command execution, persisted run artifacts, logs, manifests, git output, and a local dashboard. A shared guardrail layer should land before adding more user-facing workflow features.",
       "resolved_task_proposal_mode": "security",
       "selected_task_proposal_mode": "auto",
-      "status": "queued",
+      "status": "done",
       "title": "Harden jj secret, workspace, command, artifact, and dashboard boundaries",
-      "updated_at": "2026-04-28T13:10:20Z",
+      "updated_at": "2026-04-28T16:16:12Z",
       "validation_command": "./scripts/validate.sh",
-      "verdict": null
+      "verdict": "passed"
     },
     {
       "acceptance_criteria": [

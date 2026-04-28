@@ -218,6 +218,21 @@ func TestValidateRunIDRejectsPathTraversal(t *testing.T) {
 	}
 }
 
+func TestValidateRunIDRejectsSecretLookingValuesWithoutEcho(t *testing.T) {
+	for _, runID := range []string{
+		"sk-proj-runidsecret1234567890",
+		"github_pat_1234567890abcdefghijklmnopqrstuvwxyz",
+	} {
+		err := ValidateRunID(runID)
+		if err == nil {
+			t.Fatalf("expected secret-looking run id %q to fail validation", runID)
+		}
+		if strings.Contains(err.Error(), runID) || strings.Contains(err.Error(), "sk-proj") || strings.Contains(err.Error(), "github_pat") || strings.Contains(err.Error(), "[jj-omitted]") {
+			t.Fatalf("run id validation error leaked unsafe value: %v", err)
+		}
+	}
+}
+
 func TestValidateArtifactNamePolicy(t *testing.T) {
 	valid := []string{"manifest", "planning_merge", "validation-001.stdout", "snapshot_spec_after"}
 	for _, name := range valid {
