@@ -1043,6 +1043,33 @@
       "updated_at": "2026-04-28T19:35:27Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Run ./scripts/validate.sh from the repository root before making implementation changes.",
+        "If ./scripts/validate.sh passes, make no code changes and do not reopen completed tasks.",
+        "If validation fails, patch only the confirmed disclosure, path-boundary, artifact, command metadata, validation output, git diff, planner handoff, or serve-surface regression.",
+        "Any patch uses existing guarded artifact store, sanitizer, manifest scrubber, run DTO, route parser, command metadata, and release-gate helper patterns.",
+        "No dashboard pages, CLI flags, raw exports, scanners, broad redaction algorithm expansions, or unrelated user-facing features are added.",
+        "After any patch, go test ./internal/serve, go test ./internal/run, go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t16",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T19:39:36Z",
+      "created_by_run": "autopilot-20260428-160202-t16",
+      "created_by_turn": null,
+      "id": "TASK-0037",
+      "mode": "security",
+      "priority": "high",
+      "reason": "Security is selected because the active risk surface includes secrets, workspace boundaries, command metadata, artifacts, manifests, validation output, git diffs, planner handoffs, and dashboard exposure. All prior tasks are done and no positive blocker evidence is present, so the next task must only run the existing release gate and patch concrete disclosure or boundary regressions if found.",
+      "resolved_task_proposal_mode": "security",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Run security release validation and patch confirmed regressions only",
+      "updated_at": "2026-04-28T19:43:07Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
