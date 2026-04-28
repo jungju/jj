@@ -202,6 +202,15 @@ type validationEvidenceSummary struct {
 	AuditURL        string
 }
 
+type comparePreviousSummary struct {
+	Visible       bool
+	State         string
+	Message       string
+	CurrentRunID  string
+	PreviousRunID string
+	URL           string
+}
+
 type activeRunItem struct {
 	RunID            string
 	Status           string
@@ -374,6 +383,7 @@ type runDetail struct {
 	SecurityDetails          []string
 	NextActions              []string
 	ValidationEvidence       validationEvidenceSummary
+	ComparePrevious          comparePreviousSummary
 }
 
 type runAuditExport struct {
@@ -1414,6 +1424,7 @@ func (s *Server) renderRunDetail(w http.ResponseWriter, runID string) {
 		return
 	}
 	detail := inspection.Detail
+	detail.ComparePrevious = s.comparePreviousForInspection(inspection)
 	s.render(w, pageData{
 		Title:     "run " + detail.ID,
 		CWD:       displayWorkspace,
@@ -2839,6 +2850,92 @@ func addRunCompareLinks(runs, candidates []runLink) []runLink {
 
 func runCompareURL(left, right string) string {
 	return "/runs/compare?left=" + template.URLQueryEscaper(left) + "&right=" + template.URLQueryEscaper(right)
+}
+
+func (s *Server) comparePreviousForInspection(inspection runInspection) comparePreviousSummary {
+	currentID := latestRunIDLabel(inspection.ID)
+	if currentID == "" {
+		currentID = latestRunIDLabel(inspection.rawID)
+	}
+	if currentID == "" {
+		return comparePreviousUnavailable("")
+	}
+	if inspection.State != "available" || !inspection.TrustedManifest {
+		return comparePreviousUnavailable(currentID)
+	}
+	runs, err := s.discoverRuns()
+	if err != nil {
+		return comparePreviousUnavailable(currentID)
+	}
+	runs = s.sanitizeRunHistoryLinks(runs)
+	previousID, foundCurrent := previousComparableRunID(currentID, runs)
+	if !foundCurrent {
+		return comparePreviousUnavailable(currentID)
+	}
+	if previousID == "" {
+		return comparePreviousNone(currentID)
+	}
+	return comparePreviousSummary{
+		Visible:       true,
+		State:         "available",
+		CurrentRunID:  currentID,
+		PreviousRunID: previousID,
+		URL:           runCompareURL(currentID, previousID),
+	}
+}
+
+func comparePreviousNone(currentID string) comparePreviousSummary {
+	return comparePreviousSummary{
+		Visible:      latestRunIDLabel(currentID) != "",
+		State:        "none",
+		Message:      "Compare previous: none.",
+		CurrentRunID: latestRunIDLabel(currentID),
+	}
+}
+
+func comparePreviousUnavailable(currentID string) comparePreviousSummary {
+	return comparePreviousSummary{
+		Visible:      latestRunIDLabel(currentID) != "",
+		State:        "unavailable",
+		Message:      "Compare previous: unavailable.",
+		CurrentRunID: latestRunIDLabel(currentID),
+	}
+}
+
+func previousComparableRunID(currentID string, runs []runLink) (string, bool) {
+	currentID = latestRunIDLabel(currentID)
+	if currentID == "" {
+		return "", false
+	}
+	candidates := sortedComparableRuns(runs)
+	for i, candidate := range candidates {
+		if candidate.ID != currentID {
+			continue
+		}
+		if i+1 >= len(candidates) {
+			return "", true
+		}
+		return candidates[i+1].ID, true
+	}
+	return "", false
+}
+
+func sortedComparableRuns(runs []runLink) []runLink {
+	candidates := make([]runLink, 0, len(runs))
+	for _, run := range runs {
+		if run.Invalid {
+			continue
+		}
+		run.ID = latestRunIDLabel(run.ID)
+		if run.ID == "" {
+			continue
+		}
+		candidates = append(candidates, run)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return latestRunBefore(candidates[i], candidates[j])
+	})
+	return candidates
 }
 
 func (s *Server) sanitizeRunHistoryLink(run runLink) runLink {
@@ -6116,6 +6213,16 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
         {{if .RunDetail.Codex.Error}}<p class="error">{{.RunDetail.Codex.Error}}</p>{{end}}
         <p>{{if .RunDetail.Codex.SummaryURL}}<a href="{{.RunDetail.Codex.SummaryURL}}">Codex summary</a>{{else if .RunDetail.Codex.SummaryPath}}<span class="muted">Codex summary {{.RunDetail.Codex.SummaryPath}}</span>{{end}}{{if .RunDetail.Codex.EventsURL}} · <a href="{{.RunDetail.Codex.EventsURL}}">Codex events</a>{{else if .RunDetail.Codex.EventsPath}} · <span class="muted">Codex events {{.RunDetail.Codex.EventsPath}}</span>{{end}}{{if .RunDetail.Codex.ExitURL}} · <a href="{{.RunDetail.Codex.ExitURL}}">Codex command metadata</a>{{else if .RunDetail.Codex.ExitPath}} · <span class="muted">Codex command metadata {{.RunDetail.Codex.ExitPath}}</span>{{end}}</p>
       </section>
+      {{if .RunDetail.ComparePrevious.Visible}}
+      <section>
+        <h2>Compare Previous</h2>
+        {{if .RunDetail.ComparePrevious.URL}}
+          <p><a href="{{.RunDetail.ComparePrevious.URL}}">Compare {{.RunDetail.ComparePrevious.CurrentRunID}} to {{.RunDetail.ComparePrevious.PreviousRunID}}</a></p>
+        {{else}}
+          <p class="muted">{{.RunDetail.ComparePrevious.Message}}</p>
+        {{end}}
+      </section>
+      {{end}}
       <section>
         <h2>Command Metadata</h2>
         <ul>

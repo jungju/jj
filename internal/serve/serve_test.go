@@ -3096,6 +3096,204 @@ func TestRunDetailValidationEvidenceStatesAreSafe(t *testing.T) {
 	}
 }
 
+func TestRunDetailComparePreviousShowsSanitizedGuardedAction(t *testing.T) {
+	dir := newTestWorkspace(t)
+	secret := "sk-proj-compareprevious1234567890"
+	t.Setenv("JJ_COMPARE_PREVIOUS_SECRET", secret)
+	writeRunManifest(t, dir, "20260425-110000-aaaaaa", secret, "2026-04-25T11:00:00Z")
+	writeRunManifest(t, dir, "20260425-123000-active", "running", "2026-04-25T12:30:00Z")
+	tokenRunID := "sk-proj-comparepreviousrunid1234567890"
+	writeFile(t, dir, ".jj/runs/"+tokenRunID+"/manifest.json", `{"run_id":"`+tokenRunID+`","status":"complete","started_at":"2026-04-25T11:59:00Z","artifacts":{"manifest":"manifest.json"}}`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs/20260425-120000-bbbbbb", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail status = %d body=%s", rec.Code, body)
+	}
+	section := runDetailComparePreviousSection(t, body)
+	for _, want := range []string{
+		"Compare Previous",
+		"Compare 20260425-120000-bbbbbb to 20260425-110000-aaaaaa",
+		`href="/runs/compare?left=20260425-120000-bbbbbb&amp;right=20260425-110000-aaaaaa"`,
+	} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("compare previous missing %q:\n%s", want, section)
+		}
+	}
+	for _, leaked := range []string{
+		secret,
+		tokenRunID,
+		"sk-proj",
+		"manifest",
+		"validation",
+		"failed",
+		"success",
+		security.RedactionMarker,
+		"[omitted]",
+		dir,
+		filepath.ToSlash(dir),
+	} {
+		if strings.Contains(section, leaked) {
+			t.Fatalf("compare previous leaked %q:\n%s", leaked, section)
+		}
+	}
+	for _, want := range []string{"Validation Evidence", "Codex", "Command Metadata", "Artifacts"} {
+		if !strings.Contains(body, "<h2>"+want+"</h2>") {
+			t.Fatalf("existing run detail section %q disappeared:\n%s", want, body)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	dashboard := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard status = %d body=%s", rec.Code, dashboard)
+	}
+	for _, want := range []string{"Recent Runs", "Active Run", "Validation Status", "Evaluation Findings"} {
+		if !strings.Contains(dashboard, "<h2>"+want+"</h2>") {
+			t.Fatalf("dashboard section %q disappeared:\n%s", want, dashboard)
+		}
+	}
+	for _, leaked := range []string{secret, tokenRunID, "sk-proj", dir, filepath.ToSlash(dir)} {
+		if strings.Contains(dashboard, leaked) {
+			t.Fatalf("dashboard leaked compare previous fixture %q:\n%s", leaked, dashboard)
+		}
+	}
+}
+
+func TestRunDetailComparePreviousSafeStatesForAbsentMalformedAndDeniedRuns(t *testing.T) {
+	secret := "sk-proj-comparepreviousstate1234567890"
+
+	t.Run("absent previous", func(t *testing.T) {
+		dir := t.TempDir()
+		runID := "20260429-150000-solo"
+		writeRunManifest(t, dir, runID, "complete", "2026-04-29T15:00:00Z")
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
+		newTestServer(t, dir, "").Handler().ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("detail status = %d body=%s", rec.Code, body)
+		}
+		section := runDetailComparePreviousSection(t, body)
+		if !strings.Contains(section, "Compare previous: none.") || strings.Contains(section, "/runs/compare?") {
+			t.Fatalf("absent previous did not render deterministic none state:\n%s", section)
+		}
+	})
+
+	t.Run("malformed current metadata", func(t *testing.T) {
+		dir := t.TempDir()
+		runID := "20260429-151000-malformed"
+		writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"`+secret+`",`)
+		writeRunManifest(t, dir, "20260429-150000-previous", "complete", "2026-04-29T15:00:00Z")
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
+		newTestServer(t, dir, "").Handler().ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("detail status = %d body=%s", rec.Code, body)
+		}
+		section := runDetailComparePreviousSection(t, body)
+		if !strings.Contains(section, "Compare previous: unavailable.") || strings.Contains(section, "/runs/compare?") {
+			t.Fatalf("malformed metadata did not render unavailable state:\n%s", section)
+		}
+		for _, leaked := range []string{secret, "sk-proj", security.RedactionMarker, dir, filepath.ToSlash(dir)} {
+			if strings.Contains(body, leaked) {
+				t.Fatalf("malformed compare previous leaked %q:\n%s", leaked, body)
+			}
+		}
+	})
+
+	t.Run("denied run root", func(t *testing.T) {
+		dir := t.TempDir()
+		outside := t.TempDir()
+		runID := "20260429-152000-denied"
+		writeFile(t, outside, "manifest.json", `{"run_id":"`+runID+`","status":"complete","artifacts":{"manifest":"manifest.json"}}`)
+		writeFile(t, outside, "secret.txt", secret)
+		if err := os.MkdirAll(filepath.Join(dir, ".jj/runs"), 0o755); err != nil {
+			t.Fatalf("mkdir runs: %v", err)
+		}
+		if err := os.Symlink(outside, filepath.Join(dir, ".jj/runs", runID)); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
+		newTestServer(t, dir, "").Handler().ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("denied run status = %d body=%s", rec.Code, body)
+		}
+		for _, leaked := range []string{secret, outside, filepath.ToSlash(outside), dir, filepath.ToSlash(dir), "Compare Previous"} {
+			if strings.Contains(body, leaked) {
+				t.Fatalf("denied compare previous leaked %q:\n%s", leaked, body)
+			}
+		}
+	})
+}
+
+func TestRunDetailComparePreviousSelectionIsDeterministic(t *testing.T) {
+	cases := []struct {
+		name     string
+		current  string
+		previous string
+		runs     []struct {
+			id        string
+			startedAt string
+		}
+	}{
+		{
+			name:     "tied timestamps use safe id order",
+			current:  "20260429-160000-tie-c",
+			previous: "20260429-160000-tie-b",
+			runs: []struct {
+				id        string
+				startedAt string
+			}{
+				{id: "20260429-160000-tie-a", startedAt: "2026-04-29T16:00:00Z"},
+				{id: "20260429-160000-tie-b", startedAt: "2026-04-29T16:00:00Z"},
+				{id: "20260429-160000-tie-c", startedAt: "2026-04-29T16:00:00Z"},
+			},
+		},
+		{
+			name:     "missing and malformed timestamps fall back to safe id time",
+			current:  "20260429-161000-clockless",
+			previous: "20260429-160000-clockless-prev",
+			runs: []struct {
+				id        string
+				startedAt string
+			}{
+				{id: "20260429-162000-newer", startedAt: ""},
+				{id: "20260429-161000-clockless", startedAt: "not-a-timestamp"},
+				{id: "20260429-160000-clockless-prev", startedAt: ""},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, run := range tc.runs {
+				writeRunManifest(t, dir, run.id, "complete", run.startedAt)
+			}
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/runs/"+tc.current, nil)
+			newTestServer(t, dir, "").Handler().ServeHTTP(rec, req)
+			body := rec.Body.String()
+			if rec.Code != http.StatusOK {
+				t.Fatalf("detail status = %d body=%s", rec.Code, body)
+			}
+			section := runDetailComparePreviousSection(t, body)
+			wantURL := `/runs/compare?left=` + tc.current + `&amp;right=` + tc.previous
+			if !strings.Contains(section, wantURL) || !strings.Contains(section, "Compare "+tc.current+" to "+tc.previous) {
+				t.Fatalf("compare previous did not use deterministic previous %q:\n%s", tc.previous, section)
+			}
+		})
+	}
+}
+
 func TestRunAuditExportShowsSanitizedRunSummary(t *testing.T) {
 	dir := newTestWorkspace(t)
 	runID := "20260428-140000-audit"
@@ -4717,6 +4915,14 @@ func runDetailValidationEvidenceSection(t *testing.T, body string) string {
 	return htmlSection(body, "Validation Evidence", "Codex")
 }
 
+func runDetailComparePreviousSection(t *testing.T, body string) string {
+	t.Helper()
+	if !strings.Contains(body, "<h2>Compare Previous</h2>") {
+		t.Fatalf("run detail missing Compare Previous section:\n%s", body)
+	}
+	return htmlSection(body, "Compare Previous", "Command Metadata")
+}
+
 type loopFakeExecutor struct {
 	mu          sync.Mutex
 	calls       []runpkg.Config
@@ -4887,6 +5093,15 @@ func newTestWorkspace(t *testing.T) string {
 	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/snapshots/tasks.after.json", `{"version":1,"tasks":[{"id":"TASK-0001","title":"Do the task.","mode":"security","status":"queued"}]}`)
 	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/validation/summary.md", "failed\n")
 	return dir
+}
+
+func writeRunManifest(t *testing.T, root, runID, status, startedAt string) {
+	t.Helper()
+	started := ""
+	if strings.TrimSpace(startedAt) != "" {
+		started = fmt.Sprintf(`,"started_at":%q`, startedAt)
+	}
+	writeFile(t, root, ".jj/runs/"+runID+"/manifest.json", fmt.Sprintf(`{"run_id":%q,"status":%q%s,"artifacts":{"manifest":"manifest.json"},"validation":{"status":"passed","evidence_status":"recorded"}}`, runID, status, started))
 }
 
 func writeFile(t *testing.T, root, rel, data string) {

@@ -1440,6 +1440,35 @@
       "updated_at": "2026-04-28T22:49:08Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Guarded run detail shows a compact Compare Previous action when a deterministic previous valid guarded run exists.",
+        "The action exposes only sanitized current run label, sanitized previous run label, and a guarded link to the existing comparison view.",
+        "Runs with no previous comparable run render a deterministic none or unavailable state without server errors.",
+        "Previous-run selection is deterministic when timestamps are missing, malformed, duplicated, or tied, using sanitized stable tie-breakers only.",
+        "Missing, malformed, denied, stale, hostile-label, token-like, partial, or internally inconsistent run metadata never renders unsafe labels, raw paths, raw manifests, raw diffs, raw commands, raw environment values, validation payloads, or artifact bodies.",
+        "Existing run detail Validation Evidence, dashboard root, Recent Runs, Active Run, Validation Status, and Evaluation Findings behavior remains unchanged.",
+        "Focused serve/dashboard tests cover present, absent, malformed metadata, denied run, tied timestamps, hostile labels, token-like run IDs, deterministic labels, and unchanged existing dashboard sections.",
+        "go test ./internal/serve and ./scripts/validate.sh pass with sanitized release-gate metadata only."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t30",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T22:50:20Z",
+      "created_by_run": "autopilot-20260428-160202-t30",
+      "created_by_turn": null,
+      "id": "TASK-0051",
+      "mode": "feature",
+      "priority": "high",
+      "reason": "Auto mode resolves to feature because all prior tasks are complete and there is no current blocker, failing validation, CI failure, disclosure, boundary regression, or concrete security/privacy evidence. A compact compare-to-previous affordance is the smallest high-value user-facing next capability because it improves run review flow by linking existing guarded run detail pages to the existing comparison view without adding new pages or raw exports.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Add sanitized compare-to-previous link on run detail",
+      "updated_at": "2026-04-28T23:00:04Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
