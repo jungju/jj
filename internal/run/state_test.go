@@ -500,16 +500,64 @@ func TestTaskProposalEvidenceUsesPreviousManifestPositiveFailure(t *testing.T) {
 	}
 }
 
-func TestTaskProposalEvidenceCurrentSpecSecurityRiskResolvesSecurity(t *testing.T) {
+func TestTaskProposalEvidenceCurrentSpecSecurityPolicyDoesNotResolveSecurity(t *testing.T) {
 	evidence := buildTaskProposalEvidence(SpecState{
 		Version:       1,
 		Title:         "SPEC",
-		Requirements:  []string{"Protect saved artifacts from secret exposure."},
-		OpenQuestions: []string{"Is there a remaining security risk in dashboard access?"},
+		Requirements:  []string{"No persisted artifact or served dashboard response contains raw API keys."},
+		OpenQuestions: []string{"Completed security guardrails remain closed unless release-gate evidence fails."},
 	}, TaskState{Version: 1}, "", "")
 
 	resolution := ResolveTaskProposalMode(TaskProposalModeAuto, evidence)
+	if resolution.Resolved == TaskProposalModeSecurity {
+		t.Fatalf("current spec security policy alone should not resolve security, got %#v with evidence:\n%s", resolution, evidence)
+	}
+}
+
+func TestTaskProposalEvidenceCompletedSecurityGuardrailsDoNotOpenDebtMode(t *testing.T) {
+	evidence := buildTaskProposalEvidence(SpecState{
+		Version: 1,
+		Title:   "Security Boundary and Dashboard Run Inspection",
+		Requirements: []string{
+			"Accepted plan content, planner output, Codex output, command summaries, validation output, docs writes, manifests, event writes, run artifacts, git diff artifacts, and dashboard render data must pass through shared redaction before persistence or display.",
+			"Run detail, run history, run comparison, and run audit export handlers must obtain metadata through shared sanitized DTO construction.",
+			"scripts/validate.sh must remain the single documented release validation entry point, run focused security boundary suites, full tests, vet, CLI build, and diff-check.",
+			"Completed security guardrails must remain closed unless scripts/validate.sh, focused Go security suites, full tests, vet, build, diff-check, CI, or confirmed disclosure evidence fails.",
+		},
+	}, TaskState{
+		Version: 1,
+		Tasks: []TaskRecord{{
+			ID:      "TASK-0040",
+			Title:   "Verify release gate",
+			Mode:    "security",
+			Status:  "done",
+			Verdict: stringPtr("passed"),
+		}},
+	}, "", "")
+
+	resolution := ResolveTaskProposalMode(TaskProposalModeAuto, evidence)
+	if resolution.Resolved != TaskProposalModeFeature {
+		t.Fatalf("completed security guardrail policy should fall through without reopening security or debt work, got %#v with evidence:\n%s", resolution, evidence)
+	}
+}
+
+func TestTaskProposalEvidenceRecentSecurityRegressionResolvesSecurity(t *testing.T) {
+	continuation := strings.Join([]string{
+		"This is an automatic continuation turn for jj.",
+		"## Workspace SPEC State",
+		`{"requirements":["Completed security guardrails remain closed."]}`,
+		"## Previous Manifest Summary",
+		`{"status":"partial_failed","validation":{"status":"failed","failed_count":1},"security":{"failure_categories":["path_boundary"]}}`,
+		"## Previous Validation Summary",
+		"scripts/validate.sh failed: raw API key leaked in dashboard audit export",
+	}, "\n")
+	evidence := buildTaskProposalEvidence(SpecState{Version: 1}, TaskState{Version: 1}, continuation, "")
+
+	if !strings.Contains(evidence, "Recent security evidence") || !strings.Contains(evidence, "secret_disclosure") || !strings.Contains(evidence, "dashboard_exposure") {
+		t.Fatalf("positive security continuation should emit safe category evidence:\n%s", evidence)
+	}
+	resolution := ResolveTaskProposalMode(TaskProposalModeAuto, evidence)
 	if resolution.Resolved != TaskProposalModeSecurity {
-		t.Fatalf("current spec security risk should resolve security, got %#v with evidence:\n%s", resolution, evidence)
+		t.Fatalf("positive security continuation should resolve security, got %#v with evidence:\n%s", resolution, evidence)
 	}
 }

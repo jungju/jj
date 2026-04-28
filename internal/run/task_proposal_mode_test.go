@@ -107,12 +107,53 @@ func TestResolveTaskProposalModeHealthyAndNegatedEvidenceDoesNotResolveBugfix(t 
 }
 
 func TestResolveTaskProposalModeAutoSecurityEvidence(t *testing.T) {
-	got := ResolveTaskProposalMode(TaskProposalModeAuto, "unsafe secret exposure in artifacts")
+	got := ResolveTaskProposalMode(TaskProposalModeAuto, "scripts/validate.sh failed: raw API key leaked in dashboard audit export")
 	if got.Selected != TaskProposalModeAuto || got.Resolved != TaskProposalModeSecurity {
 		t.Fatalf("expected auto to resolve security, got %#v", got)
 	}
 	if got.SelectedTaskID != "TASK-0001" {
 		t.Fatalf("unexpected selected task id: %#v", got)
+	}
+}
+
+func TestResolveTaskProposalModeSecurityRequiresConcreteEvidence(t *testing.T) {
+	tests := []string{
+		"unsafe secret exposure in artifacts",
+		"security risk exists because artifacts, commands, manifests, and dashboard pages are sensitive",
+		"completed security guardrails remain closed unless scripts/validate.sh, focused tests, CI, or disclosure evidence fails",
+		"all release-gate evidence remains green and no concrete regression exists",
+		"Current SPEC requirements and open questions:\n- No persisted artifact or served dashboard response contains raw API keys.\n- Completed security guardrails remain closed unless scripts/validate.sh fails.\n\nNon-terminal task state:\n\nClosed task history count: 40\n",
+	}
+
+	for _, evidence := range tests {
+		t.Run(evidence, func(t *testing.T) {
+			for _, mode := range []TaskProposalMode{TaskProposalModeAuto, TaskProposalModeBalanced} {
+				got := ResolveTaskProposalMode(mode, evidence)
+				if got.Resolved == TaskProposalModeSecurity {
+					t.Fatalf("%s should not resolve security from policy, healthy, or background risk wording %q, got %#v", mode, evidence, got)
+				}
+			}
+		})
+	}
+}
+
+func TestResolveTaskProposalModeConcreteSecurityEvidencePrecedesBugfix(t *testing.T) {
+	tests := []string{
+		"scripts/validate.sh failed: raw API key leaked in dashboard audit export",
+		"CI failed with security regression: symlink escape read outside workspace",
+		"confirmed disclosure: validation output rendered raw bearer token in run detail",
+		"Recent security evidence:\n- secret_disclosure\n- dashboard_exposure\n",
+	}
+
+	for _, evidence := range tests {
+		t.Run(evidence, func(t *testing.T) {
+			for _, mode := range []TaskProposalMode{TaskProposalModeAuto, TaskProposalModeBalanced} {
+				got := ResolveTaskProposalMode(mode, evidence)
+				if got.Resolved != TaskProposalModeSecurity {
+					t.Fatalf("%s should resolve security for concrete regression evidence %q, got %#v", mode, evidence, got)
+				}
+			}
+		})
 	}
 }
 

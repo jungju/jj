@@ -1151,6 +1151,40 @@
       "updated_at": "2026-04-28T20:10:41Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "No new runnable task is opened from healthy or absent evidence.",
+        "Security remains the selected category for any future concrete regression involving secrets, paths, artifacts, commands, manifests, validation output, planner handoff, or dashboard exposure.",
+        "Future regression work is scoped only to the confirmed failing behavior.",
+        "Completed security guardrails are not reopened unless scripts/validate.sh, focused tests, full tests, vet, build, diff-check, CI, or confirmed disclosure evidence fails.",
+        "No new task is proposed from plan.md background vision alone.",
+        "Completed security guardrails remain closed.",
+        "Any future security task must cite concrete failing evidence from scripts/validate.sh, focused tests, full tests, vet, build, diff-check, CI, or confirmed disclosure.",
+        "No new dashboard pages, CLI flags, raw exports, scanners, artifact uploads, or unrelated user-facing features are recommended.",
+        "No new task is opened while all release-gate evidence remains green and no concrete regression exists.",
+        "If TASK-0041 is opened later, it references the exact failing validation, test, CI, disclosure, or boundary evidence that triggered it.",
+        "Any future patch is narrowly scoped to the confirmed security/privacy regression.",
+        "Regression coverage proves the specific failure cannot recur.",
+        "scripts/validate.sh remains the single local and CI release validation entry point and passes with sanitized metadata only."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t20",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T20:11:59Z",
+      "created_by_run": "autopilot-20260428-160202-t20",
+      "created_by_turn": null,
+      "id": "TASK-0041",
+      "mode": "security",
+      "priority": "high",
+      "reason": "auto selected security is required because secret, workspace, command, artifact, dashboard, or privacy risk is present.",
+      "resolved_task_proposal_mode": "security",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Reduce the highest security or privacy risk",
+      "updated_at": "2026-04-28T20:24:43Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

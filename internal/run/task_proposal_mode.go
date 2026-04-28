@@ -117,13 +117,13 @@ func (m TaskProposalMode) Description() string {
 func (m TaskProposalMode) PromptInstruction() string {
 	switch m {
 	case TaskProposalModeAuto:
-		return "Choose the best concrete next-task category from the available evidence and explain why. Prioritize bugfix when tests, validation, or blockers fail; security when secret, file access, command execution, artifact, or dashboard exposure risk exists; hardening when run, turn, manifest, provider, artifact, or recovery structure is weak; quality when validation, tests, or regression detection is weak; docs when README, .jj/spec.json, .jj/tasks.json, or behavior are inconsistent; otherwise choose feature."
+		return "Choose the best concrete next-task category from compact current evidence and explain why. Prioritize security only when release-gate, CI, validation, test, disclosure, or boundary evidence shows a concrete security or privacy regression involving secrets, paths, artifacts, commands, manifests, validation output, planner handoff, git diff, or dashboard exposure. Prioritize bugfix when non-security tests, validation, provider execution, blockers, panic, fatal error, or regressions fail. Do not open security work from durable SPEC requirements, completed task history, healthy release-gate context, or plan.md background vision alone. Otherwise choose hardening, quality, docs, or feature from current actionable evidence."
 	case TaskProposalModeBalanced:
-		return "Keep product progress, security, quality, hardening, and documentation balanced. Avoid repeatedly choosing one direction when security, quality, hardening, or documentation debt is visible. Consider recent turn history when available; if history is unavailable and blockers are clear, prefer useful product progress."
+		return "Keep product progress, security, quality, hardening, and documentation balanced from current actionable evidence. Choose security only for concrete security or privacy regression evidence, not for completed guardrails, healthy release-gate history, or plan.md background vision alone. Consider recent turn history when available; if history is unavailable and blockers are clear, prefer useful product progress."
 	case TaskProposalModeFeature:
 		return "Propose the next task that adds the most useful user-facing capability. Avoid pure refactors unless they are required to deliver the feature. The task must be small enough for one implementation turn."
 	case TaskProposalModeSecurity:
-		return "When recommending the next task, prioritize reducing security or privacy risk. Consider secret redaction, workspace boundaries, symlink escape prevention, command execution safety, artifact safety, prompt/log redaction, and dashboard exposure. Do not recommend unrelated user-facing features unless they are necessary to mitigate the risk."
+		return "When recommending the next task, prioritize reducing security or privacy risk only when concrete evidence identifies the failing behavior. Cite sanitized release-gate, CI, validation, test, disclosure, or boundary evidence; keep the patch narrowly scoped to the confirmed secret redaction, paths, artifacts, commands, manifests, validation output, planner handoff, git diff, or dashboard exposure regression. Do not recommend unrelated user-facing features, scanners, raw exports, artifact uploads, or dashboard pages unless they are necessary to mitigate the confirmed risk."
 	case TaskProposalModeHardening:
 		return "Propose the next task that improves reliability, recoverability, state consistency, or architecture. Prioritize provider separation, run/turn state, manifest schema, event logging, atomic artifacts, crash recovery, resume support, git evidence collection, and deterministic provider behavior. Avoid broad new user-facing features."
 	case TaskProposalModeQuality:
@@ -238,19 +238,23 @@ func concreteTaskProposalMode(mode TaskProposalMode) TaskProposalMode {
 
 func detectTaskProposalMode(evidence string) (TaskProposalMode, string, bool) {
 	text := strings.ToLower(evidence)
+	if hasPositiveSecurityEvidence(taskProposalSecurityEvidenceScope(evidence)) {
+		return TaskProposalModeSecurity, "security is required because concrete release-gate, CI, validation, test, disclosure, or boundary evidence shows a security or privacy regression.", true
+	}
 	if hasPositiveBugfixEvidence(taskProposalBugfixEvidenceScope(evidence)) {
 		return TaskProposalModeBugfix, "bugfix is required because failing validation, tests, regressions, or blockers are present.", true
 	}
-	if containsAny(text, "secret", "api key", "bearer token", "private key", "password", "credential", "connection string", "workspace boundary", "path traversal", "symlink escape", "command execution", "artifact exposure", "dashboard exposure", "security risk", "privacy risk", "redaction") {
-		return TaskProposalModeSecurity, "security is required because secret, workspace, command, artifact, dashboard, or privacy risk is present.", true
+	debtText := strings.ToLower(taskProposalDebtEvidenceScope(evidence))
+	if !isStructuredTaskProposalEvidence(evidence) {
+		debtText = text
 	}
-	if containsAny(text, "manifest", "event log", "state machine", "crash recovery", "resume", "atomic artifact", "artifact writer", "provider interface", "turn state", "run state") {
+	if containsAny(debtText, "manifest", "event log", "state machine", "crash recovery", "resume", "atomic artifact", "artifact writer", "provider interface", "turn state", "run state") {
 		return TaskProposalModeHardening, "hardening is appropriate because run state, provider, manifest, artifact, or recovery structure needs work.", false
 	}
-	if containsAny(text, "coverage", "validation", "deterministic test", "fake provider", "injected provider", "regression detection", "test coverage") {
+	if containsAny(debtText, "coverage", "validation", "deterministic test", "fake provider", "injected provider", "regression detection", "test coverage") {
 		return TaskProposalModeQuality, "quality is appropriate because validation, tests, or regression detection needs work.", false
 	}
-	if containsAny(text, "readme", "documentation", "docs alignment", "document alignment", "spec alignment", "task state cleanup", "task queue cleanup", "canonical json", "canonical document", "acceptance criteria update") {
+	if containsAny(debtText, "readme", "documentation", "docs alignment", "document alignment", "spec alignment", "task state cleanup", "task queue cleanup", "canonical json", "canonical document", "acceptance criteria update") {
 		return TaskProposalModeDocs, "docs is appropriate because documentation or canonical project documents need alignment.", false
 	}
 	return TaskProposalModeFeature, "feature is appropriate because no blocker, security, hardening, quality, or documentation debt signal was detected.", false
@@ -258,9 +262,25 @@ func detectTaskProposalMode(evidence string) (TaskProposalMode, string, bool) {
 
 var failedCountEvidencePattern = regexp.MustCompile(`(?i)"?failed[_ -]?count"?\s*[:=]\s*"?([0-9]+)"?`)
 
+func isStructuredTaskProposalEvidence(evidence string) bool {
+	return strings.Contains(evidence, "Current SPEC requirements and open questions:") ||
+		strings.Contains(evidence, "Non-terminal task state:")
+}
+
+func taskProposalSecurityEvidenceScope(evidence string) string {
+	if !isStructuredTaskProposalEvidence(evidence) {
+		return evidence
+	}
+	sections := []string{
+		sectionBetween(evidence, "Non-terminal task state:", "Closed task history count:", "Recent failure evidence:", "Recent security evidence:"),
+		sectionBetween(evidence, "Recent failure evidence:", "Recent security evidence:"),
+		sectionBetween(evidence, "Recent security evidence:"),
+	}
+	return strings.Join(nonEmptyPlanningItems(sections), "\n")
+}
+
 func taskProposalBugfixEvidenceScope(evidence string) string {
-	if !strings.Contains(evidence, "Current SPEC requirements and open questions:") &&
-		!strings.Contains(evidence, "Non-terminal task state:") {
+	if !isStructuredTaskProposalEvidence(evidence) {
 		return evidence
 	}
 	sections := []string{
@@ -268,6 +288,190 @@ func taskProposalBugfixEvidenceScope(evidence string) string {
 		sectionBetween(evidence, "Recent failure evidence:"),
 	}
 	return strings.Join(nonEmptyPlanningItems(sections), "\n")
+}
+
+func taskProposalDebtEvidenceScope(evidence string) string {
+	if !isStructuredTaskProposalEvidence(evidence) {
+		return evidence
+	}
+	sections := []string{
+		sectionBetween(evidence, "Non-terminal task state:", "Closed task history count:", "Recent failure evidence:", "Recent security evidence:"),
+		sectionBetween(evidence, "Recent failure evidence:", "Recent security evidence:"),
+		sectionBetween(evidence, "Recent security evidence:"),
+	}
+	return strings.Join(nonEmptyPlanningItems(sections), "\n")
+}
+
+func hasPositiveSecurityEvidence(evidence string) bool {
+	return len(positiveSecurityEvidenceCategories(evidence)) > 0
+}
+
+func positiveSecurityEvidenceCategories(evidence string) []string {
+	text := strings.ToLower(evidence)
+	found := map[string]bool{}
+	for _, line := range evidenceLines(text) {
+		for _, category := range positiveSecurityLineCategories(line) {
+			found[category] = true
+		}
+	}
+	return orderedSecurityCategories(found)
+}
+
+func positiveSecurityLineCategories(line string) []string {
+	line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
+	if line == "" || lineDeclaresNoSecurityEvidence(line) {
+		return nil
+	}
+	found := map[string]bool{}
+	for _, category := range securityEvidenceCategoryOrder() {
+		if containsAny(line, category) {
+			found[category] = true
+		}
+	}
+	if lineLooksLikePolicyOnlySecurityRequirement(line) {
+		return orderedSecurityCategories(found)
+	}
+	if !hasConcreteSecurityRegressionSignal(line) {
+		return orderedSecurityCategories(found)
+	}
+	if containsAny(line, "script", "validate", "focused test", "full test", "go test", "go vet", "build", "diff-check", "ci", "release-gate", "release gate") {
+		found["release_gate_failure"] = true
+	}
+	if containsAny(line, "disclosure", "leak", "leaked", "leaks", "exposed", "exposes", "unredacted", "api key", "bearer", "token", "private key", "password", "credential", "secret", "redaction") {
+		found["secret_disclosure"] = true
+	}
+	if containsAny(line, "workspace", "path traversal", "traversal", "symlink", "absolute path", "denied path", "outside workspace", "boundary", "escape") {
+		found["path_boundary"] = true
+	}
+	if containsAny(line, "artifact", "manifest", "diff", "validation output", "planner handoff", "codex", "event", "log") {
+		found["artifact_exposure"] = true
+	}
+	if containsAny(line, "command", "argv", "environment", "env", "stdout", "stderr") {
+		found["command_metadata"] = true
+	}
+	if containsAny(line, "dashboard", "audit export", "serve", "served", "rendered", "response") {
+		found["dashboard_exposure"] = true
+	}
+	return orderedSecurityCategories(found)
+}
+
+func securityEvidenceCategoryOrder() []string {
+	return []string{
+		"release_gate_failure",
+		"secret_disclosure",
+		"path_boundary",
+		"artifact_exposure",
+		"command_metadata",
+		"dashboard_exposure",
+	}
+}
+
+func orderedSecurityCategories(found map[string]bool) []string {
+	var categories []string
+	for _, category := range securityEvidenceCategoryOrder() {
+		if found[category] {
+			categories = append(categories, category)
+		}
+	}
+	return categories
+}
+
+func lineDeclaresNoSecurityEvidence(line string) bool {
+	return containsAny(line,
+		"no concrete regression",
+		"no security regression",
+		"no privacy regression",
+		"no disclosure",
+		"no boundary regression",
+		"release-gate evidence remains green",
+		"release gate evidence remains green",
+		"all release-gate evidence remains green",
+		"all release gate evidence remains green",
+		"completed security guardrails remain closed",
+		"guardrails remain closed",
+		"scripts/validate.sh passed",
+		"validation passed",
+		"tests passed",
+		"ci passed",
+	)
+}
+
+func lineLooksLikePolicyOnlySecurityRequirement(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	trimmed = strings.TrimPrefix(trimmed, "- ")
+	for _, prefix := range []string{
+		"no ",
+		"prevent ",
+		"protect ",
+		"keep ",
+		"preserve ",
+		"ensure ",
+		"must ",
+		"must not ",
+		"should ",
+		"do not ",
+		"reject ",
+		"accepted ",
+		"rejected ",
+		"completed security guardrails ",
+		"future regression work ",
+		"any future security task ",
+		"scripts/validate.sh must ",
+		"ci must ",
+	} {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasConcreteSecurityRegressionSignal(line string) bool {
+	return containsPositivePhrase(line,
+		"scripts/validate.sh failed",
+		"release-gate failed",
+		"release gate failed",
+		"focused tests failed",
+		"full tests failed",
+		"go test failed",
+		"go vet failed",
+		"build failed",
+		"diff-check failed",
+		"ci failed",
+		"confirmed disclosure",
+		"disclosure confirmed",
+		"security regression",
+		"privacy regression",
+		"boundary regression",
+		"leaked",
+		"leaks",
+		"leak found",
+		"leak detected",
+		"leak confirmed",
+		"exposed",
+		"exposes",
+		"unredacted",
+		"raw api key",
+		"raw token",
+		"raw secret",
+		"raw command",
+		"raw environment",
+		"raw manifest",
+		"raw diff",
+		"raw artifact",
+		"raw validation output",
+		"raw planner handoff",
+		"persisted raw",
+		"rendered raw",
+		"served raw",
+		"path traversal",
+		"symlink escape",
+		"absolute escape",
+		"outside workspace",
+		"read outside",
+		"write outside",
+		"served outside",
+	)
 }
 
 func hasPositiveBugfixEvidence(evidence string) bool {

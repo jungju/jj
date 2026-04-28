@@ -205,6 +205,10 @@ func buildTaskProposalEvidence(spec SpecState, tasks TaskState, continuation str
 		b.WriteString("\nRecent failure evidence:\n")
 		b.WriteString(recent)
 	}
+	if recent := recentSecurityEvidence(continuation); recent != "" {
+		b.WriteString("\nRecent security evidence:\n")
+		b.WriteString(recent)
+	}
 	return sanitizeHandoffText(b.String())
 }
 
@@ -303,6 +307,20 @@ func recentFailureEvidence(continuation string) string {
 	return b.String()
 }
 
+func recentSecurityEvidence(continuation string) string {
+	categories := positiveSecurityEvidenceCategories(continuationSecurityEvidenceScope(continuation))
+	if len(categories) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, category := range categories {
+		b.WriteString("- ")
+		b.WriteString(category)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 func continuationBugfixEvidenceScope(continuation string) string {
 	if !strings.Contains(continuation, "## ") {
 		return continuation
@@ -310,6 +328,20 @@ func continuationBugfixEvidenceScope(continuation string) string {
 	sections := []string{
 		sectionBetween(continuation, "## Previous Manifest", "## "),
 		sectionBetween(continuation, "## Previous Validation Summary", "## "),
+	}
+	return strings.Join(nonEmptyPlanningItems(sections), "\n")
+}
+
+func continuationSecurityEvidenceScope(continuation string) string {
+	if !strings.Contains(continuation, "## ") {
+		return continuation
+	}
+	sections := []string{
+		sectionBetween(continuation, "## Previous Manifest Summary", "## "),
+		sectionBetween(continuation, "## Previous Manifest", "## "),
+		sectionBetween(continuation, "## Previous Validation Summary", "## "),
+		sectionBetween(continuation, "## Previous Git Diff Summary", "## "),
+		sectionBetween(continuation, "## Previous Codex Summary", "## "),
 	}
 	return strings.Join(nonEmptyPlanningItems(sections), "\n")
 }
