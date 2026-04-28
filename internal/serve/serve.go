@@ -181,6 +181,13 @@ type activeRunsSummary struct {
 	Items []activeRunItem
 }
 
+type validationStatusSummary struct {
+	State      string
+	Message    string
+	HistoryURL string
+	Items      []validationStatusItem
+}
+
 type activeRunItem struct {
 	RunID            string
 	Status           string
@@ -189,6 +196,15 @@ type activeRunItem struct {
 	TimestampLabel   string
 	DetailURL        string
 	AuditURL         string
+}
+
+type validationStatusItem struct {
+	RunID           string
+	ValidationState string
+	CountsLabel     string
+	TimestampLabel  string
+	DetailURL       string
+	AuditURL        string
 }
 
 type recentRunItem struct {
@@ -607,6 +623,7 @@ type pageData struct {
 	LatestRun          latestRunSummary
 	RecentRuns         recentRunsSummary
 	EvaluationFindings evaluationFindingsSummary
+	ValidationStatus   validationStatusSummary
 	NextAction         nextActionSummary
 	Docs               []docLink
 	ProjectDocs        []projectDocShortcut
@@ -799,6 +816,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	latestRun := latestRunSummaryFromRuns(runs)
 	recentRuns := recentRunsSummaryFromRuns(runs)
 	evaluationFindings := evaluationFindingsSummaryFromRuns(runs)
+	validationStatus := validationStatusSummaryFromRuns(runs)
 	readiness := s.workspaceReadiness()
 	taskQueue := s.taskQueueSummary()
 	nextAction := nextActionSummaryFromSummaries(taskQueue, latestRun)
@@ -811,6 +829,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		LatestRun:          latestRun,
 		RecentRuns:         recentRuns,
 		EvaluationFindings: evaluationFindings,
+		ValidationStatus:   validationStatus,
 		NextAction:         nextAction,
 		Docs:               docs,
 		ProjectDocs:        projectDocs,
@@ -3187,6 +3206,201 @@ func activeRunEvaluationState(run runLink) string {
 		}
 		return strings.TrimPrefix(evaluation.SummaryLabel, "evaluation ")
 	}
+}
+
+func validationStatusSummaryFromRuns(runs []runLink) validationStatusSummary {
+	summary := validationStatusNoneSummary()
+	candidates := sortedLatestRunCandidates(runs)
+	var unavailable validationStatusItem
+	unavailableOK := false
+	for _, run := range candidates {
+		if run.Invalid {
+			if !unavailableOK {
+				if item, ok := validationStatusUnavailableItemFromRun(run); ok {
+					unavailable = item
+					unavailableOK = true
+				}
+			}
+			continue
+		}
+		item, ok := validationStatusItemFromRun(run)
+		if !ok {
+			continue
+		}
+		summary.State = item.ValidationState
+		summary.Message = "Latest completed run validation status."
+		summary.Items = []validationStatusItem{item}
+		return summary
+	}
+	if unavailableOK {
+		summary.State = unavailable.ValidationState
+		summary.Message = "Validation metadata unavailable."
+		if unavailable.ValidationState == "denied" {
+			summary.Message = "Validation metadata denied."
+		}
+		summary.Items = []validationStatusItem{unavailable}
+	}
+	return summary
+}
+
+func validationStatusNoneSummary() validationStatusSummary {
+	return validationStatusSummary{
+		State:      "none",
+		Message:    "No validation metadata recorded for completed guarded runs.",
+		HistoryURL: "/runs",
+	}
+}
+
+func validationStatusUnavailableItemFromRun(run runLink) (validationStatusItem, bool) {
+	runID := latestRunIDLabel(run.ID)
+	if runID == "" {
+		return validationStatusItem{}, false
+	}
+	state := "unavailable"
+	if evaluationRunDenied(run) {
+		state = "denied"
+	}
+	return validationStatusItem{
+		RunID:           runID,
+		ValidationState: state,
+		TimestampLabel:  latestRunTimestampLabel(run),
+		DetailURL:       guardedRunDetailURL(runID),
+		AuditURL:        guardedRunAuditURL(runID),
+	}, true
+}
+
+func validationStatusItemFromRun(run runLink) (validationStatusItem, bool) {
+	runID := latestRunIDLabel(run.ID)
+	if runID == "" || !validationRunCompleted(run.Status) {
+		return validationStatusItem{}, false
+	}
+	metadata := validationStatusMetadataForRun(run)
+	if !validationMetadataRecorded(run, metadata) {
+		return validationStatusItem{}, false
+	}
+	if evaluationInconsistent(run, metadata) {
+		metadata.State = "unknown"
+		metadata.Status = "unknown"
+		metadata.EvidenceStatus = "unknown"
+		metadata.SummaryLabel = "evaluation unknown"
+	}
+	state := validationStatusState(metadata)
+	if state == "" || state == "none" {
+		return validationStatusItem{}, false
+	}
+	return validationStatusItem{
+		RunID:           runID,
+		ValidationState: state,
+		CountsLabel:     validationStatusCountsLabel(metadata),
+		TimestampLabel:  latestRunTimestampLabel(run),
+		DetailURL:       guardedRunDetailURL(runID),
+		AuditURL:        guardedRunAuditURL(runID),
+	}, true
+}
+
+func validationRunCompleted(status string) bool {
+	switch dashboardCategory(status, "") {
+	case "complete", "completed", "success", "succeeded", "dry_run_complete", "completed_with_warnings", "failed", "failure", "partial", "partial_failed", "cancelled", "canceled":
+		return true
+	default:
+		return false
+	}
+}
+
+func validationStatusMetadataForRun(run runLink) runEvaluationMetadata {
+	metadata := evaluationMetadataForRun(run)
+	if rawStatus := evaluationStatusToken(run.Evaluation.Status, ""); rawStatus == "skipped" && (metadata.Status == "" || metadata.Status == "none" || metadata.Status == "unknown") {
+		evidence := evaluationEvidenceToken(firstNonEmpty(run.Evaluation.EvidenceStatus, run.Validation), "unknown")
+		metadata.Status = rawStatus
+		metadata.EvidenceStatus = evidence
+		metadata.State = evaluationMetadataState(rawStatus)
+		metadata.SummaryLabel = evaluationSummaryLabel(rawStatus, evidence)
+	}
+	status := evaluationStatusToken(run.Validation, "")
+	if status == "" || status == "none" {
+		return metadata
+	}
+	if metadata.Status != "" && metadata.Status != "none" && status != "skipped" {
+		return metadata
+	}
+	evidence := evaluationEvidenceToken(run.Validation, metadata.EvidenceStatus)
+	if evidence == "" || evidence == "none" {
+		evidence = "unknown"
+	}
+	metadata.Status = status
+	metadata.EvidenceStatus = evidence
+	metadata.State = evaluationMetadataState(status)
+	metadata.SummaryLabel = evaluationSummaryLabel(status, evidence)
+	return metadata
+}
+
+func validationMetadataRecorded(run runLink, metadata runEvaluationMetadata) bool {
+	raw := run.Evaluation
+	rawRecorded := raw.State != "" ||
+		raw.Status != "" ||
+		raw.EvidenceStatus != "" ||
+		raw.SummaryLabel != "" ||
+		raw.CommandCount > 0 ||
+		raw.PassedCount > 0 ||
+		raw.FailedCount > 0
+	if !rawRecorded && strings.TrimSpace(run.Validation) == "" {
+		return false
+	}
+	if status := evaluationStatusToken(run.Validation, ""); status != "" && status != "none" {
+		return true
+	}
+	metadata = sanitizeRunEvaluationMetadata(metadata)
+	if metadata.CommandCount > 0 || metadata.PassedCount > 0 || metadata.FailedCount > 0 {
+		return true
+	}
+	if metadata.Status == "" || metadata.Status == "none" {
+		return false
+	}
+	return true
+}
+
+func validationStatusState(metadata runEvaluationMetadata) string {
+	if status := evaluationStatusToken(metadata.Status, ""); status == "skipped" {
+		return "skipped"
+	}
+	metadata = sanitizeRunEvaluationMetadata(metadata)
+	status := evaluationStatusToken(metadata.Status, "unknown")
+	switch status {
+	case "passed", "recorded":
+		return "passed"
+	case "failed", "needs_work":
+		return status
+	case "skipped":
+		return "skipped"
+	case "missing", "malformed", "partial", "stale", "unavailable":
+		return "unavailable"
+	case "denied":
+		return "denied"
+	case "inconsistent", "unknown":
+		return "unknown"
+	}
+	switch evaluationFindingsStateToken(metadata.State, "unknown") {
+	case "all-clear":
+		return "passed"
+	case "findings":
+		return "failed"
+	case "unavailable":
+		return "unavailable"
+	case "denied":
+		return "denied"
+	case "unknown":
+		return "unknown"
+	default:
+		return "unknown"
+	}
+}
+
+func validationStatusCountsLabel(metadata runEvaluationMetadata) string {
+	metadata = sanitizeRunEvaluationMetadata(metadata)
+	if metadata.CommandCount == 0 && metadata.PassedCount == 0 && metadata.FailedCount == 0 {
+		return ""
+	}
+	return fmt.Sprintf("commands %d · passed %d · failed %d", metadata.CommandCount, metadata.PassedCount, metadata.FailedCount)
 }
 
 func evaluationFindingsSummaryFromRuns(runs []runLink) evaluationFindingsSummary {
@@ -5736,16 +5950,30 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          <p><a href="{{.LatestRun.HistoryURL}}">Run history</a>{{if .LatestRun.DetailURL}} · <a href="{{.LatestRun.DetailURL}}">Run detail</a>{{end}}</p>
 	        {{end}}
 	      </section>
-	      <section>
-	        <h2>Risks And Failures</h2>
-	        {{if .Runs}}{{with index .Runs 0}}
-	          {{if .ErrorSummary}}<p class="error">{{.ErrorSummary}}</p>{{else if .RiskSummary}}<p>{{.RiskSummary}}</p>{{else}}<p class="muted">No recorded failures or risks in the latest run.</p>{{end}}
-	        {{end}}{{else}}
-	          <p class="muted">No runs available for risk review.</p>
-	        {{end}}
-	      </section>
-	      <section>
-	        <h2>Evaluation Findings</h2>
+		      <section>
+		        <h2>Risks And Failures</h2>
+		        {{if .Runs}}{{with index .Runs 0}}
+		          {{if .ErrorSummary}}<p class="error">{{.ErrorSummary}}</p>{{else if .RiskSummary}}<p>{{.RiskSummary}}</p>{{else}}<p class="muted">No recorded failures or risks in the latest run.</p>{{end}}
+		        {{end}}{{else}}
+		          <p class="muted">No runs available for risk review.</p>
+		        {{end}}
+		      </section>
+		      {{if .ValidationStatus.Items}}
+		      <section>
+		        <h2>Validation Status</h2>
+		        <ul>
+		        {{range .ValidationStatus.Items}}
+		          <li>
+		            <a href="{{.DetailURL}}">{{.RunID}}</a> <span class="muted">validation {{.ValidationState}} · {{.TimestampLabel}}</span>
+		            {{if .CountsLabel}}<div class="muted">{{.CountsLabel}}</div>{{end}}
+		            <div><a href="{{.DetailURL}}">Run detail</a>{{if .AuditURL}} · <a href="{{.AuditURL}}">Audit export</a>{{end}}</div>
+		          </li>
+		        {{end}}
+		        </ul>
+		      </section>
+		      {{end}}
+		      <section>
+		        <h2>Evaluation Findings</h2>
 	        {{if .EvaluationFindings.RunID}}
 	          <p><a href="{{.EvaluationFindings.DetailURL}}">{{.EvaluationFindings.RunID}}</a> <span class="muted">{{.EvaluationFindings.State}} · {{.EvaluationFindings.TimestampLabel}}</span></p>
 	          <p class="muted">{{.EvaluationFindings.SummaryLabel}} · issues {{.EvaluationFindings.IssueCount}} · risks {{.EvaluationFindings.RiskCount}} · warnings {{.EvaluationFindings.WarningCount}}</p>

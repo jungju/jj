@@ -260,6 +260,9 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !indexCalls["evaluationFindingsSummaryFromRuns"] {
 		t.Fatalf("handleIndex must build evaluation-findings data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
+	if !indexCalls["validationStatusSummaryFromRuns"] {
+		t.Fatalf("handleIndex must build validation-status data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
+	}
 	if !indexCalls["nextActionSummaryFromSummaries"] {
 		t.Fatalf("handleIndex must build next-action data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
@@ -271,6 +274,10 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"recentRunsSummaryFromRuns",
 		"recentRunItemFromRun",
 		"evaluationFindingsSummaryFromRuns",
+		"validationStatusSummaryFromRuns",
+		"validationStatusItemFromRun",
+		"validationStatusUnavailableItemFromRun",
+		"validationStatusMetadataForRun",
 		"nextActionSummaryFromSummaries",
 		"handleRunCompare",
 		"loadRunCompareSide",

@@ -1384,6 +1384,34 @@
       "updated_at": "2026-04-28T22:17:57Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Dashboard root shows a compact Validation Status section when at least one valid guarded completed run has validation metadata.",
+        "Validation Status exposes only sanitized run ID label, validation state, safe count labels when available, timestamp label, and guarded links to existing run views.",
+        "No response contains raw validation payloads, stdout/stderr, command text, environment values, manifests, diffs, artifact bodies, unsafe absolute paths, denied payloads, token-like values, configured secrets, private key blocks, omission placeholders, or raw document bodies.",
+        "No-validation, missing metadata, denied, malformed, partial, stale, hostile-label, token-like, or internally inconsistent metadata renders deterministic none, unavailable, unknown, or denied states without server errors.",
+        "Selection is deterministic for missing, malformed, duplicated, or tied timestamps using sanitized stable tie-breakers only.",
+        "Existing TASK summary, latest-run summary, next-action summary, Project Docs, Recent Runs, Evaluation Findings, and Active Run behavior remains unchanged.",
+        "Focused serve/dashboard tests, go test ./internal/serve, and scripts/validate.sh pass with sanitized release-gate metadata."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t28",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T22:20:21Z",
+      "created_by_run": "autopilot-20260428-160202-t28",
+      "created_by_turn": null,
+      "id": "TASK-0049",
+      "mode": "feature",
+      "priority": "high",
+      "reason": "All 48 current tasks are complete and there is no current blocker, failing validation, CI regression, disclosure, or boundary evidence requiring bugfix or security work. The next smallest useful user-facing capability is a dashboard-first Validation Status section for the latest guarded completed run, derived only from shared sanitized DTO/helper output.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Show sanitized validation status on the dashboard",
+      "updated_at": "2026-04-28T22:34:34Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

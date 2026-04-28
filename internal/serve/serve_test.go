@@ -833,6 +833,320 @@ func TestActiveRunSelectionIsDeterministicForTimestampFallbacksAndTies(t *testin
 	}
 }
 
+func TestDashboardValidationStatusShowsSanitizedLatestCompletedRunAndPreservesSections(t *testing.T) {
+	dir := t.TempDir()
+	secret := "sk-proj-validationstatus1234567890"
+	t.Setenv("JJ_VALIDATION_STATUS_SECRET", secret)
+	writeFile(t, dir, "plan.md", "# Plan\n")
+	writeFile(t, dir, "README.md", "# README\n")
+	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n")
+	writeFile(t, dir, "docs/EVAL.md", "# Eval\n")
+	writeFile(t, dir, "docs/TASK.md", `# Tasks
+
+- [~] TASK-0049 [feature] Show sanitized validation status on the dashboard
+`)
+	writeFile(t, dir, ".jj/runs/20260429-120000-passed/manifest.json", `{
+		"run_id":"20260429-120000-passed",
+		"status":"complete",
+		"started_at":"2026-04-29T12:00:00Z",
+		"planner_provider":"openai",
+		"artifacts":{"manifest":"manifest.json"},
+		"validation":{"ran":true,"status":"passed","evidence_status":"recorded","command_count":1,"passed_count":1}
+	}`)
+	writeFile(t, dir, ".jj/runs/20260429-123000-active/manifest.json", `{
+		"run_id":"20260429-123000-active",
+		"status":"implementing",
+		"started_at":"2026-04-29T12:30:00Z",
+		"planner_provider":"codex",
+		"artifacts":{"manifest":"manifest.json"},
+		"validation":{"status":"passed","evidence_status":"recorded"}
+	}`)
+	writeFile(t, dir, ".jj/runs/20260429-130000-failed/manifest.json", `{
+		"run_id":"20260429-130000-failed",
+		"status":"partial_failed",
+		"started_at":"2026-04-29T13:00:00Z",
+		"planner_provider":"codex",
+		"artifacts":{"manifest":"manifest.json","validation_summary":"validation/summary.md","validation_results":"validation/results.json"},
+		"validation":{
+			"ran":true,
+			"status":"failed",
+			"evidence_status":"recorded",
+			"summary":"raw validation payload token=`+secret+` [omitted]",
+			"reason":"raw command text OPENAI_API_KEY=`+secret+` ./scripts/validate.sh",
+			"summary_path":"validation/summary.md",
+			"results_path":"validation/results.json",
+			"command_count":2,
+			"passed_count":1,
+			"failed_count":1,
+			"commands":[{"label":"validate","command":"OPENAI_API_KEY=`+secret+` ./scripts/validate.sh","stdout_path":"validation/stdout.txt","stderr_path":"validation/stderr.txt","status":"failed"}]
+		}
+	}`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+
+	validation := dashboardValidationStatusSection(t, body)
+	for _, want := range []string{
+		"Validation Status",
+		"20260429-130000-failed",
+		"validation failed",
+		"commands 2 · passed 1 · failed 1",
+		"2026-04-29T13:00:00Z",
+		`href="/runs/20260429-130000-failed"`,
+		`href="/runs/audit?run=20260429-130000-failed"`,
+	} {
+		if !strings.Contains(validation, want) {
+			t.Fatalf("validation status missing %q:\n%s", want, validation)
+		}
+	}
+	for _, leaked := range []string{
+		"20260429-120000-passed",
+		"20260429-123000-active",
+		secret,
+		"raw validation payload",
+		"raw command text",
+		"OPENAI_API_KEY",
+		"validation/summary.md",
+		"validation/results.json",
+		"stdout",
+		"stderr",
+		"manifest.json",
+		"provider/result",
+		security.RedactionMarker,
+		"[omitted]",
+	} {
+		if strings.Contains(validation, leaked) {
+			t.Fatalf("validation status leaked %q:\n%s", leaked, validation)
+		}
+	}
+
+	taskSection := htmlSection(body, "Current TASK", "Latest Run")
+	for _, want := range []string{"TASK-0049", "feature", "in-progress", "Show sanitized validation status on the dashboard"} {
+		if !strings.Contains(taskSection, want) {
+			t.Fatalf("TASK summary changed, missing %q:\n%s", want, taskSection)
+		}
+	}
+	latest := htmlSection(body, "Latest Run", "Risks And Failures")
+	for _, want := range []string{"20260429-130000-failed", "provider/result codex", "evaluation failed (recorded)"} {
+		if !strings.Contains(latest, want) {
+			t.Fatalf("latest-run summary changed, missing %q:\n%s", want, latest)
+		}
+	}
+	findings := htmlSection(body, "Evaluation Findings", "Recent Runs")
+	for _, want := range []string{"20260429-130000-failed", "findings", "evaluation failed (recorded)"} {
+		if !strings.Contains(findings, want) {
+			t.Fatalf("evaluation findings summary changed, missing %q:\n%s", want, findings)
+		}
+	}
+	recent := htmlSection(body, "Recent Runs", "Next Action")
+	for _, want := range []string{"20260429-130000-failed", "20260429-123000-active"} {
+		if !strings.Contains(recent, want) {
+			t.Fatalf("recent-runs summary changed, missing %q:\n%s", want, recent)
+		}
+	}
+	active := dashboardActiveRunSection(t, body)
+	if !strings.Contains(active, "20260429-123000-active") || strings.Contains(active, "20260429-130000-failed") {
+		t.Fatalf("active-run summary changed:\n%s", active)
+	}
+	next := htmlSection(body, "Next Action", "Project Docs")
+	for _, want := range []string{"Continue Task", "continue_task", "TASK-0049"} {
+		if !strings.Contains(next, want) {
+			t.Fatalf("next-action summary changed, missing %q:\n%s", want, next)
+		}
+	}
+	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
+	for _, want := range []string{"plan.md", "docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md", "README.md"} {
+		if !strings.Contains(projectDocs, want) {
+			t.Fatalf("project docs summary changed, missing %q:\n%s", want, projectDocs)
+		}
+	}
+}
+
+func TestDashboardValidationStatusUnavailableUnknownDeniedAndNoneStatesAreSafe(t *testing.T) {
+	secret := "sk-proj-validationstate1234567890"
+	cases := []struct {
+		name        string
+		runID       string
+		setup       func(t *testing.T, dir, runID string)
+		wantSection bool
+		want        []string
+		forbidden   []string
+	}{
+		{
+			name:  "no validation",
+			runID: "20260429-120000-no-validation",
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","started_at":"2026-04-29T12:00:00Z","artifacts":{"manifest":"manifest.json"}}`)
+			},
+		},
+		{
+			name:        "missing validation",
+			runID:       "20260429-121000-missing",
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","started_at":"2026-04-29T12:10:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"missing","evidence_status":"missing"}}`)
+			},
+			want: []string{"20260429-121000-missing", "validation unavailable", "2026-04-29T12:10:00Z"},
+		},
+		{
+			name:        "partial validation",
+			runID:       "20260429-122000-partial",
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"partial_failed","started_at":"2026-04-29T12:20:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"partial","evidence_status":"recorded","command_count":1,"failed_count":1}}`)
+			},
+			want: []string{"20260429-122000-partial", "validation unavailable", "commands 1 · passed 0 · failed 1"},
+		},
+		{
+			name:        "stale validation",
+			runID:       "20260429-123000-stale",
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","started_at":"2026-04-29T12:30:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"stale","evidence_status":"recorded"}}`)
+			},
+			want: []string{"20260429-123000-stale", "validation unavailable"},
+		},
+		{
+			name:        "skipped validation",
+			runID:       "20260429-124000-skipped",
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"dry_run_complete","started_at":"2026-04-29T12:40:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"skipped":true,"status":"skipped","evidence_status":"skipped","command_count":1}}`)
+			},
+			want: []string{"20260429-124000-skipped", "validation skipped", "commands 1 · passed 0 · failed 0"},
+		},
+		{
+			name:        "hostile token-like validation",
+			runID:       "20260429-125000-hostile",
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				t.Setenv("JJ_VALIDATION_STATUS_STATE_SECRET", secret)
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{
+					"run_id":"`+runID+`",
+					"status":"complete",
+					"started_at":"2026-04-29T12:50:00Z",
+					"artifacts":{"manifest":"manifest.json","validation_summary":"validation/summary.md"},
+					"validation":{"ran":true,"status":"`+secret+`","summary":"raw validation payload token=`+secret+`","summary_path":"validation/summary.md"},
+					"errors":["Authorization: Bearer `+secret+`"]
+				}`)
+			},
+			want:      []string{"20260429-125000-hostile", "validation unknown"},
+			forbidden: []string{secret, "raw validation payload", "Authorization: Bearer", "token=", "validation/summary.md"},
+		},
+		{
+			name:        "inconsistent validation",
+			runID:       "20260429-126000-inconsistent",
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","started_at":"2026-04-29T13:00:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"passed","evidence_status":"recorded","command_count":1,"passed_count":1,"failed_count":1}}`)
+			},
+			want: []string{"20260429-126000-inconsistent", "validation unknown", "commands 1 · passed 1 · failed 1"},
+		},
+		{
+			name:        "malformed manifest",
+			runID:       "20260429-127000-malformed",
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"`+secret+`",`)
+			},
+			want:      []string{"20260429-127000-malformed", "validation unavailable"},
+			forbidden: []string{secret},
+		},
+		{
+			name:        "denied manifest",
+			runID:       "20260429-128000-denied",
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				outside := t.TempDir()
+				writeFile(t, outside, "manifest.json", `{"run_id":"`+runID+`","status":"complete","artifacts":{"manifest":"manifest.json"},"validation":{"status":"passed"}}`)
+				if err := os.MkdirAll(filepath.Join(dir, ".jj/runs", runID), 0o755); err != nil {
+					t.Fatalf("mkdir run: %v", err)
+				}
+				if err := os.Symlink(filepath.Join(outside, "manifest.json"), filepath.Join(dir, ".jj/runs", runID, "manifest.json")); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+			},
+			want: []string{"20260429-128000-denied", "validation denied"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tc.setup(t, dir, tc.runID)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			newTestServer(t, dir, "").Handler().ServeHTTP(rec, req)
+			body := rec.Body.String()
+			if rec.Code != http.StatusOK {
+				t.Fatalf("dashboard status = %d body=%s", rec.Code, body)
+			}
+			if !tc.wantSection {
+				if strings.Contains(body, "<h2>Validation Status</h2>") {
+					t.Fatalf("%s should not render validation status section:\n%s", tc.name, body)
+				}
+				return
+			}
+			section := dashboardValidationStatusSection(t, body)
+			for _, want := range tc.want {
+				if !strings.Contains(section, want) {
+					t.Fatalf("%s validation status missing %q:\n%s", tc.name, want, section)
+				}
+			}
+			for _, leaked := range append(tc.forbidden, security.RedactionMarker, "[omitted]", "Raw manifest", "stdout", "stderr", "raw command text", "raw environment") {
+				if strings.Contains(section, leaked) {
+					t.Fatalf("%s validation status leaked %q:\n%s", tc.name, leaked, section)
+				}
+			}
+		})
+	}
+}
+
+func TestValidationStatusSelectionIsDeterministicForTimestampFallbacksAndTies(t *testing.T) {
+	passed := runEvaluationMetadata{State: "all-clear", Status: "passed", EvidenceStatus: "recorded", SummaryLabel: "evaluation passed"}
+	failed := runEvaluationMetadata{State: "findings", Status: "failed", EvidenceStatus: "recorded", SummaryLabel: "evaluation failed", CommandCount: 1, FailedCount: 1}
+	skipped := runEvaluationMetadata{State: "none", Status: "skipped", EvidenceStatus: "skipped", SummaryLabel: "evaluation skipped", CommandCount: 1}
+	none := runEvaluationMetadata{State: "none", Status: "none", EvidenceStatus: "none", SummaryLabel: "evaluation none"}
+
+	summary := validationStatusSummaryFromRuns([]runLink{
+		{ID: "20260429-235959-id-late", Status: "complete", StartedAt: "2026-04-29T10:00:00Z", Evaluation: passed},
+		{ID: "20260429-090000-clock-late", Status: "complete", StartedAt: "2026-04-29T13:00:00Z", Evaluation: failed},
+	})
+	if len(summary.Items) != 1 || summary.Items[0].RunID != "20260429-090000-clock-late" || summary.Items[0].ValidationState != "failed" {
+		t.Fatalf("expected manifest timestamp to select failed validation, got %#v", summary)
+	}
+
+	summary = validationStatusSummaryFromRuns([]runLink{
+		{ID: "20260429-170000-active", Status: "planning", StartedAt: "2026-04-29T17:00:00Z", Evaluation: failed},
+		{ID: "20260429-160000-id-fallback", Status: "dry_run_complete", StartedAt: "not-a-time", Evaluation: skipped},
+		{ID: "20260429-150000-no-validation", Status: "complete", Evaluation: none},
+	})
+	if len(summary.Items) != 1 || summary.Items[0].RunID != "20260429-160000-id-fallback" || summary.Items[0].ValidationState != "skipped" {
+		t.Fatalf("expected run-id timestamp fallback and skipped validation, got %#v", summary)
+	}
+
+	summary = validationStatusSummaryFromRuns([]runLink{
+		{ID: "20260429-130000-tie-a", Status: "complete", StartedAt: "2026-04-29T12:00:00Z", Evaluation: passed},
+		{ID: "20260429-140000-tie-b", Status: "complete", StartedAt: "2026-04-29T12:00:00Z", Evaluation: failed},
+	})
+	if len(summary.Items) != 1 || summary.Items[0].RunID != "20260429-140000-tie-b" {
+		t.Fatalf("expected deterministic ID tie-break, got %#v", summary)
+	}
+
+	unsafe := validationStatusSummaryFromRuns([]runLink{
+		{ID: "sk-proj-validationhelper1234567890", Status: "complete", Evaluation: passed},
+		{ID: "20260429-180000-inconsistent", Status: "complete", Evaluation: runEvaluationMetadata{State: "all-clear", Status: "passed", EvidenceStatus: "recorded", CommandCount: 1, FailedCount: 1}},
+	})
+	if len(unsafe.Items) != 1 || unsafe.Items[0].RunID != "20260429-180000-inconsistent" || unsafe.Items[0].ValidationState != "unknown" {
+		t.Fatalf("unsafe validation metadata should drop token-like IDs and render unknown state: %#v", unsafe)
+	}
+}
+
 func TestDashboardEvaluationFindingsShowsLatestFindingsAndPreservesSections(t *testing.T) {
 	dir := t.TempDir()
 	secret := "sk-proj-evalfindings1234567890"
@@ -4153,6 +4467,14 @@ func dashboardEvaluationFindingsSection(t *testing.T, server *Server) string {
 		t.Fatalf("dashboard status = %d body=%s", rec.Code, body)
 	}
 	return htmlSection(body, "Evaluation Findings", "Recent Runs")
+}
+
+func dashboardValidationStatusSection(t *testing.T, body string) string {
+	t.Helper()
+	if !strings.Contains(body, "<h2>Validation Status</h2>") {
+		t.Fatalf("dashboard missing Validation Status section:\n%s", body)
+	}
+	return htmlSection(body, "Validation Status", "Evaluation Findings")
 }
 
 func dashboardActiveRunSection(t *testing.T, body string) string {
