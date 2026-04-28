@@ -270,6 +270,9 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !detailCalls["validationEvidenceFromRun"] {
 		t.Fatalf("runDetailFromInspection must build validation evidence through the sanitized run DTO helper; calls=%v", sortedCallNames(detailCalls))
 	}
+	if !detailCalls["runArtifactInventoryFromRun"] {
+		t.Fatalf("runDetailFromInspection must build run artifacts through the sanitized run DTO helper; calls=%v", sortedCallNames(detailCalls))
+	}
 
 	for _, fn := range []string{
 		"handleIndex",
@@ -292,6 +295,7 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"runHistoryLinkFromInspection",
 		"runDetailFromInspection",
 		"validationEvidenceFromRun",
+		"runArtifactInventoryFromRun",
 	} {
 		calls := serveFunctionCalls(t, funcs, fn)
 		for _, forbidden := range []string{"readRunFile", "loadDashboardManifest", "loadRunManifestResponse", "json.Unmarshal", "os.ReadFile"} {

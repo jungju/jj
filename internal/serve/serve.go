@@ -130,6 +130,7 @@ type runLink struct {
 	Invalid                  bool
 	ValidationArtifact       string
 	ValidationLabels         []string
+	ArtifactInventory        []runArtifactStatus
 	Evaluation               runEvaluationMetadata
 	CompareURL               string
 }
@@ -543,6 +544,7 @@ type runDetailLink struct {
 }
 
 type runArtifactStatus struct {
+	Label     string
 	Path      string
 	URL       string
 	Available bool
@@ -1567,6 +1569,7 @@ func runAuditLinksFromArtifactStatuses(statuses []runArtifactStatus) []runAuditL
 	out := make([]runAuditLink, 0, len(statuses))
 	for _, status := range statuses {
 		out = append(out, runAuditLink{
+			Label:     status.Label,
 			Path:      status.Path,
 			URL:       status.URL,
 			Available: status.Available,
@@ -4837,6 +4840,9 @@ func (s *Server) runHistoryLinkFromInspection(inspection runInspection) runLink 
 	if run.ValidationArtifact == "" {
 		run.ValidationArtifact = artifactPathByValue(manifest.Artifacts, manifest.Validation.SummaryPath)
 	}
+	if !strings.EqualFold(run.Status, "stale") {
+		run.ArtifactInventory = s.runArtifactStatuses(manifest, inspection.RunDir, inspection.rawID, inspection.Roots...)
+	}
 	if len(manifest.Errors) > 0 {
 		run.ErrorSummary = safeText(manifest.Errors[0])
 		run.Failures = sanitizeDashboardList(manifest.Errors, inspection.Roots...)
@@ -4927,7 +4933,10 @@ func (s *Server) runDetailFromInspection(inspection runInspection) runDetail {
 	}
 
 	if trustedManifest {
-		detail.Artifacts = s.runArtifactStatuses(manifest, inspection.RunDir, inspection.rawID, roots...)
+		detail.Artifacts = runArtifactInventoryFromRun(runDTO)
+		if len(detail.Artifacts) == 0 {
+			detail.ArtifactNote = "No allowlisted run artifact metadata recorded."
+		}
 		detail.Docs = s.runDetailDocs(manifest, inspection.RunDir, inspection.rawID, roots...)
 		detail.Codex = s.runCodexDetail(manifest, inspection.RunDir, inspection.rawID, roots...)
 		detail.Commands = s.runCommandDetails(manifest, inspection.RunDir, inspection.rawID, roots...)
@@ -4993,31 +5002,77 @@ func (s *Server) runDetailDocs(manifest dashboardManifest, runDir, runID string,
 }
 
 func (s *Server) runArtifactStatuses(manifest dashboardManifest, runDir, runID string, roots ...security.CommandPathRoot) []runArtifactStatus {
-	seen := map[string]bool{}
-	artifacts := make([]runArtifactStatus, 0, len(manifest.Artifacts))
-	for _, raw := range manifest.Artifacts {
-		clean, err := cleanAllowedArtifactPath(raw)
-		if err != nil {
-			if !seen["guarded artifact"] {
-				seen["guarded artifact"] = true
-				artifacts = append(artifacts, runArtifactStatus{Path: "guarded artifact", Status: "guarded"})
+	seenLabels := map[string]bool{}
+	artifacts := make([]runArtifactStatus, 0, 7)
+	addCategory := func(label string, candidates ...string) {
+		if seenLabels[label] {
+			return
+		}
+		for _, candidate := range candidates {
+			status := artifactStatusForPath(manifest, runDir, runID, candidate, roots...)
+			if status.Path == "" {
+				continue
 			}
-			continue
-		}
-		if seen[clean] {
-			continue
-		}
-		seen[clean] = true
-		status := artifactStatusForPath(manifest, runDir, runID, clean, roots...)
-		if status.Path != "" {
+			status.Label = label
 			artifacts = append(artifacts, status)
+			seenLabels[label] = true
+			return
 		}
 	}
-	sort.SliceStable(artifacts, func(i, j int) bool {
-		return artifactRank(artifacts[i].Path) < artifactRank(artifacts[j].Path) ||
-			(artifactRank(artifacts[i].Path) == artifactRank(artifacts[j].Path) && artifacts[i].Path < artifacts[j].Path)
-	})
+	addCategory("Input plan", listedArtifactPath(manifest.Artifacts, "input_plan", "input_original", "input"))
+	addCategory("Generated SPEC", listedArtifactPath(manifest.Artifacts, "snapshot_spec_after", "snapshot_spec_planned", "spec_state"))
+	addCategory("Generated TASK", listedArtifactPath(manifest.Artifacts, "snapshot_tasks_after", "tasks_state"))
+	addCategory("Evaluation", firstNonEmpty(
+		manifest.Validation.SummaryPath,
+		listedArtifactPath(manifest.Artifacts, "validation_summary"),
+		manifest.Validation.ResultsPath,
+		listedArtifactPath(manifest.Artifacts, "validation_results"),
+	))
+	addCategory("Manifest summary", listedArtifactPath(manifest.Artifacts, "manifest"))
+	addCategory("Git diff summary", firstNonEmpty(
+		manifest.Git.DiffSummaryPath,
+		listedArtifactPath(manifest.Artifacts, "git_diff_summary"),
+	))
+	addCategory("Codex summary", firstNonEmpty(
+		manifest.Codex.SummaryPath,
+		listedArtifactPath(manifest.Artifacts, "codex_summary"),
+	))
 	return artifacts
+}
+
+func runArtifactInventoryFromRun(run runLink) []runArtifactStatus {
+	out := make([]runArtifactStatus, 0, len(run.ArtifactInventory))
+	for _, status := range run.ArtifactInventory {
+		status.Label = sanitizeRunDetailText(status.Label)
+		status.Path = sanitizeRunDetailText(status.Path)
+		status.URL = safeRunArtifactURL(status.URL)
+		status.Status = runArtifactAvailabilityLabel(status.Status)
+		if status.Label == "" || unsafeRunDetailText(status.Label) {
+			continue
+		}
+		if status.Path == "" && status.URL == "" {
+			continue
+		}
+		status.Available = status.Available && status.URL != ""
+		out = append(out, status)
+	}
+	return out
+}
+
+func runArtifactAvailabilityLabel(value string) string {
+	value = strings.TrimSpace(sanitizeRunDetailText(value))
+	switch value {
+	case "available", "missing", "unavailable", "guarded", "not listed", "not recorded", "unknown":
+		return value
+	case "":
+		return "unknown"
+	default:
+		category := dashboardCategory(value, "unknown")
+		if category == "notlisted" {
+			return "not listed"
+		}
+		return category
+	}
 }
 
 func (s *Server) runValidationDetail(manifest dashboardManifest, runDir, runID string, trustedManifest bool, roots ...security.CommandPathRoot) runValidationDetail {
@@ -5285,6 +5340,29 @@ func manifestHasArtifactPath(artifacts map[string]string, clean string) bool {
 
 func artifactURL(runID, path string) string {
 	return "/artifact?run=" + template.URLQueryEscaper(runID) + "&path=" + template.URLQueryEscaper(path)
+}
+
+func safeRunArtifactURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.ContainsAny(raw, "\x00\r\n\\") || strings.Contains(raw, security.RedactionMarker) {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.Path != "/artifact" {
+		return ""
+	}
+	query := parsed.Query()
+	runs := query["run"]
+	paths := query["path"]
+	if len(runs) != 1 || len(paths) != 1 || len(query) != 2 {
+		return ""
+	}
+	runID := latestRunIDLabel(runs[0])
+	path, err := cleanAllowedArtifactPath(paths[0])
+	if runID == "" || err != nil {
+		return ""
+	}
+	return artifactURL(runID, path)
 }
 
 func docURL(path string) string {
@@ -6152,9 +6230,9 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
           <h3>Artifact Availability</h3>
           <ul>
           {{range .Artifacts}}
-            <li>{{if .URL}}<a href="{{.URL}}">{{.Path}}</a>{{else}}{{.Path}}{{end}} <span class="muted">{{.Status}}</span></li>
+            <li>{{if .Label}}{{.Label}} · {{end}}{{if .URL}}<a href="{{.URL}}">{{.Path}}</a>{{else}}{{.Path}}{{end}} <span class="muted">{{.Status}}</span></li>
           {{else}}
-            <li class="muted">No manifest-listed artifacts available.</li>
+            <li class="muted">No allowlisted run artifacts recorded.</li>
           {{end}}
           </ul>
         </section>
@@ -6244,13 +6322,13 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
         <p class="muted">{{.RunDetail.SecuritySummary}}{{range .RunDetail.SecurityDetails}} · {{.}}{{end}}</p>
       </section>
       <section>
-        <h2>Artifacts</h2>
+        <h2>Run Artifacts</h2>
         {{if .RunDetail.ArtifactNote}}<p class="muted">{{.RunDetail.ArtifactNote}}</p>{{end}}
         <ul>
         {{range .RunDetail.Artifacts}}
-          <li>{{if .URL}}<a href="{{.URL}}">{{.Path}}</a>{{else}}{{.Path}}{{end}} <span class="muted">{{.Status}}</span></li>
+          <li>{{.Label}} · {{if .URL}}<a href="{{.URL}}">{{.Path}}</a>{{else}}{{.Path}}{{end}} <span class="muted">{{.Status}}</span></li>
         {{else}}
-          <li class="muted">No manifest-listed artifacts available.</li>
+          <li class="muted">No allowlisted run artifacts recorded.</li>
         {{end}}
         </ul>
       </section>

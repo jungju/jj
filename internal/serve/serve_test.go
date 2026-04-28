@@ -2151,9 +2151,15 @@ func TestIndexShowsPlanningValidationFailureRun(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("run status = %d body=%s", rec.Code, body)
 	}
-	for _, want := range []string{"planning/merge.json", "planning/merged.json", "planning/raw_response_merge.txt"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("run artifact list missing %q:\n%s", want, body)
+	section := runDetailRunArtifactsSection(t, body)
+	for _, want := range []string{"Run Artifacts", "Manifest summary", "manifest.json", "available"} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("run artifact inventory missing %q:\n%s", want, section)
+		}
+	}
+	for _, hidden := range []string{"planning/merge.json", "planning/merged.json", "planning/raw_response_merge.txt"} {
+		if strings.Contains(section, hidden) {
+			t.Fatalf("run artifact inventory exposed non-allowlisted artifact %q:\n%s", hidden, section)
 		}
 	}
 
@@ -2196,9 +2202,15 @@ func TestRunArtifactsExposeUntrackedEvidence(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("run status = %d body=%s", rec.Code, body)
 	}
-	for _, want := range []string{"git/untracked-files.txt", "git/untracked.patch", "git/untracked-summary.txt"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("run artifact list missing %q:\n%s", want, body)
+	section := runDetailRunArtifactsSection(t, body)
+	for _, want := range []string{"Run Artifacts", "Manifest summary", "manifest.json"} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("run artifact inventory missing %q:\n%s", want, section)
+		}
+	}
+	for _, hidden := range []string{"git/untracked-files.txt", "git/untracked.patch", "git/untracked-summary.txt"} {
+		if strings.Contains(section, hidden) {
+			t.Fatalf("run artifact inventory exposed non-allowlisted artifact %q:\n%s", hidden, section)
 		}
 	}
 
@@ -2845,8 +2857,12 @@ func TestRunDetailShowsManifestMetadataAndGuardedLinks(t *testing.T) {
 		"security redactions 3",
 		"denied paths 1",
 		"dry-run parity equivalent",
-		"validation/missing.md",
-		"missing",
+		"Run Artifacts",
+		"Generated SPEC",
+		"Generated TASK",
+		"Evaluation",
+		"Manifest summary",
+		"Codex summary",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("detail missing %q:\n%s", want, body)
@@ -2867,7 +2883,7 @@ func TestRunDetailShowsManifestMetadataAndGuardedLinks(t *testing.T) {
 			t.Fatalf("detail leaked %q:\n%s", leaked, body)
 		}
 	}
-	if !strings.Contains(body, `href="/artifact?run=`+runID) || strings.Contains(body, "validation/unlisted") {
+	if !strings.Contains(body, `href="/artifact?run=`+runID) || strings.Contains(body, "validation/unlisted") || strings.Contains(body, "validation/missing.md") {
 		t.Fatalf("detail did not use guarded artifact links:\n%s", body)
 	}
 }
@@ -2942,7 +2958,7 @@ func TestRunDetailValidationEvidenceShowsSanitizedCompletedRun(t *testing.T) {
 			t.Fatalf("validation evidence leaked %q:\n%s", leaked, section)
 		}
 	}
-	for _, want := range []string{"Overview", "Evaluation", "Codex", "Command Metadata", "Artifacts"} {
+	for _, want := range []string{"Overview", "Evaluation", "Codex", "Command Metadata", "Run Artifacts"} {
 		if !strings.Contains(body, "<h2>"+want+"</h2>") {
 			t.Fatalf("existing run detail section %q disappeared:\n%s", want, body)
 		}
@@ -3140,7 +3156,7 @@ func TestRunDetailComparePreviousShowsSanitizedGuardedAction(t *testing.T) {
 			t.Fatalf("compare previous leaked %q:\n%s", leaked, section)
 		}
 	}
-	for _, want := range []string{"Validation Evidence", "Codex", "Command Metadata", "Artifacts"} {
+	for _, want := range []string{"Validation Evidence", "Codex", "Command Metadata", "Run Artifacts"} {
 		if !strings.Contains(body, "<h2>"+want+"</h2>") {
 			t.Fatalf("existing run detail section %q disappeared:\n%s", want, body)
 		}
@@ -3289,6 +3305,216 @@ func TestRunDetailComparePreviousSelectionIsDeterministic(t *testing.T) {
 			wantURL := `/runs/compare?left=` + tc.current + `&amp;right=` + tc.previous
 			if !strings.Contains(section, wantURL) || !strings.Contains(section, "Compare "+tc.current+" to "+tc.previous) {
 				t.Fatalf("compare previous did not use deterministic previous %q:\n%s", tc.previous, section)
+			}
+		})
+	}
+}
+
+func TestRunDetailRunArtifactsShowsAllowlistedInventoryAndPreservesSections(t *testing.T) {
+	dir := t.TempDir()
+	runID := "20260429-170000-artifacts"
+	secret := "sk-proj-runartifacts1234567890"
+	rawPath := filepath.Join(dir, "outside", "secret.txt")
+	t.Setenv("JJ_RUN_ARTIFACT_SECRET", secret)
+	writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", fmt.Sprintf(`{
+		"run_id":%q,
+		"status":"complete",
+		"started_at":"2026-04-29T17:00:00Z",
+		"artifacts":{
+			"manifest":"manifest.json",
+			"input_plan":"input/plan.md",
+			"snapshot_spec_after":"snapshots/spec.after.json",
+			"snapshot_tasks_after":"snapshots/tasks.after.json",
+			"validation_summary":"validation/summary.md",
+			"git_diff_summary":"git/diff-summary.txt",
+			"codex_summary":"codex/summary.md",
+			"hostile_label_%s":"planning/raw-response.txt",
+			"token_like":"%s",
+			"absolute":"%s"
+		},
+		"validation":{"status":"passed","evidence_status":"recorded","summary_path":"validation/summary.md","command_count":1,"passed_count":1},
+		"git":{"diff_summary_path":"git/diff-summary.txt"},
+		"codex":{"ran":true,"status":"success","summary_path":"codex/summary.md"}
+	}`, runID, secret, secret, rawPath))
+	for _, rel := range []string{
+		"input/plan.md",
+		"snapshots/spec.after.json",
+		"snapshots/tasks.after.json",
+		"validation/summary.md",
+		"git/diff-summary.txt",
+		"codex/summary.md",
+		"planning/raw-response.txt",
+	} {
+		writeFile(t, dir, ".jj/runs/"+runID+"/"+rel, rel+"\n")
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
+	newTestServer(t, dir, "").Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail status = %d body=%s", rec.Code, body)
+	}
+	section := runDetailRunArtifactsSection(t, body)
+	ordered := []string{"Input plan", "Generated SPEC", "Generated TASK", "Evaluation", "Manifest summary", "Git diff summary", "Codex summary"}
+	last := -1
+	for _, want := range ordered {
+		idx := strings.Index(section, want)
+		if idx < 0 {
+			t.Fatalf("run artifact inventory missing %q:\n%s", want, section)
+		}
+		if idx < last {
+			t.Fatalf("run artifact inventory order is not deterministic around %q:\n%s", want, section)
+		}
+		last = idx
+	}
+	for _, want := range []string{
+		`href="/artifact?run=` + runID + `&amp;path=input%2Fplan.md"`,
+		`href="/artifact?run=` + runID + `&amp;path=snapshots%2Fspec.after.json"`,
+		`href="/artifact?run=` + runID + `&amp;path=validation%2Fsummary.md"`,
+		"available",
+	} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("run artifact inventory missing %q:\n%s", want, section)
+		}
+	}
+	for _, leaked := range []string{
+		secret,
+		"sk-proj",
+		"hostile_label",
+		"token_like",
+		"absolute",
+		rawPath,
+		filepath.ToSlash(rawPath),
+		"planning/raw-response.txt",
+		"raw artifact body",
+		security.RedactionMarker,
+		"[omitted]",
+	} {
+		if strings.Contains(section, leaked) {
+			t.Fatalf("run artifact inventory leaked %q:\n%s", leaked, section)
+		}
+	}
+	for _, want := range []string{"Overview", "Generated State And Docs", "Evaluation", "Validation Evidence", "Compare Previous", "Codex", "Command Metadata", "Security Diagnostics"} {
+		if !strings.Contains(body, "<h2>"+want+"</h2>") {
+			t.Fatalf("existing run detail section %q disappeared:\n%s", want, body)
+		}
+	}
+}
+
+func TestRunDetailRunArtifactsSafeStates(t *testing.T) {
+	secret := "sk-proj-runartifactstates1234567890"
+	cases := []struct {
+		name        string
+		runID       string
+		setup       func(t *testing.T, dir, runID string)
+		status      int
+		wantSection bool
+		want        []string
+		forbidden   []string
+	}{
+		{
+			name:        "missing artifact metadata",
+			runID:       "20260429-171000-missing",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","artifacts":{}}`)
+			},
+			want: []string{"No allowlisted run artifact metadata recorded.", "No allowlisted run artifacts recorded."},
+		},
+		{
+			name:        "malformed metadata",
+			runID:       "20260429-172000-malformed",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"`+secret+`",`)
+			},
+			want:      []string{"manifest is malformed", "No allowlisted run artifacts recorded."},
+			forbidden: []string{secret, "sk-proj"},
+		},
+		{
+			name:        "stale metadata",
+			runID:       "20260429-173000-stale",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"stale","artifacts":{"manifest":"manifest.json","codex_summary":"codex/summary.md"}}`)
+				writeFile(t, dir, ".jj/runs/"+runID+"/codex/summary.md", "stale summary\n")
+			},
+			want:      []string{"No allowlisted run artifact metadata recorded.", "No allowlisted run artifacts recorded."},
+			forbidden: []string{"codex/summary.md"},
+		},
+		{
+			name:        "hostile and token-like metadata",
+			runID:       "20260429-174000-hostile",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				t.Setenv("JJ_RUN_ARTIFACT_STATE_SECRET", secret)
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{
+					"run_id":"`+runID+`",
+					"status":"complete",
+					"artifacts":{"manifest":"manifest.json","codex_summary":"`+secret+`","token=`+secret+`":"raw artifact body token=`+secret+`"}
+				}`)
+			},
+			want:      []string{"Manifest summary", "Codex summary", "guarded artifact", "guarded"},
+			forbidden: []string{secret, "sk-proj", "token=", "raw artifact body"},
+		},
+		{
+			name:        "internally inconsistent metadata",
+			runID:       "20260429-175000-inconsistent",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","artifacts":{"manifest":"manifest.json"},"validation":{"status":"passed","summary_path":"validation/summary.md"}}`)
+			},
+			want: []string{"Evaluation", "validation/summary.md", "not listed", "Manifest summary"},
+		},
+		{
+			name:   "denied run root",
+			runID:  "20260429-176000-denied",
+			status: http.StatusForbidden,
+			setup: func(t *testing.T, dir, runID string) {
+				outside := t.TempDir()
+				writeFile(t, outside, "manifest.json", `{"run_id":"`+runID+`","status":"complete","artifacts":{"manifest":"manifest.json","codex_summary":"codex/summary.md"}}`)
+				writeFile(t, outside, "secret.txt", secret)
+				if err := os.MkdirAll(filepath.Join(dir, ".jj/runs"), 0o755); err != nil {
+					t.Fatalf("mkdir runs: %v", err)
+				}
+				if err := os.Symlink(outside, filepath.Join(dir, ".jj/runs", runID)); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+			},
+			want:      []string{"run id is not allowed"},
+			forbidden: []string{secret, "Run Artifacts"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tc.setup(t, dir, tc.runID)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/runs/"+tc.runID, nil)
+			newTestServer(t, dir, "").Handler().ServeHTTP(rec, req)
+			body := rec.Body.String()
+			if rec.Code != tc.status {
+				t.Fatalf("detail status = %d, want %d body=%s", rec.Code, tc.status, body)
+			}
+			target := body
+			if tc.wantSection {
+				target = runDetailRunArtifactsSection(t, body)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(target, want) {
+					t.Fatalf("%s run artifact state missing %q:\n%s", tc.name, want, target)
+				}
+			}
+			for _, leaked := range append(tc.forbidden, security.RedactionMarker, "[omitted]", "raw command text", "raw environment", "raw diff body") {
+				if strings.Contains(target, leaked) {
+					t.Fatalf("%s run artifact state leaked %q:\n%s", tc.name, leaked, target)
+				}
 			}
 		})
 	}
@@ -4921,6 +5147,14 @@ func runDetailComparePreviousSection(t *testing.T, body string) string {
 		t.Fatalf("run detail missing Compare Previous section:\n%s", body)
 	}
 	return htmlSection(body, "Compare Previous", "Command Metadata")
+}
+
+func runDetailRunArtifactsSection(t *testing.T, body string) string {
+	t.Helper()
+	if !strings.Contains(body, "<h2>Run Artifacts</h2>") {
+		t.Fatalf("run detail missing Run Artifacts section:\n%s", body)
+	}
+	return htmlSection(body, "Run Artifacts", "Next Actions")
 }
 
 type loopFakeExecutor struct {

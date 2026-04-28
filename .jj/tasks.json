@@ -1469,6 +1469,35 @@
       "updated_at": "2026-04-28T23:00:04Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Run detail for a valid guarded run displays a compact Run Artifacts section with deterministic allowlisted artifact categories and safe availability labels.",
+        "Available artifact items link only to existing guarded safe views or existing sanitized artifact routes.",
+        "Runs with no artifact metadata render a deterministic none or unavailable state without server errors.",
+        "Denied, malformed, stale, partial, hostile-label, token-like, or internally inconsistent artifact metadata never renders unsafe labels or raw payloads.",
+        "The implementation uses shared sanitized run DTO/helper output and does not add handler-local raw filesystem reads after route input parsing.",
+        "Existing TASK summary, latest-run summary, next-action summary, Project Docs shortcuts, Recent Runs, Evaluation Findings, Active Run, Validation Status, Validation Evidence, and Compare Previous behavior remains unchanged.",
+        "Focused Go serve/dashboard tests cover present, missing, malformed, denied, stale, hostile-label, token-like, and deterministic ordering cases.",
+        "go test ./internal/serve and scripts/validate.sh pass with sanitized release-gate metadata."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t31",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T23:01:59Z",
+      "created_by_run": "autopilot-20260428-160202-t31",
+      "created_by_turn": null,
+      "id": "TASK-0052",
+      "mode": "feature",
+      "priority": "high",
+      "reason": "All known tasks are complete and there is no current failing validation, CI, blocker, disclosure, or boundary evidence. The next useful user-facing capability is a compact guarded artifact inventory on existing run detail views so users can see which expected outputs exist and navigate only to already-guarded views without exposing raw artifacts.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Show sanitized run artifact inventory on run detail",
+      "updated_at": "2026-04-28T23:14:48Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
