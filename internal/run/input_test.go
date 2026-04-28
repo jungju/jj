@@ -213,7 +213,7 @@ func TestLoadPlanRejectsTraversalAndSymlinkEscape(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	for _, path := range []string{"../plan.md", "docs/../plan.md", "docs%2f..%2fplan.md", "docs/%2e%2e/plan.md", `docs\plan.md`} {
+	for _, path := range []string{"../plan.md", "docs/../plan.md", "docs%2f..%2fplan.md", "docs/%2e%2e/plan.md", "docs/%252e%252e/plan.md", `docs\plan.md`} {
 		if _, _, err := LoadPlan(path, root); err == nil {
 			t.Fatalf("expected unsafe plan path %q to be rejected", path)
 		}
@@ -231,6 +231,103 @@ func TestLoadPlanRejectsTraversalAndSymlinkEscape(t *testing.T) {
 	}
 	if _, _, err := LoadPlan("docs/plan.md", root); err == nil || !strings.Contains(err.Error(), "symlink outside workspace") {
 		t.Fatalf("expected symlink escape rejection, got %v", err)
+	}
+}
+
+func TestLoadPlanAllowsInternalSymlinkAsCanonicalTarget(t *testing.T) {
+	root := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	targetDir := filepath.Join(root, "targets")
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatalf("mkdir targets: %v", err)
+	}
+	targetPlan := filepath.Join(targetDir, "plan.md")
+	if err := os.WriteFile(targetPlan, []byte("inside symlink\n"), 0o644); err != nil {
+		t.Fatalf("write target plan: %v", err)
+	}
+	link := filepath.Join(root, "docs", "plan.md")
+	if err := os.Symlink(filepath.Join("..", "targets", "plan.md"), link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	content, abs, err := LoadPlan("docs/plan.md", root)
+	if err != nil {
+		t.Fatalf("load internal symlink plan: %v", err)
+	}
+	if content != "inside symlink\n" {
+		t.Fatalf("unexpected symlink plan content: %q", content)
+	}
+	if abs != targetPlan {
+		t.Fatalf("expected canonical target path %s, got %s", targetPlan, abs)
+	}
+}
+
+func TestLoadPlanRejectsSymlinkSwapBeforeReadback(t *testing.T) {
+	root := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	insidePlan := filepath.Join(root, "inside.md")
+	outsidePlan := filepath.Join(outside, "outside-secret-token-1234567890.md")
+	if err := os.WriteFile(insidePlan, []byte("inside\n"), 0o644); err != nil {
+		t.Fatalf("write inside plan: %v", err)
+	}
+	if err := os.WriteFile(outsidePlan, []byte("outside secret\n"), 0o644); err != nil {
+		t.Fatalf("write outside plan: %v", err)
+	}
+	link := filepath.Join(root, "docs", "plan.md")
+	if err := os.Symlink(insidePlan, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	guarded, err := guardPlanPath("docs/plan.md", root)
+	if err != nil {
+		t.Fatalf("guard internal symlink: %v", err)
+	}
+	if guarded.Path != insidePlan {
+		t.Fatalf("expected guarded target %s, got %#v", insidePlan, guarded)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatalf("remove link: %v", err)
+	}
+	if err := os.Symlink(outsidePlan, link); err != nil {
+		t.Fatalf("swap link: %v", err)
+	}
+
+	_, err = revalidateGuardedPlanPath(guarded)
+	if err == nil || !strings.Contains(err.Error(), "symlink outside workspace") {
+		t.Fatalf("expected symlink swap rejection, got %v", err)
+	}
+	if strings.Contains(err.Error(), outsidePlan) || strings.Contains(err.Error(), "outside-secret-token") {
+		t.Fatalf("symlink swap rejection leaked outside path: %v", err)
 	}
 }
 
@@ -294,6 +391,81 @@ func TestLoadPlanMissing(t *testing.T) {
 	_, _, err = LoadPlan("missing.md", dir)
 	if err == nil || !strings.Contains(err.Error(), "read plan file") {
 		t.Fatalf("expected missing file error, got %v", err)
+	}
+	if strings.Contains(err.Error(), filepath.Join(dir, "missing.md")) || strings.Contains(err.Error(), filepath.ToSlash(filepath.Join(dir, "missing.md"))) {
+		t.Fatalf("missing file error leaked path: %v", err)
+	}
+}
+
+func TestLoadPlanRejectsUnreadableFileWithoutLeakingPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission mode behavior differs on Windows")
+	}
+	dir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	path := filepath.Join(dir, "unreadable.md")
+	if err := os.WriteFile(path, []byte("plan\n"), 0o644); err != nil {
+		t.Fatalf("write unreadable plan: %v", err)
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatalf("chmod unreadable: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(path, 0o644)
+	})
+	_, _, err = LoadPlan("unreadable.md", dir)
+	if err == nil {
+		t.Skip("unreadable file was readable in this environment")
+	}
+	if !strings.Contains(err.Error(), "read plan file") {
+		t.Fatalf("expected read plan file error, got %v", err)
+	}
+	if strings.Contains(err.Error(), path) || strings.Contains(err.Error(), filepath.ToSlash(path)) {
+		t.Fatalf("unreadable file error leaked path: %v", err)
+	}
+}
+
+func TestLoadPlanRejectsSecretLookingPlanPathWithoutLeaks(t *testing.T) {
+	dir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	for _, name := range []string{
+		"sk-proj-plansecret1234567890.md",
+		"[redacted].md",
+		"[jj-omitted].md",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("plan\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		_, _, err := LoadPlan(name, dir)
+		if err == nil || !strings.Contains(err.Error(), "plan path is not allowed") {
+			t.Fatalf("expected secret-looking path rejection for %q, got %v", name, err)
+		}
+		if strings.Contains(err.Error(), name) || strings.Contains(err.Error(), "sk-proj") || strings.Contains(err.Error(), "redacted") || strings.Contains(err.Error(), "jj-omitted") {
+			t.Fatalf("secret-looking path rejection leaked input %q: %v", name, err)
+		}
 	}
 }
 

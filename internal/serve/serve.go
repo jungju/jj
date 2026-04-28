@@ -2191,22 +2191,25 @@ func (s *Server) validatePlanPath(rel string) (string, error) {
 	if !isMarkdown(rel) {
 		return "", errors.New("plan path must be a markdown file")
 	}
-	path, err := safeJoin(s.cwd, rel)
+	clean, err := cleanAllowedRelativePath(filepath.ToSlash(rel))
 	if err != nil {
+		return "", errors.New("plan path is not allowed")
+	}
+	path, err := runpkg.ResolvePlanPath(filepath.Join(s.cwd, filepath.FromSlash(clean)), s.cwd)
+	if err != nil {
+		if errors.Is(err, security.ErrOutsideWorkspace) || errors.Is(err, security.ErrSymlinkOutside) || errors.Is(err, security.ErrSymlinkPath) {
+			return "", errors.New("plan path is not allowed")
+		}
 		return "", err
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return "", fmt.Errorf("plan path is not readable: %w", err)
+		return "", errors.New("plan path is not readable")
 	}
 	if info.IsDir() {
 		return "", errors.New("plan path must be a file")
 	}
-	normalized, err := filepath.Rel(s.cwd, path)
-	if err != nil {
-		return "", err
-	}
-	return filepath.ToSlash(normalized), nil
+	return path, nil
 }
 
 func (s *Server) discoverDocs() ([]docLink, error) {

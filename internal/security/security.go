@@ -1003,17 +1003,23 @@ func isJSONPrimitive(value string) bool {
 }
 
 func hasEncodedPathMeta(path string) bool {
-	lower := strings.ToLower(path)
-	for _, token := range []string{"%00", "%2e", "%2f", "%5c"} {
-		if strings.Contains(lower, token) {
-			return true
+	candidate := path
+	for i := 0; i < 4; i++ {
+		lower := strings.ToLower(candidate)
+		for _, token := range []string{"%00", "%2e", "%2f", "%5c"} {
+			if strings.Contains(lower, token) {
+				return true
+			}
 		}
-	}
-	if decoded, err := url.PathUnescape(path); err == nil && decoded != path {
+		decoded, err := url.PathUnescape(candidate)
+		if err != nil || decoded == candidate {
+			return false
+		}
 		decoded = strings.ReplaceAll(decoded, `\`, "/")
 		if strings.Contains(decoded, "../") || strings.HasPrefix(decoded, "/") || strings.Contains(decoded, "\x00") {
 			return true
 		}
+		candidate = decoded
 	}
 	return false
 }

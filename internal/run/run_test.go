@@ -53,6 +53,49 @@ func TestExecuteRejectsInvalidRunID(t *testing.T) {
 	}
 }
 
+func TestExecuteRejectsExternalPlanBeforeArtifactPersistence(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	secret := "sk-proj-externalplansecret1234567890"
+	outsidePlan := filepath.Join(outside, "plan.md")
+	if err := os.WriteFile(outsidePlan, []byte("outside\n"+secret+"\n"), 0o644); err != nil {
+		t.Fatalf("write outside plan: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		dryRun bool
+	}{
+		{name: "dry-run", dryRun: true},
+		{name: "full-run", dryRun: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runID := "external-plan-" + strings.ReplaceAll(tc.name, "-", "")
+			_, err := Execute(context.Background(), Config{
+				PlanPath:       outsidePlan,
+				CWD:            dir,
+				RunID:          runID,
+				PlanningAgents: 1,
+				OpenAIModel:    "test-model",
+				DryRun:         tc.dryRun,
+				AllowNoGit:     true,
+				Stdout:         io.Discard,
+				Planner:        &fakePlanner{},
+				CodexRunner:    &fakeCodexRunner{},
+			})
+			if err == nil || !strings.Contains(err.Error(), "outside workspace") {
+				t.Fatalf("expected external plan rejection, got %v", err)
+			}
+			for _, leaked := range []string{outsidePlan, filepath.ToSlash(outsidePlan), secret} {
+				if strings.Contains(err.Error(), leaked) {
+					t.Fatalf("external plan error leaked %q: %v", leaked, err)
+				}
+			}
+			assertNoFile(t, filepath.Join(dir, ".jj", "runs", runID))
+		})
+	}
+}
+
 func TestExecuteRejectsWorkspaceStateSymlinkEscape(t *testing.T) {
 	dir := t.TempDir()
 	outside := t.TempDir()

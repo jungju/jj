@@ -2331,23 +2331,53 @@ func TestWebRunStartRejectsUnsafePlanPathWithoutLeaks(t *testing.T) {
 		Addr:        "127.0.0.1:7331",
 		RunExecutor: (&loopFakeExecutor{}).Run,
 	})
-	secretPath := `docs\unsafe-secret-token-1234567890.md`
-	values := url.Values{}
-	values.Set("plan_path", secretPath)
-	values.Set("run_id", "bad-plan-path")
-	values.Set("dry_run", "true")
-	values.Set("allow_no_git", "true")
 
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/run/start", strings.NewReader(values.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	server.Handler().ServeHTTP(rec, req)
-	body := rec.Body.String()
-	if rec.Code != http.StatusBadRequest || !strings.Contains(body, "plan path is not allowed") {
-		t.Fatalf("expected unsafe plan path rejection, got %d body=%s", rec.Code, body)
-	}
-	if strings.Contains(body, secretPath) || strings.Contains(body, "unsafe-secret-token-1234567890") {
-		t.Fatalf("unsafe plan path rejection leaked path value:\n%s", body)
+	for _, tc := range []struct {
+		name     string
+		planPath string
+		want     string
+		leaks    []string
+	}{
+		{
+			name:     "backslash",
+			planPath: `docs\unsafe-secret-token-1234567890.md`,
+			want:     "plan path is not allowed",
+			leaks:    []string{`docs\unsafe-secret-token-1234567890.md`, "unsafe-secret-token-1234567890"},
+		},
+		{
+			name:     "missing",
+			planPath: "missing.md",
+			want:     "plan path is not readable",
+			leaks:    []string{dir, filepath.ToSlash(dir), "missing.md"},
+		},
+		{
+			name:     "secret-looking",
+			planPath: "sk-proj-webplansecret1234567890.md",
+			want:     "plan path is not allowed",
+			leaks:    []string{"sk-proj-webplansecret1234567890"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := url.Values{}
+			values.Set("plan_path", tc.planPath)
+			values.Set("run_id", "bad-plan-path-"+tc.name)
+			values.Set("dry_run", "true")
+			values.Set("allow_no_git", "true")
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/run/start", strings.NewReader(values.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			server.Handler().ServeHTTP(rec, req)
+			body := rec.Body.String()
+			if rec.Code != http.StatusBadRequest || !strings.Contains(body, tc.want) {
+				t.Fatalf("expected plan path rejection %q, got %d body=%s", tc.want, rec.Code, body)
+			}
+			for _, leaked := range tc.leaks {
+				if strings.Contains(body, leaked) {
+					t.Fatalf("unsafe plan path rejection leaked %q:\n%s", leaked, body)
+				}
+			}
+		})
 	}
 }
 

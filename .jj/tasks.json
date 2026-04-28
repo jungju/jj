@@ -789,6 +789,35 @@
       "updated_at": "2026-04-28T17:09:26Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "jj run accepts only plan files that resolve inside the configured workspace after documented path resolution, canonicalization, and symlink evaluation.",
+        "External, traversal, absolute-escape, encoded-escape, symlink-escape, unreadable, malformed, and secret-looking plan inputs are rejected before content read or artifact persistence with deterministic sanitized diagnostics.",
+        "In-workspace relative, process-cwd-resolved, and absolute in-workspace plan paths continue to work in dry-run and non-dry-run modes.",
+        "Accepted plan input content and all derived artifacts, manifests, logs, events, planner context, Codex summaries, eval output, and jj serve responses pass through shared redaction and contain no raw secrets, token-like values, raw commands, raw environment values, unsafe paths, omission placeholders, or denied payloads.",
+        "Symlink replacement between validation and readback cannot cause out-of-workspace content to be read, persisted, or rendered.",
+        "Focused Go tests cover in-workspace plans, explicit external plans, traversal, encoded traversal, absolute in-workspace and external paths, symlink internal and external paths, symlink swaps, unreadable files, secret-looking filenames, dry-run parity, and non-dry-run parity.",
+        "No new dashboard pages, CLI flags, raw artifact export, raw manifest export, broad external file import, or unrelated user-facing features are added.",
+        "go test ./internal/serve, go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t07",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T17:13:00Z",
+      "created_by_run": "autopilot-20260428-160202-t07",
+      "created_by_turn": null,
+      "id": "TASK-0028",
+      "mode": "security",
+      "priority": "high",
+      "reason": "Auto mode resolves to security because all known tasks are done and there is no positive blocker evidence, while unresolved explicit plan path handling can cross the workspace boundary and leak external sensitive content through artifacts, manifests, logs, planner context, eval output, or jj serve surfaces.",
+      "resolved_task_proposal_mode": "security",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Define and enforce guarded external plan input policy",
+      "updated_at": "2026-04-28T17:29:54Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
