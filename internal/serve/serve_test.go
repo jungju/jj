@@ -1211,6 +1211,345 @@ func TestRunDetailRejectsUnsafeRunIDsAndSymlinkEscapes(t *testing.T) {
 	}
 }
 
+func TestRunCompareShowsSanitizedSideBySideMetadata(t *testing.T) {
+	dir := newTestWorkspace(t)
+	leftID := "20260428-120000-compare-left"
+	rightID := "20260428-121000-compare-right"
+	secret := "sk-proj-comparesecret1234567890"
+	t.Setenv("JJ_RUN_COMPARE_SECRET", secret)
+	writeFile(t, dir, ".jj/runs/"+leftID+"/manifest.json", fmt.Sprintf(`{
+		"run_id": %q,
+		"status": "complete",
+		"started_at": "2026-04-28T12:00:00Z",
+		"finished_at": "2026-04-28T12:00:03Z",
+		"duration_ms": 3456,
+		"dry_run": false,
+		"planner_provider": "openai",
+		"task_proposal_mode": "feature",
+		"resolved_task_proposal_mode": "feature",
+		"selected_task_id": "T-FEATURE-003",
+		"planner": {"provider": "openai", "model": "gpt-test"},
+		"workspace": {"spec_path": ".jj/spec.json", "task_path": ".jj/tasks.json", "spec_written": true, "task_written": true},
+		"artifacts": {
+			"manifest": "manifest.json",
+			"snapshot_spec_after": "snapshots/spec.after.json",
+			"snapshot_tasks_after": "snapshots/tasks.after.json",
+			"validation_summary": "validation/summary.md",
+			"validation_results": "validation/results.json",
+			"validation_stdout": "validation/001-validate.stdout.txt",
+			"validation_stderr": "validation/001-validate.stderr.txt",
+			"codex_summary": "codex/summary.md",
+			"codex_events": "codex/events.jsonl",
+			"codex_exit": "codex/exit.json"
+		},
+		"validation": {
+			"ran": true,
+			"status": "passed",
+			"evidence_status": "recorded",
+			"summary": "validate passed",
+			"results_path": "validation/results.json",
+			"summary_path": "validation/summary.md",
+			"command_count": 1,
+			"passed_count": 1,
+			"commands": [{
+				"label": "validate",
+				"name": "validate.sh",
+				"command": "OPENAI_API_KEY=%s ./scripts/validate.sh",
+				"provider": "local",
+				"cwd": "[workspace]",
+				"run_id": %q,
+				"argv": ["./scripts/validate.sh"],
+				"exit_code": 0,
+				"duration_ms": 1200,
+				"status": "passed",
+				"stdout_path": "validation/001-validate.stdout.txt",
+				"stderr_path": "validation/001-validate.stderr.txt"
+			}]
+		},
+		"codex": {
+			"ran": true,
+			"status": "success",
+			"model": "gpt-codex-test",
+			"exit_code": 0,
+			"duration_ms": 2200,
+			"events_path": "codex/events.jsonl",
+			"summary_path": "codex/summary.md",
+			"exit_path": "codex/exit.json"
+		},
+		"security": {
+			"redaction_applied": true,
+			"workspace_guardrails_applied": true,
+			"redaction_count": 4,
+			"diagnostics": {
+				"version": "1",
+				"redacted": true,
+				"root_labels": ["workspace", "run_artifacts"],
+				"denied_path_count": 1,
+				"denied_path_categories": ["outside_workspace"],
+				"denied_path_category_counts": {"outside_workspace": 1},
+				"command_record_count": 2,
+				"command_metadata_sanitized": true,
+				"command_argv_sanitized": true,
+				"command_cwd_label": "[workspace]",
+				"command_sanitization_status": "sanitized",
+				"raw_command_text_persisted": false,
+				"raw_environment_persisted": false,
+				"dry_run_parity_applied": true,
+				"dry_run_parity_status": "equivalent"
+			}
+		}
+	}`, leftID, secret, leftID))
+	writeFile(t, dir, ".jj/runs/"+leftID+"/snapshots/spec.after.json", `{"title":"SPEC"}`)
+	writeFile(t, dir, ".jj/runs/"+leftID+"/snapshots/tasks.after.json", `{"tasks":[{"id":"T-FEATURE-003"}]}`)
+	writeFile(t, dir, ".jj/runs/"+leftID+"/validation/summary.md", "validation summary with "+secret+"\n")
+	writeFile(t, dir, ".jj/runs/"+leftID+"/validation/results.json", `{"status":"passed"}`)
+	writeFile(t, dir, ".jj/runs/"+leftID+"/validation/001-validate.stdout.txt", "ok\n")
+	writeFile(t, dir, ".jj/runs/"+leftID+"/validation/001-validate.stderr.txt", "\n")
+	writeFile(t, dir, ".jj/runs/"+leftID+"/codex/summary.md", "codex summary "+secret+"\n")
+	writeFile(t, dir, ".jj/runs/"+leftID+"/codex/events.jsonl", `{"type":"done"}`+"\n")
+	writeFile(t, dir, ".jj/runs/"+leftID+"/codex/exit.json", fmt.Sprintf(`{"argv":["codex","--api-key=%s","exec"]}`, secret))
+	writeFile(t, dir, ".jj/runs/"+rightID+"/manifest.json", fmt.Sprintf(`{
+		"run_id": %q,
+		"status": "failed",
+		"started_at": "2026-04-28T12:10:00Z",
+		"finished_at": "2026-04-28T12:10:01Z",
+		"dry_run": true,
+		"planner_provider": "codex",
+		"planner": {"provider": "codex", "model": "gpt-right"},
+		"artifacts": {"manifest": "manifest.json", "validation_summary": "validation/summary.md"},
+		"validation": {"ran": true, "status": "failed", "evidence_status": "recorded", "summary_path": "validation/summary.md"},
+		"codex": {"skipped": true, "status": "skipped"}
+	}`, rightID))
+	writeFile(t, dir, ".jj/runs/"+rightID+"/validation/summary.md", "failed\n")
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs/compare?left="+leftID+"&right="+rightID, nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("compare status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{
+		"Left Run",
+		"Right Run",
+		leftID,
+		rightID,
+		"status complete",
+		"status failed",
+		"dry-run false",
+		"dry-run true",
+		"provider openai",
+		"provider codex",
+		"selected task T-FEATURE-003",
+		"Generated State And Docs",
+		"snapshots/spec.after.json",
+		"Evaluation",
+		"status passed",
+		"Validation summary",
+		"Codex",
+		"gpt-codex-test",
+		"Codex command metadata",
+		"Command Metadata",
+		"./scripts/validate.sh",
+		"raw command text not shown",
+		"metadata from manifest",
+		"security redactions 4",
+		"denied paths 1",
+		"dry-run parity equivalent",
+		"Artifact Availability",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("compare missing %q:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(body, `href="/artifact?run=`+leftID) {
+		t.Fatalf("compare did not use guarded artifact links:\n%s", body)
+	}
+	for _, leaked := range []string{
+		secret,
+		"OPENAI_API_KEY=",
+		"--api-key",
+		security.RedactionMarker,
+		"[omitted]",
+		"{removed}",
+		dir,
+		filepath.ToSlash(dir),
+	} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("compare leaked %q:\n%s", leaked, body)
+		}
+	}
+}
+
+func TestRunCompareHandlesInvalidMissingIdenticalAndUnsafeQueries(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServer(t, dir, "")
+	validID := "20260425-120000-bbbbbb"
+	otherID := "20260425-110000-aaaaaa"
+	secret := "sk-proj-comparequery1234567890"
+	absolute := filepath.Join(dir, "outside-"+secret)
+
+	probes := []struct {
+		name   string
+		target string
+		want   []string
+	}{
+		{
+			name:   "missing left",
+			target: "/runs/compare?right=" + validID,
+			want:   []string{"Left Run", "run id is required", "Right Run", validID},
+		},
+		{
+			name:   "invalid traversal",
+			target: "/runs/compare?left=..%2f" + url.QueryEscape(secret) + "&right=" + validID,
+			want:   []string{"run id is not allowed", validID},
+		},
+		{
+			name:   "absolute path",
+			target: "/runs/compare?left=" + url.QueryEscape(absolute) + "&right=" + validID,
+			want:   []string{"run id is not allowed", validID},
+		},
+		{
+			name:   "duplicate right",
+			target: "/runs/compare?left=" + validID + "&right=" + validID + "&right=" + otherID,
+			want:   []string{"exactly one run id is required"},
+		},
+		{
+			name:   "identical",
+			target: "/runs/compare?left=" + validID + "&right=" + validID,
+			want:   []string{"Comparison requires two different run IDs.", "identical run IDs are not compared"},
+		},
+	}
+	for _, probe := range probes {
+		t.Run(probe.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, probe.target, nil)
+			server.Handler().ServeHTTP(rec, req)
+			body := rec.Body.String()
+			if rec.Code != http.StatusOK {
+				t.Fatalf("compare status = %d body=%s", rec.Code, body)
+			}
+			for _, want := range probe.want {
+				if !strings.Contains(body, want) {
+					t.Fatalf("compare missing %q:\n%s", want, body)
+				}
+			}
+			for _, leaked := range []string{secret, "../", absolute, filepath.ToSlash(absolute), dir, filepath.ToSlash(dir), security.RedactionMarker} {
+				if strings.Contains(body, leaked) {
+					t.Fatalf("invalid compare leaked %q:\n%s", leaked, body)
+				}
+			}
+		})
+	}
+}
+
+func TestRunCompareRendersMalformedMissingPartialAndLegacySafely(t *testing.T) {
+	dir := newTestWorkspace(t)
+	secret := "sk-proj-comparebad1234567890"
+	writeFile(t, dir, ".jj/runs/20260428-122000-badjson/manifest.json", `{"run_id":"20260428-122000-badjson","status":"`+secret+`",`)
+	writeFile(t, dir, ".jj/runs/20260428-123000-incomplete/manifest.json", `{"run_id":"20260428-123000-incomplete","status":"success"}`)
+	writeFile(t, dir, ".jj/runs/20260428-124000-legacy/manifest.json", `{"run_id":"20260428-124000-legacy","status":"success","started_at":"2026-04-28T12:40:00Z","artifacts":{"manifest":"manifest.json"}}`)
+	if err := os.MkdirAll(filepath.Join(dir, ".jj/runs/20260428-125000-missing"), 0o755); err != nil {
+		t.Fatalf("mkdir missing manifest: %v", err)
+	}
+	server := newTestServer(t, dir, "")
+
+	for _, target := range []string{
+		"/runs/compare?left=20260428-122000-badjson&right=20260428-125000-missing",
+		"/runs/compare?left=20260428-123000-incomplete&right=20260428-124000-legacy",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		server.Handler().ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("compare status = %d body=%s", rec.Code, body)
+		}
+		for _, leaked := range []string{secret, security.RedactionMarker, dir, filepath.ToSlash(dir)} {
+			if strings.Contains(body, leaked) {
+				t.Fatalf("compare safe state leaked %q:\n%s", leaked, body)
+			}
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs/compare?left=20260428-122000-badjson&right=20260428-125000-missing", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	for _, want := range []string{"manifest is malformed", "manifest unavailable"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("compare missing %q:\n%s", want, body)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/runs/compare?left=20260428-123000-incomplete&right=20260428-124000-legacy", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body = rec.Body.String()
+	for _, want := range []string{"manifest is incomplete: missing artifacts", "20260428-124000-legacy", "security diagnostics unavailable", "diagnostics unknown"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("compare missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestRunCompareRejectsSymlinkRunRootWithoutLeaks(t *testing.T) {
+	dir := newTestWorkspace(t)
+	outside := t.TempDir()
+	secret := "run-compare-outside-secret"
+	target := filepath.Join(outside, "target")
+	writeFile(t, target, "manifest.json", `{"run_id":"20260428-130000-link","status":"complete","artifacts":{"manifest":"manifest.json"}}`)
+	writeFile(t, target, "secret.txt", secret)
+	if err := os.Symlink(target, filepath.Join(dir, ".jj/runs/20260428-130000-link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	server := newTestServer(t, dir, "")
+
+	for _, targetURL := range []string{
+		"/runs/compare?left=20260428-130000-link&right=20260425-120000-bbbbbb",
+		"/runs/compare?left=20260428-130000-link%2f..%2fother&right=20260425-120000-bbbbbb",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, targetURL, nil)
+		server.Handler().ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("compare status = %d body=%s", rec.Code, body)
+		}
+		if !strings.Contains(body, "denied") || !strings.Contains(body, "run id is not allowed") {
+			t.Fatalf("compare did not deny unsafe run input:\n%s", body)
+		}
+		for _, leaked := range []string{secret, outside, filepath.ToSlash(outside), dir, filepath.ToSlash(dir)} {
+			if strings.Contains(body, leaked) {
+				t.Fatalf("unsafe compare leaked %q:\n%s", leaked, body)
+			}
+		}
+	}
+}
+
+func TestRunHistoryProvidesGuardedCompareLinks(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("history status = %d body=%s", rec.Code, body)
+	}
+	want := `/runs/compare?left=20260425-120000-bbbbbb&amp;right=20260425-110000-aaaaaa`
+	if !strings.Contains(body, want) || !strings.Contains(body, ">compare</a>") {
+		t.Fatalf("history missing guarded compare link %q:\n%s", want, body)
+	}
+	for _, leaked := range []string{`/runs/compare?left=..`, `href="/run?id=`} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("history compare links included unsafe legacy target %q:\n%s", leaked, body)
+		}
+	}
+}
+
 func TestPathTraversalRejected(t *testing.T) {
 	dir := newTestWorkspace(t)
 	server := newTestServer(t, dir, "")

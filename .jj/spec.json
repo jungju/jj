@@ -17,7 +17,12 @@
     "Run history filters are allowlisted, deterministic, and do not reflect attacker-controlled invalid query values.",
     "The run history page does not render raw secrets, raw commands, raw environment values, unsafe absolute paths, omission placeholders, or attacker-controlled denied path payloads.",
     "Traversal, absolute, encoded, or symlinked path attempts cannot influence which run directories are listed or linked from run history.",
-    "Security behavior is covered by focused Go tests for redaction, path guards, artifact writing, manifest scrubbing, command metadata, dry-run and non-dry-run parity, diagnostics, serve access, run detail access, and run history access.",
+    "jj serve exposes a guarded run comparison page for exactly two requested run IDs.",
+    "The run comparison page renders only sanitized manifest-derived fields and guarded links for both compared runs.",
+    "Invalid, missing, malformed, partial, older, identical, traversal, absolute, encoded, or symlinked run inputs render deterministic unavailable or denied states without server errors.",
+    "The run comparison page does not render raw secrets, token-like values, raw commands, raw environment values, unsafe absolute paths, omission placeholders, raw artifact contents, or attacker-controlled denied path payloads.",
+    "Run history or run detail pages provide safe compare entry points derived only from validated run IDs.",
+    "Security behavior is covered by focused Go tests for redaction, path guards, artifact writing, manifest scrubbing, command metadata, dry-run and non-dry-run parity, diagnostics, serve access, run detail access, run history access, and run comparison access.",
     "go test ./..., go vet ./..., and go build -o jj ./cmd/jj pass."
   ],
   "created_at": "2026-04-28",
@@ -29,7 +34,8 @@
     "Preserve existing dry-run and non-dry-run workflows while applying redaction and boundary checks by default.",
     "Expose useful disclosure-safe security diagnostics in manifests and dashboard views using counts, booleans, labels, relative-safe roots, and sanitized categories only.",
     "Let users drill from the dashboard into guarded per-run detail pages that summarize run status, artifacts, evaluation, provider metadata, command metadata, Codex metadata, and safe health diagnostics.",
-    "Let users browse and filter guarded run history from jj serve without manually opening .jj/runs."
+    "Let users browse and filter guarded run history from jj serve without manually opening .jj/runs.",
+    "Let users compare exactly two guarded runs side by side using sanitized manifest-derived fields only."
   ],
   "non_goals": [
     "Provide a hosted cloud service.",
@@ -38,8 +44,9 @@
     "Become a general-purpose workflow engine.",
     "Add unrelated user-facing features while unresolved security risks remain.",
     "Expose raw commands, environment dumps, secret values, sensitive absolute paths, private key material, token-like strings, omission placeholders, or attacker-controlled denied path payloads as diagnostics.",
-    "Add new security scanners or change redaction algorithms as part of run history or run detail features.",
-    "Add client-side full-text search over raw artifacts or manifests."
+    "Add new security scanners or change redaction algorithms as part of run history, run detail, or run comparison features.",
+    "Add client-side full-text search over raw artifacts or manifests.",
+    "Add raw artifact diffing or full-text document comparison as part of the guarded run comparison page."
   ],
   "open_questions": [
     "Should explicitly provided plan files outside --cwd remain allowed as read-only inputs after canonicalization?",
@@ -64,10 +71,15 @@
     "The guarded run history page must support allowlisted filters for run status, dry-run mode, planner provider, evaluation state, and run-id substring query without reflecting invalid raw query values.",
     "Run history rows must be derived from sanitized manifest or dashboard DTO fields and link only to guarded run detail routes.",
     "Missing, malformed, partial, and older manifests in run history must render as unknown or unavailable without server errors.",
-    "Traversal, absolute, encoded, or symlinked path attempts must not influence which run directories are listed or linked from run history."
+    "Traversal, absolute, encoded, or symlinked path attempts must not influence which run directories are listed or linked from run history.",
+    "jj serve must expose a guarded run comparison page for exactly two requested run IDs, such as /runs/compare?left=\u003crun-id\u003e\u0026right=\u003crun-id\u003e.",
+    "The run comparison page must resolve both run IDs only beneath the guarded .jj/runs root using existing path guards and sanitized run DTO construction.",
+    "The run comparison page must render side-by-side sanitized status, timestamps, dry-run mode, planner/provider metadata, generated doc availability, artifact availability, evaluation state, Codex result metadata, command metadata, and disclosure-safe security diagnostic summaries.",
+    "Invalid, missing, identical, malformed, partial, older, traversal, absolute, encoded, or symlinked run inputs must render deterministic unavailable or denied states without server errors or raw query reflection.",
+    "Run history or run detail pages must provide safe compare entry points derived only from validated run IDs and guarded routes."
   ],
-  "summary": "jj is a CLI that turns a user planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains a core constraint, and jj serve includes guarded per-run detail pages and a guarded run history browser for inspecting recent and older runs, filtering by safe manifest-derived fields, and reviewing artifacts, evaluation status, command metadata, Codex metadata, and disclosure-safe security diagnostics without opening raw manifest files manually.",
+  "summary": "jj is a CLI that turns a user planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains a core constraint, and jj serve includes guarded per-run detail pages, a guarded run history browser, and a guarded two-run comparison view for inspecting recent and older runs, filtering by safe manifest-derived fields, comparing run outcomes, and reviewing artifacts, evaluation status, command metadata, Codex metadata, and disclosure-safe security diagnostics without opening raw manifest files manually.",
   "title": "jj Security Boundary and Dashboard Run Inspection",
-  "updated_at": "2026-04-28T14:55:44Z",
+  "updated_at": "2026-04-28T15:09:25Z",
   "version": 1
 }
