@@ -1327,6 +1327,34 @@
       "updated_at": "2026-04-28T21:47:15Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Dashboard root shows a compact Evaluation Findings section for the latest guarded run when sanitized evaluation metadata exists.",
+        "The section exposes only deterministic state, sanitized run ID label, evaluation summary label, issue/risk/warning counts, a fixed small number of sanitized finding labels or safe categories, timestamp label when available, and guarded links to existing run views.",
+        "No-run, no-evaluation, all-clear, missing, denied, malformed, stale, partial, hostile-label, token-like, and internally inconsistent evaluation states render deterministic none, unavailable, denied, unknown, or all-clear states without server errors or unsafe fallback fields.",
+        "Evaluation Findings data is derived through shared sanitized run/evaluation DTO or helper output, with no handler-local raw manifest, artifact, command, environment, diff, validation output, EVAL.md body, document body, or filesystem reads after route input parsing.",
+        "No dashboard response contains raw EVAL.md bodies, raw artifacts, raw manifests, validation payloads, diff bodies, command text, environment values, unsafe absolute paths, denied payloads, secrets, token-like values, private key blocks, or omission placeholders.",
+        "Existing TASK.md summary, latest-run summary, next-action summary, Project Docs shortcuts, and Recent Runs behavior remains unchanged.",
+        "Focused serve/dashboard tests cover valid findings, all-clear, no-run, no-evaluation, missing, malformed, partial, stale, denied, hostile-label, token-like, needs_work or failed evaluation, and unchanged existing dashboard sections."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t26",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T21:49:32Z",
+      "created_by_run": "autopilot-20260428-160202-t26",
+      "created_by_turn": null,
+      "id": "TASK-0047",
+      "mode": "feature",
+      "priority": "high",
+      "reason": "All existing tasks are done and there is no current validation, CI, test, disclosure, blocker, or boundary evidence for security or bugfix work. The most useful next user-facing capability is a compact dashboard evaluation findings summary so users can see whether the latest guarded run has actionable failures or risks without opening raw artifacts.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Show sanitized evaluation findings on the dashboard",
+      "updated_at": "2026-04-28T22:03:40Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

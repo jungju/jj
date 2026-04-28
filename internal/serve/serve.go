@@ -31,6 +31,8 @@ const workspaceEvalMarkdownPath = "docs/EVAL.md"
 
 const dashboardRecentRunsLimit = 5
 
+const dashboardEvaluationFindingsLimit = 3
+
 var allowedProjectDocPaths = []string{
 	"README.md",
 	"plan.md",
@@ -121,11 +123,13 @@ type runLink struct {
 	RiskSummary              string
 	Risks                    []string
 	Failures                 []string
+	Warnings                 []string
 	NextActions              []string
 	SecuritySummary          string
 	SecurityDetails          []string
 	Invalid                  bool
 	ValidationArtifact       string
+	Evaluation               runEvaluationMetadata
 	CompareURL               string
 }
 
@@ -182,6 +186,37 @@ type recentRunItem struct {
 	TimestampLabel   string
 	DetailURL        string
 	AuditURL         string
+}
+
+type runEvaluationMetadata struct {
+	State          string
+	Status         string
+	EvidenceStatus string
+	SummaryLabel   string
+	CommandCount   int
+	PassedCount    int
+	FailedCount    int
+}
+
+type evaluationFindingsSummary struct {
+	State           string
+	Message         string
+	RunID           string
+	EvaluationState string
+	SummaryLabel    string
+	IssueCount      int
+	RiskCount       int
+	WarningCount    int
+	Findings        []evaluationFindingItem
+	TimestampLabel  string
+	DetailURL       string
+	HistoryURL      string
+	AuditURL        string
+}
+
+type evaluationFindingItem struct {
+	Kind  string
+	Label string
 }
 
 type nextActionSummary struct {
@@ -550,33 +585,34 @@ type runStartResult struct {
 }
 
 type pageData struct {
-	Title            string
-	CWD              string
-	SelectedRun      string
-	TaskQueue        taskQueueSummary
-	LatestRun        latestRunSummary
-	RecentRuns       recentRunsSummary
-	NextAction       nextActionSummary
-	Docs             []docLink
-	ProjectDocs      []projectDocShortcut
-	Runs             []runLink
-	Readiness        []readinessItem
-	DefaultPlan      string
-	ActiveRuns       []webRunView
-	Artifacts        []artifactLink
-	RunForm          *runFormData
-	RunResult        *runStartResult
-	WebRun           *webRunView
-	RunDetail        *runDetail
-	RunCompare       *runCompare
-	RunFilters       *runHistoryFilters
-	RunFilterOptions runHistoryFilterOptions
-	RunsOnly         bool
-	Path             string
-	RunID            string
-	Content          string
-	Rendered         template.HTML
-	Error            string
+	Title              string
+	CWD                string
+	SelectedRun        string
+	TaskQueue          taskQueueSummary
+	LatestRun          latestRunSummary
+	RecentRuns         recentRunsSummary
+	EvaluationFindings evaluationFindingsSummary
+	NextAction         nextActionSummary
+	Docs               []docLink
+	ProjectDocs        []projectDocShortcut
+	Runs               []runLink
+	Readiness          []readinessItem
+	DefaultPlan        string
+	ActiveRuns         []webRunView
+	Artifacts          []artifactLink
+	RunForm            *runFormData
+	RunResult          *runStartResult
+	WebRun             *webRunView
+	RunDetail          *runDetail
+	RunCompare         *runCompare
+	RunFilters         *runHistoryFilters
+	RunFilterOptions   runHistoryFilterOptions
+	RunsOnly           bool
+	Path               string
+	RunID              string
+	Content            string
+	Rendered           template.HTML
+	Error              string
 }
 
 func Execute(ctx context.Context, cfg Config) error {
@@ -747,24 +783,26 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	runs = s.sanitizeRunHistoryLinks(runs)
 	latestRun := latestRunSummaryFromRuns(runs)
 	recentRuns := recentRunsSummaryFromRuns(runs)
+	evaluationFindings := evaluationFindingsSummaryFromRuns(runs)
 	readiness := s.workspaceReadiness()
 	taskQueue := s.taskQueueSummary()
 	nextAction := nextActionSummaryFromSummaries(taskQueue, latestRun)
 	projectDocs := s.projectDocShortcuts()
 	s.render(w, pageData{
-		Title:       "jj dashboard",
-		CWD:         displayWorkspace,
-		SelectedRun: s.runID,
-		TaskQueue:   taskQueue,
-		LatestRun:   latestRun,
-		RecentRuns:  recentRuns,
-		NextAction:  nextAction,
-		Docs:        docs,
-		ProjectDocs: projectDocs,
-		Runs:        runs,
-		Readiness:   readiness,
-		DefaultPlan: firstReadyPath(readiness, "Plan"),
-		ActiveRuns:  s.webRuns.activeViews(),
+		Title:              "jj dashboard",
+		CWD:                displayWorkspace,
+		SelectedRun:        s.runID,
+		TaskQueue:          taskQueue,
+		LatestRun:          latestRun,
+		RecentRuns:         recentRuns,
+		EvaluationFindings: evaluationFindings,
+		NextAction:         nextAction,
+		Docs:               docs,
+		ProjectDocs:        projectDocs,
+		Runs:               runs,
+		Readiness:          readiness,
+		DefaultPlan:        firstReadyPath(readiness, "Plan"),
+		ActiveRuns:         s.webRuns.activeViews(),
 	})
 }
 
@@ -2763,6 +2801,7 @@ func (s *Server) sanitizeRunHistoryLink(run runLink) runLink {
 	run.FinishedAt = historyDisplayText(run.FinishedAt, "", roots...)
 	run.PlannerProvider = historyDisplayText(run.PlannerProvider, "unknown", roots...)
 	run.Validation = historyDisplayText(run.Validation, "", roots...)
+	run.Evaluation = sanitizeRunEvaluationMetadata(run.Evaluation)
 	run.TaskProposalMode = historyDisplayText(run.TaskProposalMode, "", roots...)
 	run.ResolvedTaskProposalMode = historyDisplayText(run.ResolvedTaskProposalMode, "", roots...)
 	run.SelectedTaskID = historyDisplayText(run.SelectedTaskID, "", roots...)
@@ -2775,6 +2814,7 @@ func (s *Server) sanitizeRunHistoryLink(run runLink) runLink {
 	run.RiskSummary = historySensitiveText(run.RiskSummary, roots...)
 	run.Risks = historySensitiveList(run.Risks, roots...)
 	run.Failures = historySensitiveList(run.Failures, roots...)
+	run.Warnings = historySensitiveList(run.Warnings, roots...)
 	run.NextActions = historySensitiveList(run.NextActions, roots...)
 	run.SecuritySummary = historyDisplayText(run.SecuritySummary, "", roots...)
 	run.SecurityDetails = historySensitiveList(run.SecurityDetails, roots...)
@@ -3046,6 +3086,486 @@ func recentRunItemFromRun(run runLink) (recentRunItem, bool) {
 	item.ProviderOrResult = latestProviderOrResult(run)
 	item.AuditURL = guardedRunAuditURL(runID)
 	return item, true
+}
+
+func evaluationFindingsSummaryFromRuns(runs []runLink) evaluationFindingsSummary {
+	summary := evaluationFindingsNoneSummary("No jj runs found.")
+	selected, ok := selectLatestRun(runs)
+	if !ok {
+		return summary
+	}
+	runID := latestRunIDLabel(selected.ID)
+	if runID == "" {
+		return summary
+	}
+
+	summary.RunID = runID
+	summary.TimestampLabel = latestRunTimestampLabel(selected)
+	summary.DetailURL = guardedRunDetailURL(runID)
+	summary.HistoryURL = "/runs"
+	selected.Evaluation = evaluationMetadataForRun(selected)
+
+	if selected.Invalid {
+		summary.State = "unavailable"
+		summary.EvaluationState = "unavailable"
+		summary.SummaryLabel = "evaluation unavailable"
+		summary.Message = evaluationFindingsMessage("unavailable")
+		if evaluationRunDenied(selected) {
+			summary.State = "denied"
+			summary.EvaluationState = "denied"
+			summary.SummaryLabel = "evaluation denied"
+			summary.Message = evaluationFindingsMessage("denied")
+		}
+		return sanitizeEvaluationFindingsSummary(summary)
+	}
+
+	evaluation := selected.Evaluation
+	summary.EvaluationState = evaluation.Status
+	summary.SummaryLabel = evaluation.SummaryLabel
+	summary.IssueCount = evaluationIssueCount(selected, evaluation)
+	summary.RiskCount = len(selected.Risks)
+	summary.WarningCount = evaluationWarningCount(selected)
+	summary.Findings = evaluationFindingItems(selected, evaluation, summary.IssueCount, summary.RiskCount, summary.WarningCount)
+	summary.AuditURL = guardedRunAuditURL(runID)
+
+	switch {
+	case evaluation.State == "none":
+		summary.State = "none"
+		summary.Message = "No evaluation metadata recorded for latest run."
+		summary.EvaluationState = "none"
+		summary.SummaryLabel = "evaluation none"
+	case evaluation.State == "unavailable":
+		summary.State = "unavailable"
+		summary.Message = evaluationFindingsMessage("unavailable")
+	case evaluation.State == "unknown":
+		summary.State = "unknown"
+		summary.Message = evaluationFindingsMessage("unknown")
+	case evaluation.State == "all-clear" && summary.IssueCount == 0 && summary.RiskCount == 0 && summary.WarningCount == 0:
+		summary.State = "all-clear"
+		summary.Message = "Latest evaluation is all clear."
+	case evaluation.State == "all-clear":
+		summary.State = "findings"
+		summary.Message = "Latest evaluation has findings."
+	case summary.IssueCount > 0 || summary.RiskCount > 0 || summary.WarningCount > 0:
+		summary.State = "findings"
+		summary.Message = "Latest evaluation has findings."
+	default:
+		summary.State = "unknown"
+		summary.Message = evaluationFindingsMessage("unknown")
+	}
+	if evaluationInconsistent(selected, evaluation) {
+		summary.State = "unknown"
+		summary.Message = evaluationFindingsMessage("unknown")
+		summary.EvaluationState = "unknown"
+		summary.SummaryLabel = "evaluation unknown"
+	}
+	return sanitizeEvaluationFindingsSummary(summary)
+}
+
+func evaluationFindingsNoneSummary(message string) evaluationFindingsSummary {
+	return evaluationFindingsSummary{
+		State:           "none",
+		Message:         message,
+		EvaluationState: "none",
+		SummaryLabel:    "evaluation none",
+		TimestampLabel:  "none",
+		HistoryURL:      "/runs",
+	}
+}
+
+func evaluationMetadataForRun(run runLink) runEvaluationMetadata {
+	metadata := sanitizeRunEvaluationMetadata(run.Evaluation)
+	if metadata.State != "" && metadata.State != "unknown" || strings.TrimSpace(run.Validation) == "" {
+		return metadata
+	}
+	status := evaluationStatusToken(run.Validation, "")
+	if status == "" {
+		return metadata
+	}
+	metadata.Status = status
+	metadata.EvidenceStatus = evaluationEvidenceToken(run.Validation, "unknown")
+	metadata.SummaryLabel = evaluationSummaryLabel(metadata.Status, metadata.EvidenceStatus)
+	metadata.State = evaluationMetadataState(metadata.Status)
+	return sanitizeRunEvaluationMetadata(metadata)
+}
+
+func runEvaluationMetadataFromValidation(validation runpkg.ManifestValidation, roots ...security.CommandPathRoot) runEvaluationMetadata {
+	commandCount := maxInt(validation.CommandCount, 0)
+	if commandCount == 0 && len(validation.Commands) > 0 {
+		commandCount = len(validation.Commands)
+	}
+	passedCount := maxInt(validation.PassedCount, 0)
+	failedCount := maxInt(validation.FailedCount, 0)
+	status := evaluationStatusToken(sanitizeRunDetailText(validation.Status, roots...), "")
+	evidence := evaluationEvidenceToken(sanitizeRunDetailText(validation.EvidenceStatus, roots...), "")
+	hasMetadata := validation.Ran ||
+		validation.Skipped ||
+		status != "" ||
+		evidence != "" ||
+		strings.TrimSpace(validation.Reason) != "" ||
+		strings.TrimSpace(validation.Summary) != "" ||
+		commandCount > 0 ||
+		passedCount > 0 ||
+		failedCount > 0
+	if !hasMetadata {
+		return runEvaluationMetadata{
+			State:          "none",
+			Status:         "none",
+			EvidenceStatus: "none",
+			SummaryLabel:   "evaluation none",
+		}
+	}
+	if status == "" {
+		if validation.Skipped {
+			status = "skipped"
+		} else {
+			switch evidence {
+			case "missing", "skipped", "unavailable", "stale":
+				status = evidence
+			default:
+				status = "unknown"
+			}
+		}
+	}
+	if evidence == "" {
+		if validation.Skipped {
+			evidence = "skipped"
+		} else {
+			evidence = "unknown"
+		}
+	}
+	metadata := runEvaluationMetadata{
+		State:          evaluationMetadataState(status),
+		Status:         status,
+		EvidenceStatus: evidence,
+		SummaryLabel:   evaluationSummaryLabel(status, evidence),
+		CommandCount:   commandCount,
+		PassedCount:    passedCount,
+		FailedCount:    failedCount,
+	}
+	return sanitizeRunEvaluationMetadata(metadata)
+}
+
+func sanitizeRunEvaluationMetadata(metadata runEvaluationMetadata) runEvaluationMetadata {
+	if metadata.State == "none" || metadata.Status == "none" {
+		metadata.State = "none"
+		metadata.Status = "none"
+		metadata.EvidenceStatus = "none"
+		metadata.SummaryLabel = "evaluation none"
+		metadata.CommandCount = maxInt(metadata.CommandCount, 0)
+		metadata.PassedCount = maxInt(metadata.PassedCount, 0)
+		metadata.FailedCount = maxInt(metadata.FailedCount, 0)
+		return metadata
+	}
+	metadata.Status = evaluationStatusToken(metadata.Status, "")
+	metadata.EvidenceStatus = evaluationEvidenceToken(metadata.EvidenceStatus, "")
+	if metadata.Status == "" {
+		metadata.Status = "unknown"
+	}
+	if metadata.EvidenceStatus == "" {
+		metadata.EvidenceStatus = "unknown"
+	}
+	metadata.State = evaluationFindingsStateToken(metadata.State, "")
+	if metadata.State == "" {
+		metadata.State = evaluationMetadataState(metadata.Status)
+	}
+	metadata.SummaryLabel = evaluationSummaryLabel(metadata.Status, metadata.EvidenceStatus)
+	metadata.CommandCount = maxInt(metadata.CommandCount, 0)
+	metadata.PassedCount = maxInt(metadata.PassedCount, 0)
+	metadata.FailedCount = maxInt(metadata.FailedCount, 0)
+	return metadata
+}
+
+func evaluationStatusToken(value, fallback string) string {
+	token := dashboardCategory(value, "")
+	switch token {
+	case "pass", "passed", "passed_recorded", "success", "succeeded":
+		return "passed"
+	case "fail", "failed", "failure":
+		return "failed"
+	case "needs_work", "needswork":
+		return "needs_work"
+	case "missing":
+		return "missing"
+	case "skip", "skipped":
+		return "skipped"
+	case "recorded":
+		return "recorded"
+	case "unavailable", "denied", "malformed", "partial", "stale", "unknown", "inconsistent":
+		return token
+	}
+	for _, candidate := range []struct {
+		marker string
+		token  string
+	}{
+		{"needs_work", "needs_work"},
+		{"failed", "failed"},
+		{"failure", "failed"},
+		{"passed", "passed"},
+		{"missing", "missing"},
+		{"skipped", "skipped"},
+		{"stale", "stale"},
+		{"malformed", "malformed"},
+		{"partial", "partial"},
+		{"inconsistent", "inconsistent"},
+		{"unavailable", "unavailable"},
+		{"denied", "denied"},
+	} {
+		if strings.Contains(token, candidate.marker) {
+			return candidate.token
+		}
+	}
+	return fallback
+}
+
+func evaluationEvidenceToken(value, fallback string) string {
+	token := dashboardCategory(value, "")
+	switch token {
+	case "recorded", "missing", "skipped", "unavailable", "stale", "unknown":
+		return token
+	}
+	for _, candidate := range []string{"recorded", "missing", "skipped", "unavailable", "stale"} {
+		if strings.Contains(token, candidate) {
+			return candidate
+		}
+	}
+	return fallback
+}
+
+func evaluationMetadataState(status string) string {
+	switch evaluationStatusToken(status, "unknown") {
+	case "passed", "recorded":
+		return "all-clear"
+	case "failed", "needs_work":
+		return "findings"
+	case "missing", "unavailable", "malformed", "partial", "stale":
+		return "unavailable"
+	case "denied":
+		return "denied"
+	case "skipped", "none":
+		return "none"
+	default:
+		return "unknown"
+	}
+}
+
+func evaluationSummaryLabel(status, evidence string) string {
+	status = evaluationStatusToken(status, "unknown")
+	evidence = evaluationEvidenceToken(evidence, "")
+	if status == "none" || status == "" {
+		return "evaluation none"
+	}
+	if evidence != "" && evidence != "unknown" && evidence != status {
+		return "evaluation " + status + " (" + evidence + ")"
+	}
+	return "evaluation " + status
+}
+
+func evaluationIssueCount(run runLink, metadata runEvaluationMetadata) int {
+	count := maxInt(metadata.FailedCount, len(run.Failures))
+	switch metadata.Status {
+	case "failed", "needs_work":
+		if count == 0 {
+			count = 1
+		}
+	}
+	return count
+}
+
+func evaluationWarningCount(run runLink) int {
+	count := len(run.Warnings)
+	if dashboardCategory(run.Status, "") == "completed_with_warnings" && count == 0 {
+		count = 1
+	}
+	return count
+}
+
+func evaluationInconsistent(run runLink, metadata runEvaluationMetadata) bool {
+	if metadata.Status == "passed" && metadata.FailedCount > 0 {
+		return true
+	}
+	if metadata.Status == "passed" && len(run.Failures) > 0 {
+		return true
+	}
+	if metadata.CommandCount > 0 && metadata.PassedCount+metadata.FailedCount > metadata.CommandCount {
+		return true
+	}
+	return false
+}
+
+func evaluationFindingItems(run runLink, metadata runEvaluationMetadata, issueCount, riskCount, warningCount int) []evaluationFindingItem {
+	var out []evaluationFindingItem
+	add := func(kind, label string) {
+		if len(out) >= dashboardEvaluationFindingsLimit {
+			return
+		}
+		kind = evaluationFindingKind(kind)
+		label = evaluationFindingLabel(label, kind)
+		if kind == "" || label == "" {
+			return
+		}
+		out = append(out, evaluationFindingItem{Kind: kind, Label: label})
+	}
+	for _, failure := range run.Failures {
+		add("issue", failure)
+	}
+	if issueCount > 0 && len(run.Failures) == 0 {
+		add("issue", evaluationStatusFindingLabel(metadata.Status))
+	}
+	for _, risk := range run.Risks {
+		add("risk", risk)
+	}
+	for _, warning := range run.Warnings {
+		add("warning", warning)
+	}
+	if warningCount > 0 && len(run.Warnings) == 0 {
+		add("warning", evaluationStatusFindingLabel(run.Status))
+	}
+	if riskCount > 0 && len(run.Risks) == 0 {
+		add("risk", "risk")
+	}
+	return out
+}
+
+func evaluationFindingKind(kind string) string {
+	switch dashboardCategory(kind, "") {
+	case "issue":
+		return "issue"
+	case "risk":
+		return "risk"
+	case "warning":
+		return "warning"
+	default:
+		return ""
+	}
+}
+
+func evaluationFindingLabel(label, fallback string) string {
+	text := strings.TrimSpace(sanitizeRunDetailText(label))
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "unsafe value removed" || text == "sensitive value removed" {
+		text = fallback
+	}
+	if text == "" || strings.Contains(text, security.RedactionMarker) || unsafeRunDetailText(text) {
+		text = dashboardCategory(label, fallback)
+	}
+	if text == "" {
+		text = fallback
+	}
+	if len(text) > 96 {
+		text = truncateDisplay(text, 96)
+		text = strings.Join(strings.Fields(text), " ")
+	}
+	return text
+}
+
+func evaluationStatusFindingLabel(status string) string {
+	switch evaluationStatusToken(status, "unknown") {
+	case "failed":
+		return "evaluation_failed"
+	case "needs_work":
+		return "needs_work"
+	case "passed":
+		return "all_clear"
+	case "missing":
+		return "evaluation_missing"
+	case "stale":
+		return "evaluation_stale"
+	case "malformed":
+		return "evaluation_malformed"
+	case "partial":
+		return "evaluation_partial"
+	default:
+		return "unknown"
+	}
+}
+
+func evaluationRunDenied(run runLink) bool {
+	for _, value := range []string{run.Status, run.ErrorSummary, run.RiskSummary} {
+		if strings.Contains(dashboardCategory(value, ""), "denied") {
+			return true
+		}
+	}
+	return false
+}
+
+func evaluationFindingsMessage(state string) string {
+	switch evaluationFindingsStateToken(state, "unknown") {
+	case "denied":
+		return "Evaluation metadata denied."
+	case "unavailable":
+		return "Evaluation metadata unavailable."
+	case "unknown":
+		return "Evaluation metadata state is unknown."
+	case "all-clear":
+		return "Latest evaluation is all clear."
+	case "none":
+		return "No evaluation metadata recorded for latest run."
+	default:
+		return "Latest evaluation has findings."
+	}
+}
+
+func evaluationFindingsStateToken(state, fallback string) string {
+	switch dashboardCategory(state, "") {
+	case "none":
+		return "none"
+	case "unavailable", "missing", "malformed", "partial", "stale":
+		return "unavailable"
+	case "denied":
+		return "denied"
+	case "unknown", "inconsistent":
+		return "unknown"
+	case "all_clear", "allclear", "passed":
+		return "all-clear"
+	case "findings", "failed", "needs_work":
+		return "findings"
+	default:
+		return fallback
+	}
+}
+
+func sanitizeEvaluationFindingsSummary(summary evaluationFindingsSummary) evaluationFindingsSummary {
+	summary.State = evaluationFindingsStateToken(summary.State, "unknown")
+	summary.RunID = latestRunIDLabel(summary.RunID)
+	summary.EvaluationState = evaluationStatusToken(summary.EvaluationState, "unknown")
+	summary.SummaryLabel = evaluationFindingLabel(summary.SummaryLabel, "evaluation "+summary.EvaluationState)
+	summary.Message = evaluationFindingLabel(summary.Message, evaluationFindingsMessage(summary.State))
+	summary.IssueCount = maxInt(summary.IssueCount, 0)
+	summary.RiskCount = maxInt(summary.RiskCount, 0)
+	summary.WarningCount = maxInt(summary.WarningCount, 0)
+	if parsed, ok := parseLatestRunTimestamp(summary.TimestampLabel); ok {
+		summary.TimestampLabel = parsed.UTC().Format(time.RFC3339)
+	} else if summary.TimestampLabel == "" {
+		summary.TimestampLabel = "unknown"
+	} else if summary.TimestampLabel != "none" {
+		summary.TimestampLabel = "unknown"
+	}
+	if summary.HistoryURL != "/runs" {
+		summary.HistoryURL = "/runs"
+	}
+	if summary.RunID == "" {
+		summary.DetailURL = ""
+		summary.AuditURL = ""
+	} else {
+		summary.DetailURL = guardedRunDetailURL(summary.RunID)
+		if summary.AuditURL != "" {
+			summary.AuditURL = guardedRunAuditURL(summary.RunID)
+		}
+	}
+	findings := make([]evaluationFindingItem, 0, minInt(len(summary.Findings), dashboardEvaluationFindingsLimit))
+	for _, finding := range summary.Findings {
+		if len(findings) >= dashboardEvaluationFindingsLimit {
+			break
+		}
+		kind := evaluationFindingKind(finding.Kind)
+		label := evaluationFindingLabel(finding.Label, kind)
+		if kind != "" && label != "" {
+			findings = append(findings, evaluationFindingItem{Kind: kind, Label: label})
+		}
+	}
+	summary.Findings = findings
+	return summary
 }
 
 func latestRunNoneSummary() latestRunSummary {
@@ -3577,8 +4097,13 @@ func (s *Server) runHistoryLinkFromInspection(inspection runInspection) runLink 
 	}
 	if !inspection.TrustedManifest {
 		run.Invalid = true
-		run.Status = "unavailable"
-		run.ErrorSummary = unavailableRunError(inspection.ManifestState)
+		if inspection.State == "denied" {
+			run.Status = "denied"
+			run.ErrorSummary = "run metadata denied"
+		} else {
+			run.Status = "unavailable"
+			run.ErrorSummary = unavailableRunError(inspection.ManifestState)
+		}
 		run.Failures = []string{run.ErrorSummary}
 		return run
 	}
@@ -3608,7 +4133,11 @@ func (s *Server) runHistoryLinkFromInspection(inspection runInspection) runLink 
 		run.PushedRef = safeText(manifest.Repository.PushedRef)
 	}
 	run.DryRun = manifest.DryRun
+	run.Evaluation = runEvaluationMetadataFromValidation(manifest.Validation, inspection.Roots...)
 	run.Validation = dashboardValidationStatus(manifest)
+	if run.Validation == "" && run.Evaluation.State != "none" {
+		run.Validation = run.Evaluation.SummaryLabel
+	}
 	run.ValidationArtifact = listedArtifactPath(manifest.Artifacts, "validation_summary", "validation_results")
 	if run.ValidationArtifact == "" {
 		run.ValidationArtifact = artifactPathByValue(manifest.Artifacts, manifest.Validation.SummaryPath)
@@ -3621,6 +4150,7 @@ func (s *Server) runHistoryLinkFromInspection(inspection runInspection) runLink 
 		run.RiskSummary = safeText(manifest.Risks[0])
 		run.Risks = sanitizeDashboardList(manifest.Risks, inspection.Roots...)
 	}
+	run.Warnings = sanitizeDashboardList(manifest.Git.Warnings, inspection.Roots...)
 	run.SecuritySummary, run.SecurityDetails = dashboardSecurityDiagnostics(manifest.Security)
 	if isHistoricalCommitSuccess(manifest) {
 		note := "Legacy commit-success metadata is historical; current jj runs do not auto-commit by default."
@@ -4073,6 +4603,13 @@ func formatDurationMS(ms int64) string {
 
 func maxInt(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b
@@ -5104,6 +5641,27 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          {{if .ErrorSummary}}<p class="error">{{.ErrorSummary}}</p>{{else if .RiskSummary}}<p>{{.RiskSummary}}</p>{{else}}<p class="muted">No recorded failures or risks in the latest run.</p>{{end}}
 	        {{end}}{{else}}
 	          <p class="muted">No runs available for risk review.</p>
+	        {{end}}
+	      </section>
+	      <section>
+	        <h2>Evaluation Findings</h2>
+	        {{if .EvaluationFindings.RunID}}
+	          <p><a href="{{.EvaluationFindings.DetailURL}}">{{.EvaluationFindings.RunID}}</a> <span class="muted">{{.EvaluationFindings.State}} · {{.EvaluationFindings.TimestampLabel}}</span></p>
+	          <p class="muted">{{.EvaluationFindings.SummaryLabel}} · issues {{.EvaluationFindings.IssueCount}} · risks {{.EvaluationFindings.RiskCount}} · warnings {{.EvaluationFindings.WarningCount}}</p>
+	          <p>{{.EvaluationFindings.Message}}</p>
+	          {{if .EvaluationFindings.Findings}}
+	            <ul>
+	            {{range .EvaluationFindings.Findings}}
+	              <li><span class="muted">{{.Kind}}</span> {{.Label}}</li>
+	            {{end}}
+	            </ul>
+	          {{else if eq .EvaluationFindings.State "all-clear"}}
+	            <p class="muted">All clear.</p>
+	          {{end}}
+	          <p><a href="{{.EvaluationFindings.DetailURL}}">Run detail</a> · <a href="{{.EvaluationFindings.HistoryURL}}">Run history</a>{{if .EvaluationFindings.AuditURL}} · <a href="{{.EvaluationFindings.AuditURL}}">Audit export</a>{{end}}</p>
+	        {{else}}
+	          <p class="muted">{{.EvaluationFindings.Message}}</p>
+	          <p><a href="{{.EvaluationFindings.HistoryURL}}">Run history</a></p>
 	        {{end}}
 	      </section>
 	      <section>

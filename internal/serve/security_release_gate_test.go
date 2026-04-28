@@ -131,7 +131,7 @@ func TestSecurityReleaseGateGuardedArtifactsAndRunInspectionSurfaces(t *testing.
 		status int
 		want   []string
 	}{
-		{name: "dashboard", target: "/", status: http.StatusOK, want: []string{fullID, "security redactions 6"}},
+		{name: "dashboard", target: "/", status: http.StatusOK, want: []string{fullID, "security redactions 6", "Evaluation Findings"}},
 		{name: "history", target: "/runs", status: http.StatusOK, want: []string{fullID, dryID, "compare"}},
 		{name: "history filtered dry", target: "/runs?dry_run=true&q=release", status: http.StatusOK, want: []string{dryID, "Filtered run history."}},
 		{name: "detail dry", target: "/runs/" + dryID, status: http.StatusOK, want: []string{dryID, "dry-run true", "security redactions 6", "dry-run parity equivalent", "git diff redactions 3"}},
@@ -257,6 +257,9 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !indexCalls["recentRunsSummaryFromRuns"] {
 		t.Fatalf("handleIndex must build recent-runs data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
+	if !indexCalls["evaluationFindingsSummaryFromRuns"] {
+		t.Fatalf("handleIndex must build evaluation-findings data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
+	}
 	if !indexCalls["nextActionSummaryFromSummaries"] {
 		t.Fatalf("handleIndex must build next-action data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
@@ -267,6 +270,7 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"latestRunSummaryFromRuns",
 		"recentRunsSummaryFromRuns",
 		"recentRunItemFromRun",
+		"evaluationFindingsSummaryFromRuns",
 		"nextActionSummaryFromSummaries",
 		"handleRunCompare",
 		"loadRunCompareSide",

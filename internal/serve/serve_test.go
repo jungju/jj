@@ -569,6 +569,240 @@ func TestDashboardRecentRunsSummaryInvalidMetadataAndHostileIDsAreSafe(t *testin
 	}
 }
 
+func TestDashboardEvaluationFindingsShowsLatestFindingsAndPreservesSections(t *testing.T) {
+	dir := t.TempDir()
+	secret := "sk-proj-evalfindings1234567890"
+	writeFile(t, dir, "plan.md", "# Plan\n")
+	writeFile(t, dir, "README.md", "# README\n")
+	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n")
+	writeFile(t, dir, "docs/EVAL.md", "# Eval\n"+secret+"\n")
+	writeFile(t, dir, "docs/TASK.md", `# Tasks
+
+- [~] TASK-0047 [feature] Show sanitized evaluation findings on the dashboard
+`)
+	writeFile(t, dir, ".jj/runs/20260429-120000-findings/manifest.json", `{
+		"run_id":"20260429-120000-findings",
+		"status":"failed",
+		"started_at":"2026-04-29T12:00:00Z",
+		"planner_provider":"codex",
+		"artifacts":{"manifest":"manifest.json","validation_summary":"validation/summary.md"},
+		"validation":{"status":"failed","evidence_status":"recorded","summary_path":"validation/summary.md","command_count":1,"failed_count":1},
+		"errors":["validation failed in safe package"],
+		"risks":["review required"],
+		"git":{"warnings":["git metadata unavailable"]}
+	}`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	findings := htmlSection(body, "Evaluation Findings", "Recent Runs")
+	for _, want := range []string{
+		"Evaluation Findings",
+		"20260429-120000-findings",
+		"findings",
+		"evaluation failed (recorded)",
+		"issues 1 · risks 1 · warnings 1",
+		"validation failed in safe package",
+		"review required",
+		"git metadata unavailable",
+		`href="/runs/20260429-120000-findings"`,
+		`href="/runs"`,
+		`href="/runs/audit?run=20260429-120000-findings"`,
+	} {
+		if !strings.Contains(findings, want) {
+			t.Fatalf("evaluation findings missing %q:\n%s", want, findings)
+		}
+	}
+	for _, leaked := range []string{secret, "Raw manifest", "Validation summary", security.RedactionMarker, "[omitted]"} {
+		if strings.Contains(findings, leaked) {
+			t.Fatalf("evaluation findings leaked %q:\n%s", leaked, findings)
+		}
+	}
+
+	taskSection := htmlSection(body, "Current TASK", "Latest Run")
+	for _, want := range []string{"TASK-0047", "feature", "in-progress", "Show sanitized evaluation findings on the dashboard"} {
+		if !strings.Contains(taskSection, want) {
+			t.Fatalf("TASK summary changed, missing %q:\n%s", want, taskSection)
+		}
+	}
+	latest := htmlSection(body, "Latest Run", "Risks And Failures")
+	for _, want := range []string{"20260429-120000-findings", "provider/result codex", "evaluation failed (recorded)"} {
+		if !strings.Contains(latest, want) {
+			t.Fatalf("latest-run summary changed, missing %q:\n%s", want, latest)
+		}
+	}
+	recent := htmlSection(body, "Recent Runs", "Next Action")
+	if !strings.Contains(recent, "20260429-120000-findings") || !strings.Contains(recent, "evaluation failed (recorded)") {
+		t.Fatalf("recent-runs summary changed:\n%s", recent)
+	}
+	next := htmlSection(body, "Next Action", "Project Docs")
+	for _, want := range []string{"Continue Task", "continue_task", "TASK-0047"} {
+		if !strings.Contains(next, want) {
+			t.Fatalf("next-action summary changed, missing %q:\n%s", want, next)
+		}
+	}
+	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
+	for _, want := range []string{"plan.md", "docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md", "README.md"} {
+		if !strings.Contains(projectDocs, want) {
+			t.Fatalf("project docs summary changed, missing %q:\n%s", want, projectDocs)
+		}
+	}
+}
+
+func TestDashboardEvaluationFindingsAllClearNoRunAndNoEvaluationStates(t *testing.T) {
+	t.Run("all clear", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, ".jj/runs/20260429-120000-clear/manifest.json", `{
+			"run_id":"20260429-120000-clear",
+			"status":"complete",
+			"started_at":"2026-04-29T12:00:00Z",
+			"artifacts":{"manifest":"manifest.json"},
+			"validation":{"ran":true,"status":"passed","evidence_status":"recorded","command_count":1,"passed_count":1}
+		}`)
+		section := dashboardEvaluationFindingsSection(t, newTestServer(t, dir, ""))
+		for _, want := range []string{"20260429-120000-clear", "all-clear", "evaluation passed (recorded)", "issues 0 · risks 0 · warnings 0", "All clear."} {
+			if !strings.Contains(section, want) {
+				t.Fatalf("all-clear findings missing %q:\n%s", want, section)
+			}
+		}
+	})
+
+	t.Run("no run", func(t *testing.T) {
+		dir := t.TempDir()
+		section := dashboardEvaluationFindingsSection(t, newTestServer(t, dir, ""))
+		for _, want := range []string{"Evaluation Findings", "No jj runs found.", `href="/runs">Run history</a>`} {
+			if !strings.Contains(section, want) {
+				t.Fatalf("no-run findings missing %q:\n%s", want, section)
+			}
+		}
+	})
+
+	t.Run("no evaluation", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, ".jj/runs/20260429-120000-noeval/manifest.json", `{
+			"run_id":"20260429-120000-noeval",
+			"status":"complete",
+			"started_at":"2026-04-29T12:00:00Z",
+			"artifacts":{"manifest":"manifest.json"}
+		}`)
+		section := dashboardEvaluationFindingsSection(t, newTestServer(t, dir, ""))
+		for _, want := range []string{"20260429-120000-noeval", "none", "evaluation none", "No evaluation metadata recorded for latest run.", "issues 0 · risks 0 · warnings 0"} {
+			if !strings.Contains(section, want) {
+				t.Fatalf("no-evaluation findings missing %q:\n%s", want, section)
+			}
+		}
+	})
+}
+
+func TestDashboardEvaluationFindingsUnavailableDeniedUnknownAndNeedsWorkStates(t *testing.T) {
+	secret := "sk-proj-evalstate1234567890"
+	cases := []struct {
+		name      string
+		runID     string
+		setup     func(t *testing.T, dir, runID string)
+		want      []string
+		forbidden []string
+	}{
+		{
+			name:  "missing evaluation",
+			runID: "20260429-120000-missing",
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","started_at":"2026-04-29T12:00:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"missing","evidence_status":"missing"}}`)
+			},
+			want: []string{"20260429-120000-missing", "unavailable", "evaluation missing", "Evaluation metadata unavailable."},
+		},
+		{
+			name:  "malformed manifest",
+			runID: "20260429-121000-malformed",
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"`+secret+`",`)
+			},
+			want:      []string{"20260429-121000-malformed", "unavailable", "evaluation unavailable", "Evaluation metadata unavailable."},
+			forbidden: []string{secret},
+		},
+		{
+			name:  "partial manifest",
+			runID: "20260429-122000-partial",
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete"}`)
+			},
+			want: []string{"20260429-122000-partial", "unavailable", "evaluation unavailable"},
+		},
+		{
+			name:  "stale evaluation",
+			runID: "20260429-123000-stale",
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","started_at":"2026-04-29T12:30:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"stale","evidence_status":"recorded"}}`)
+			},
+			want: []string{"20260429-123000-stale", "unavailable", "evaluation stale (recorded)"},
+		},
+		{
+			name:  "denied manifest",
+			runID: "20260429-124000-denied",
+			setup: func(t *testing.T, dir, runID string) {
+				outside := t.TempDir()
+				writeFile(t, outside, "manifest.json", `{"run_id":"`+runID+`","status":"complete","artifacts":{"manifest":"manifest.json"}}`)
+				if err := os.MkdirAll(filepath.Join(dir, ".jj/runs", runID), 0o755); err != nil {
+					t.Fatalf("mkdir run: %v", err)
+				}
+				if err := os.Symlink(filepath.Join(outside, "manifest.json"), filepath.Join(dir, ".jj/runs", runID, "manifest.json")); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+			},
+			want: []string{"20260429-124000-denied", "denied", "evaluation denied", "Evaluation metadata denied."},
+		},
+		{
+			name:  "hostile token-like metadata",
+			runID: "20260429-125000-hostile",
+			setup: func(t *testing.T, dir, runID string) {
+				t.Setenv("JJ_EVAL_FINDINGS_SECRET", secret)
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{
+					"run_id":"`+runID+`",
+					"status":"complete",
+					"started_at":"2026-04-29T12:50:00Z",
+					"artifacts":{"manifest":"manifest.json"},
+					"validation":{"ran":true,"status":"`+secret+`","summary":"raw artifact body token=`+secret+`"},
+					"errors":["raw artifact body token=`+secret+`"],
+					"risks":["Authorization: Bearer `+secret+`"],
+					"git":{"warnings":["../outside/`+secret+`"]}
+				}`)
+			},
+			want:      []string{"20260429-125000-hostile", "unknown", "evaluation unknown", "issues 1 · risks 1 · warnings 1"},
+			forbidden: []string{secret, "raw artifact body", "Authorization: Bearer", "../outside"},
+		},
+		{
+			name:  "needs work",
+			runID: "20260429-126000-needs",
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"needs_work","started_at":"2026-04-29T13:00:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"needs_work","evidence_status":"recorded"}}`)
+			},
+			want: []string{"20260429-126000-needs", "findings", "evaluation needs_work (recorded)", "issues 1 · risks 0 · warnings 0", "needs_work"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tc.setup(t, dir, tc.runID)
+			section := dashboardEvaluationFindingsSection(t, newTestServer(t, dir, ""))
+			for _, want := range tc.want {
+				if !strings.Contains(section, want) {
+					t.Fatalf("%s findings missing %q:\n%s", tc.name, want, section)
+				}
+			}
+			for _, leaked := range append(tc.forbidden, security.RedactionMarker, "[omitted]", "Raw manifest", "Validation summary") {
+				if strings.Contains(section, leaked) {
+					t.Fatalf("%s findings leaked %q:\n%s", tc.name, leaked, section)
+				}
+			}
+		})
+	}
+}
+
 func TestDashboardShowsTaskMarkdownQueueSummary(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "docs/TASK.md", `# Work Queue
@@ -3643,6 +3877,18 @@ func dashboardNextActionSection(t *testing.T, server *Server) string {
 		t.Fatalf("dashboard status = %d body=%s", rec.Code, body)
 	}
 	return htmlSection(body, "Next Action", "Project Docs")
+}
+
+func dashboardEvaluationFindingsSection(t *testing.T, server *Server) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard status = %d body=%s", rec.Code, body)
+	}
+	return htmlSection(body, "Evaluation Findings", "Recent Runs")
 }
 
 type loopFakeExecutor struct {
