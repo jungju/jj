@@ -290,23 +290,28 @@ func terminalTaskCountLines(tasks TaskState) []string {
 }
 
 func recentFailureEvidence(continuation string) string {
-	text := strings.ToLower(continuation)
-	if !containsAny(text, "validation failed", "status\":\"failed", `"status": "failed"`, "failed", "blocker", "panic", "fatal error", "regression") {
+	categories := positiveBugfixEvidenceCategories(continuationBugfixEvidenceScope(continuation))
+	if len(categories) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	for _, line := range strings.Split(continuation, "\n") {
-		lower := strings.ToLower(line)
-		if containsAny(lower, "validation", "status", "failed", "failure", "error", "blocker", "panic", "fatal", "regression") {
-			b.WriteString("- ")
-			b.WriteString(strings.TrimSpace(redactSecrets(line)))
-			b.WriteByte('\n')
-		}
-		if b.Len() > 4000 {
-			break
-		}
+	for _, category := range categories {
+		b.WriteString("- ")
+		b.WriteString(category)
+		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+func continuationBugfixEvidenceScope(continuation string) string {
+	if !strings.Contains(continuation, "## ") {
+		return continuation
+	}
+	sections := []string{
+		sectionBetween(continuation, "## Previous Manifest", "## "),
+		sectionBetween(continuation, "## Previous Validation Summary", "## "),
+	}
+	return strings.Join(nonEmptyPlanningItems(sections), "\n")
 }
 
 func buildSpecState(plan string, merged ai.MergeResult, drafts []ai.PlanningDraft, proposal TaskProposalResolution, before SpecState, now time.Time) SpecState {

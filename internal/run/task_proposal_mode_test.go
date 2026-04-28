@@ -52,6 +52,60 @@ func TestResolveTaskProposalModeAutoBugfix(t *testing.T) {
 	}
 }
 
+func TestResolveTaskProposalModePositiveBugfixEvidence(t *testing.T) {
+	tests := []string{
+		"validation failed after implementation",
+		"tests failed in validation summary",
+		`{"validation":{"status":"failed","failed_count":0}}`,
+		`{"validation":{"status":"passed","failed_count":2}}`,
+		"provider failure while planning",
+		"panic: runtime error",
+		"fatal error: provider exited",
+		"regression detected in dashboard run inspection",
+		"current blocker prevents progress",
+		`{"tasks":[{"id":"TASK-0002","status":"blocked"}]}`,
+	}
+
+	for _, evidence := range tests {
+		t.Run(evidence, func(t *testing.T) {
+			for _, mode := range []TaskProposalMode{TaskProposalModeAuto, TaskProposalModeBalanced} {
+				got := ResolveTaskProposalMode(mode, evidence)
+				if got.Resolved != TaskProposalModeBugfix {
+					t.Fatalf("%s should resolve bugfix for %q, got %#v", mode, evidence, got)
+				}
+			}
+		})
+	}
+}
+
+func TestResolveTaskProposalModeHealthyAndNegatedEvidenceDoesNotResolveBugfix(t *testing.T) {
+	tests := []string{
+		"no blocker",
+		"not blocked",
+		"no validation failed; validation passed",
+		`{"validation":{"status":"passed","failed_count":0}}`,
+		"failed_count: 0",
+		"status passed",
+		"tests pass",
+		"no regressions found",
+		"all tasks done",
+		"no runnable tasks",
+		"regression detection needs work",
+		"Current SPEC requirements and open questions:\n- Auto mode resolves to bugfix for failed validation, failed tests, provider failure, panic, fatal error, and regression.\n\nNon-terminal task state:\n\nClosed task history count: 12\n",
+	}
+
+	for _, evidence := range tests {
+		t.Run(evidence, func(t *testing.T) {
+			for _, mode := range []TaskProposalMode{TaskProposalModeAuto, TaskProposalModeBalanced} {
+				got := ResolveTaskProposalMode(mode, evidence)
+				if got.Resolved == TaskProposalModeBugfix {
+					t.Fatalf("%s should not resolve bugfix for healthy or negated evidence %q, got %#v", mode, evidence, got)
+				}
+			}
+		})
+	}
+}
+
 func TestResolveTaskProposalModeAutoSecurityEvidence(t *testing.T) {
 	got := ResolveTaskProposalMode(TaskProposalModeAuto, "unsafe secret exposure in artifacts")
 	if got.Selected != TaskProposalModeAuto || got.Resolved != TaskProposalModeSecurity {
@@ -86,6 +140,42 @@ func TestResolveTaskProposalModeCriticalBlockerOverridesConcreteModeToBugfix(t *
 	}
 	if !strings.Contains(got.Reason, "overridden") || got.SelectedTaskID != "TASK-0001" {
 		t.Fatalf("expected override metadata, got %#v", got)
+	}
+}
+
+func TestResolveTaskProposalModeConcreteModesOverrideOnlyForPositiveBugfixEvidence(t *testing.T) {
+	concreteModes := []TaskProposalMode{
+		TaskProposalModeFeature,
+		TaskProposalModeSecurity,
+		TaskProposalModeHardening,
+		TaskProposalModeQuality,
+		TaskProposalModeDocs,
+	}
+
+	for _, mode := range concreteModes {
+		t.Run(string(mode)+" positive", func(t *testing.T) {
+			got := ResolveTaskProposalMode(mode, `{"validation":{"status":"failed","failed_count":1}}`)
+			if got.Resolved != TaskProposalModeBugfix {
+				t.Fatalf("expected %s to be overridden to bugfix by positive evidence, got %#v", mode, got)
+			}
+		})
+		t.Run(string(mode)+" healthy", func(t *testing.T) {
+			got := ResolveTaskProposalMode(mode, "validation passed; tests pass; no blocker; failed_count: 0")
+			if got.Resolved != mode {
+				t.Fatalf("expected %s to remain selected for healthy evidence, got %#v", mode, got)
+			}
+		})
+	}
+}
+
+func TestResolveTaskProposalModeReasonDoesNotEchoBugfixEvidencePayload(t *testing.T) {
+	secret := "sk-proj-taskproposalpayload1234567890"
+	got := ResolveTaskProposalMode(TaskProposalModeAuto, "validation failed Authorization: Bearer "+secret+" /tmp/unsafe-command")
+	if got.Resolved != TaskProposalModeBugfix {
+		t.Fatalf("expected bugfix for validation failure, got %#v", got)
+	}
+	if strings.Contains(got.Reason, secret) || strings.Contains(got.Reason, "/tmp/unsafe-command") {
+		t.Fatalf("resolution reason echoed raw evidence payload: %#v", got)
 	}
 }
 

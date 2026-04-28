@@ -2,6 +2,8 @@ package run
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -234,7 +236,7 @@ func concreteTaskProposalMode(mode TaskProposalMode) TaskProposalMode {
 
 func detectTaskProposalMode(evidence string) (TaskProposalMode, string, bool) {
 	text := strings.ToLower(evidence)
-	if containsAny(text, "validation fail", "validation failed", "tests fail", "test fail", "failing test", "blocker", "blocked", "regression", "provider failure", "panic", "fatal error") {
+	if hasPositiveBugfixEvidence(taskProposalBugfixEvidenceScope(evidence)) {
 		return TaskProposalModeBugfix, "bugfix is required because failing validation, tests, regressions, or blockers are present.", true
 	}
 	if containsAny(text, "secret", "api key", "bearer token", "private key", "password", "credential", "connection string", "workspace boundary", "path traversal", "symlink escape", "command execution", "artifact exposure", "dashboard exposure", "security risk", "privacy risk", "redaction") {
@@ -250,6 +252,261 @@ func detectTaskProposalMode(evidence string) (TaskProposalMode, string, bool) {
 		return TaskProposalModeDocs, "docs is appropriate because documentation or canonical project documents need alignment.", false
 	}
 	return TaskProposalModeFeature, "feature is appropriate because no blocker, security, hardening, quality, or documentation debt signal was detected.", false
+}
+
+var failedCountEvidencePattern = regexp.MustCompile(`(?i)"?failed[_ -]?count"?\s*[:=]\s*"?([0-9]+)"?`)
+
+func taskProposalBugfixEvidenceScope(evidence string) string {
+	if !strings.Contains(evidence, "Current SPEC requirements and open questions:") &&
+		!strings.Contains(evidence, "Non-terminal task state:") {
+		return evidence
+	}
+	sections := []string{
+		sectionBetween(evidence, "Non-terminal task state:", "Closed task history count:", "Recent failure evidence:"),
+		sectionBetween(evidence, "Recent failure evidence:"),
+	}
+	return strings.Join(nonEmptyPlanningItems(sections), "\n")
+}
+
+func hasPositiveBugfixEvidence(evidence string) bool {
+	return len(positiveBugfixEvidenceCategories(evidence)) > 0
+}
+
+func positiveBugfixEvidenceCategories(evidence string) []string {
+	text := strings.ToLower(evidence)
+	found := map[string]bool{}
+	for _, match := range failedCountEvidencePattern.FindAllStringSubmatch(text, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		count, err := strconv.Atoi(match[1])
+		if err == nil && count > 0 {
+			found["failed_count_positive"] = true
+		}
+	}
+	for _, line := range evidenceLines(text) {
+		for _, category := range positiveBugfixLineCategories(line) {
+			found[category] = true
+		}
+	}
+	order := []string{
+		"validation_failed",
+		"tests_failed",
+		"failed_count_positive",
+		"failed_status",
+		"blocked_task",
+		"provider_failure",
+		"panic",
+		"fatal_error",
+		"regression",
+	}
+	var categories []string
+	for _, category := range order {
+		if found[category] {
+			categories = append(categories, category)
+		}
+	}
+	return categories
+}
+
+func positiveBugfixLineCategories(line string) []string {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+	found := map[string]bool{}
+	if lineHasFailedOrBlockedStatus(line) {
+		if containsAny(line, "blocked") {
+			found["blocked_task"] = true
+		} else {
+			found["failed_status"] = true
+		}
+	}
+	if lineDeclaresNoBugfixEvidence(line) {
+		return orderedBugfixCategories(found)
+	}
+	if containsAny(line, "validation_failed") ||
+		containsPositivePhrase(line, "validation failed", "validation failure", "failed validation") {
+		found["validation_failed"] = true
+	}
+	if containsAny(line, "tests_failed") ||
+		containsPositivePhrase(line, "tests failed", "test failed", "tests fail", "test fail", "failing test", "failed tests", "failed test") {
+		found["tests_failed"] = true
+	}
+	if containsAny(line, "failed_count_positive") {
+		found["failed_count_positive"] = true
+	}
+	if containsAny(line, "provider_failure") ||
+		containsPositivePhrase(line, "provider failure", "provider failed", "provider error", "planner failed", "openai failed", "codex failed") {
+		found["provider_failure"] = true
+	}
+	if containsPositivePhrase(line, "panic") {
+		found["panic"] = true
+	}
+	if containsAny(line, "fatal_error") || containsPositivePhrase(line, "fatal error", "fatal failure") {
+		found["fatal_error"] = true
+	}
+	if hasPositiveRegressionEvidence(line) {
+		found["regression"] = true
+	}
+	if containsAny(line, "blocked_task") ||
+		containsPositivePhrase(line,
+			"current blocker",
+			"active blocker",
+			"known blocker",
+			"open blocker",
+			"blocker prevents",
+			"blocker present",
+			"blocking progress",
+			"blocks progress",
+			"blocks feature work",
+			"blocked runnable task",
+			"runnable task blocked",
+			"task is blocked",
+			"blocked by",
+		) {
+		found["blocked_task"] = true
+	}
+	return orderedBugfixCategories(found)
+}
+
+func orderedBugfixCategories(found map[string]bool) []string {
+	order := []string{"validation_failed", "tests_failed", "failed_count_positive", "failed_status", "blocked_task", "provider_failure", "panic", "fatal_error", "regression"}
+	var categories []string
+	for _, category := range order {
+		if found[category] {
+			categories = append(categories, category)
+		}
+	}
+	return categories
+}
+
+func lineDeclaresNoBugfixEvidence(line string) bool {
+	if !strings.Contains(line, "no ") || !strings.Contains(line, "evidence") {
+		return false
+	}
+	if containsAny(line, "evidence was detected", "evidence detected", "evidence exists", "evidence present") &&
+		containsAny(line, "validation", "test", "provider", "blocker", "blocked", "panic", "fatal", "regression") {
+		return true
+	}
+	return false
+}
+
+func lineHasFailedOrBlockedStatus(line string) bool {
+	for _, status := range []string{"failed", "blocked", "partial_failed", "hard_failed"} {
+		for _, token := range []string{
+			`"status":"` + status + `"`,
+			`"status": "` + status + `"`,
+			`status:` + status,
+			`status: ` + status,
+			`status=` + status,
+		} {
+			if strings.Contains(line, token) && !strings.Contains(line, `\"status\":\"`+status+`\"`) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasPositiveRegressionEvidence(line string) bool {
+	if containsPositivePhrase(line,
+		"regression found",
+		"regression detected",
+		"regression introduced",
+		"regression occurred",
+		"regression failure",
+		"regression failed",
+		"regressed",
+		"regresses",
+	) {
+		return true
+	}
+	if containsAny(line, "regression detection", "regression guard", "regression test", "regression coverage", "regression suite", "regression check") {
+		return false
+	}
+	return containsPositivePhrase(line, "regression")
+}
+
+func containsPositivePhrase(line string, phrases ...string) bool {
+	for _, phrase := range phrases {
+		start := 0
+		for {
+			idx := strings.Index(line[start:], phrase)
+			if idx < 0 {
+				break
+			}
+			pos := start + idx
+			if !hasRecentNegation(line, pos) {
+				return true
+			}
+			start = pos + len(phrase)
+		}
+	}
+	return false
+}
+
+func hasRecentNegation(line string, pos int) bool {
+	start := pos - 80
+	if start < 0 {
+		start = 0
+	}
+	words := strings.FieldsFunc(line[start:pos], func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_'
+	})
+	if len(words) == 0 {
+		return false
+	}
+	first := len(words) - 8
+	if first < 0 {
+		first = 0
+	}
+	for _, word := range words[first:] {
+		switch word {
+		case "no", "not", "without", "never", "none", "zero":
+			return true
+		}
+	}
+	return false
+}
+
+func evidenceLines(text string) []string {
+	fields := strings.FieldsFunc(text, func(r rune) bool {
+		switch r {
+		case '\n', '\r', '\t', ';':
+			return true
+		default:
+			return false
+		}
+	})
+	var lines []string
+	for _, field := range fields {
+		if trimmed := strings.TrimSpace(field); trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	return lines
+}
+
+func sectionBetween(text, startMarker string, endMarkers ...string) string {
+	lower := strings.ToLower(text)
+	startMarker = strings.ToLower(startMarker)
+	start := strings.Index(lower, startMarker)
+	if start < 0 {
+		return ""
+	}
+	contentStart := start + len(startMarker)
+	end := len(text)
+	for _, marker := range endMarkers {
+		marker = strings.ToLower(marker)
+		if marker == "" {
+			continue
+		}
+		if idx := strings.Index(lower[contentStart:], marker); idx >= 0 && contentStart+idx < end {
+			end = contentStart + idx
+		}
+	}
+	return text[contentStart:end]
 }
 
 func containsAny(text string, needles ...string) bool {

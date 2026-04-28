@@ -431,6 +431,75 @@ func TestTaskProposalEvidenceFailedValidationResolvesBugfix(t *testing.T) {
 	}
 }
 
+func TestTaskProposalEvidenceSpecFailurePolicyDoesNotResolveBugfix(t *testing.T) {
+	evidence := buildTaskProposalEvidence(SpecState{
+		Version: 1,
+		Title:   "SPEC",
+		Requirements: []string{
+			"Auto mode resolves to bugfix only from positive current evidence of failed validation, failed tests, provider failure, panic, fatal error, or regression.",
+			"Healthy context such as validation passed, failed_count: 0, tests pass, and no regressions found must not trigger bugfix.",
+		},
+	}, TaskState{
+		Version: 1,
+		Tasks: []TaskRecord{{
+			ID:     "TASK-0001",
+			Title:  "Fix previous validation failed loop",
+			Mode:   "bugfix",
+			Status: "done",
+			Reason: "Previous task mentioned blocker evidence but completed successfully.",
+		}},
+	}, "", "")
+
+	resolution := ResolveTaskProposalMode(TaskProposalModeAuto, evidence)
+	if resolution.Resolved == TaskProposalModeBugfix {
+		t.Fatalf("failure-policy SPEC wording and completed history should not force bugfix, got %#v with evidence:\n%s", resolution, evidence)
+	}
+}
+
+func TestTaskProposalEvidenceIgnoresHealthyContinuationFailureWords(t *testing.T) {
+	continuation := strings.Join([]string{
+		"This is an automatic continuation turn for jj.",
+		"## Workspace Task State",
+		`{"tasks":[{"id":"TASK-0001","status":"done","reason":"validation failed before but this task is complete"}]}`,
+		"## Previous Manifest",
+		`{"status":"complete","task_proposal_reason":"selected concrete mode feature remains active because no validation, test, provider, blocker, panic, fatal error, or regression evidence was detected.","validation":{"status":"passed","failed_count":0}}`,
+		"## Previous Validation Summary",
+		"validation passed",
+		"tests pass",
+		"no regressions found",
+	}, "\n")
+	evidence := buildTaskProposalEvidence(SpecState{Version: 1}, TaskState{Version: 1}, continuation, "")
+
+	if strings.Contains(evidence, "Recent failure evidence") {
+		t.Fatalf("healthy continuation should not emit recent failure evidence:\n%s", evidence)
+	}
+	resolution := ResolveTaskProposalMode(TaskProposalModeAuto, evidence)
+	if resolution.Resolved == TaskProposalModeBugfix {
+		t.Fatalf("healthy continuation should not resolve bugfix, got %#v with evidence:\n%s", resolution, evidence)
+	}
+}
+
+func TestTaskProposalEvidenceUsesPreviousManifestPositiveFailure(t *testing.T) {
+	continuation := strings.Join([]string{
+		"This is an automatic continuation turn for jj.",
+		"## Workspace Task State",
+		`{"tasks":[{"id":"TASK-0001","status":"done","reason":"all tasks done"}]}`,
+		"## Previous Manifest",
+		`{"status":"partial","validation":{"status":"failed","failed_count":1}}`,
+		"## Previous Validation Summary",
+		"validation failed",
+	}, "\n")
+	evidence := buildTaskProposalEvidence(SpecState{Version: 1}, TaskState{Version: 1}, continuation, "")
+
+	if !strings.Contains(evidence, "Recent failure evidence") || !strings.Contains(evidence, "validation_failed") || !strings.Contains(evidence, "failed_count_positive") {
+		t.Fatalf("positive continuation failure should emit safe evidence categories:\n%s", evidence)
+	}
+	resolution := ResolveTaskProposalMode(TaskProposalModeAuto, evidence)
+	if resolution.Resolved != TaskProposalModeBugfix {
+		t.Fatalf("positive continuation failure should resolve bugfix, got %#v with evidence:\n%s", resolution, evidence)
+	}
+}
+
 func TestTaskProposalEvidenceCurrentSpecSecurityRiskResolvesSecurity(t *testing.T) {
 	evidence := buildTaskProposalEvidence(SpecState{
 		Version:       1,

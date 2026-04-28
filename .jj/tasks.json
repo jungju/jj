@@ -732,6 +732,34 @@
       "updated_at": "2026-04-28T16:42:35Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Auto or balanced mode resolves to bugfix only for explicit positive current evidence including validation failed, tests failed, failed_count greater than zero, failed or blocked runnable task, provider failure, panic, fatal error, or regression.",
+        "Auto or balanced mode does not resolve to bugfix for healthy or negated evidence including no blocker, not blocked, no validation failed, validation passed, failed_count: 0, status passed, tests pass, no regressions found, all tasks done, or no runnable tasks.",
+        "Concrete feature, security, hardening, quality, and docs selections are overridden to bugfix only when the same positive critical blocker evidence exists.",
+        "Resolution reasons, events, manifests, and planning context remain sanitized and do not include raw commands, raw environment values, secrets, token-like values, unsafe paths, omission placeholders, or raw attacker-controlled payloads.",
+        "Existing security, hardening, quality, docs, and feature classification behavior remains covered and unchanged when no real blocker exists.",
+        "Focused Go tests cover positive blocker evidence and negated or healthy evidence side by side.",
+        "go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t05",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T16:43:49Z",
+      "created_by_run": "autopilot-20260428-160202-t05",
+      "created_by_turn": null,
+      "id": "TASK-0026",
+      "mode": "bugfix",
+      "priority": "high",
+      "reason": "Auto mode resolved to bugfix while all known tasks are done and no concrete failing validation log is present in context. The strongest actionable blocker evidence is that task proposal resolution may be using broad blocker/failure substrings or generated resolution text rather than positive current failure signals, causing completed healthy queues to loop into bugfix proposals. Fixing this preserves real bugfix overrides for failed validation, tests, provider failures, blocked runnable tasks, panics, fatal errors, and regressions without adding new product scope.",
+      "resolved_task_proposal_mode": "bugfix",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Fix false-positive auto bugfix task proposal resolution",
+      "updated_at": "2026-04-28T16:58:18Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

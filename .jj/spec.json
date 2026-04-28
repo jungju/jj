@@ -35,6 +35,12 @@
     "Focused Go regression tests prove consistent sanitized fields and denial semantics across detail, history, compare, and audit export for valid and unsafe inputs.",
     "Security behavior is covered by focused Go tests for redaction, path guards, artifact writing, manifest scrubbing, command metadata, dry-run and non-dry-run parity, diagnostics, serve access, run detail access, run history access, run comparison access, run audit export access, Codex artifact symlink rejection, low-information configured literal filtering, and secret-looking run ID denial.",
     "Focused Go tests cover valid audit export shape, missing/malformed/partial/older manifests, traversal/absolute/encoded/symlink denial, dashboard link presence, and secret/path/command redaction in the JSON response.",
+    "Auto or balanced mode resolves to bugfix only for explicit positive current evidence including validation failed, tests failed, failed_count greater than zero, failed or blocked runnable task, provider failure, panic, fatal error, or regression.",
+    "Auto or balanced mode does not resolve to bugfix for healthy or negated evidence including no blocker, not blocked, no validation failed, validation passed, failed_count: 0, status passed, tests pass, no regressions found, all tasks done, or no runnable tasks.",
+    "Concrete feature, security, hardening, quality, and docs selections are overridden to bugfix only when the same positive critical blocker evidence exists.",
+    "Resolution reasons, events, manifests, and planning context remain sanitized and do not include raw commands, raw environment values, secrets, token-like values, unsafe paths, omission placeholders, or raw attacker-controlled payloads.",
+    "Existing security, hardening, quality, docs, and feature classification behavior remains covered and unchanged when no real blocker exists.",
+    "Focused Go tests cover positive blocker evidence and negated or healthy evidence side by side.",
     "go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass."
   ],
   "created_at": "2026-04-28",
@@ -49,7 +55,8 @@
     "Let users browse and filter guarded run history from jj serve without manually opening .jj/runs.",
     "Let users compare exactly two guarded runs side by side using sanitized manifest-derived fields only.",
     "Let users export a guarded sanitized JSON audit summary for exactly one validated run ID using the same disclosure-safe run metadata shown by jj serve.",
-    "Keep guarded run metadata construction internally consistent so dashboard, detail, history, comparison, and audit export surfaces cannot drift in validation, sanitization, or unavailable-state behavior."
+    "Keep guarded run metadata construction internally consistent so dashboard, detail, history, comparison, and audit export surfaces cannot drift in validation, sanitization, or unavailable-state behavior.",
+    "Ensure auto and balanced task proposal resolution selects bugfix only from positive current blocker evidence and does not loop on healthy, negated, or completed-task context."
   ],
   "non_goals": [
     "Provide a hosted cloud service.",
@@ -62,7 +69,8 @@
     "Add client-side full-text search over raw artifacts or manifests.",
     "Add raw artifact diffing or full-text document comparison as part of the guarded run comparison page.",
     "Add raw manifest export, raw artifact export, or artifact content bundling as part of the guarded run audit JSON export.",
-    "Add new dashboard pages or CLI flags as part of the internal consistency hardening pass."
+    "Add new dashboard pages or CLI flags as part of the internal consistency hardening pass.",
+    "Add new product features while fixing automatic task proposal blocker classification."
   ],
   "open_questions": [
     "Should explicitly provided plan files outside --cwd remain allowed as read-only inputs after canonicalization?",
@@ -107,10 +115,14 @@
     "Route handlers must not perform handler-local raw manifest parsing, raw artifact reads, raw command rendering, raw environment rendering, or ad hoc denied-state mapping after route input parsing except through guarded helper APIs.",
     "Shared run metadata construction must consistently populate status, timestamps, dry-run mode, planner/provider metadata, generated doc availability, artifact availability, evaluation state, Codex metadata, sanitized command metadata, disclosure-safe security diagnostics, and safe next-action hints where available.",
     "Safe detail, history, compare, and audit links must be generated only from validated run IDs and guarded route helpers.",
-    "Existing public routes and JSON response shapes should remain compatible unless a field is currently unsafe or inconsistent."
+    "Existing public routes and JSON response shapes should remain compatible unless a field is currently unsafe or inconsistent.",
+    "Auto or balanced task proposal resolution must choose bugfix only from positive current evidence of failed validation, failed tests, failed or blocked runnable tasks, provider failure, panic, fatal error, or regression.",
+    "Healthy or negated evidence such as no blocker, not blocked, validation passed, tests pass, failed_count: 0, status passed, no regressions found, all tasks done, or no runnable tasks must not trigger bugfix resolution.",
+    "Concrete feature, security, hardening, quality, or docs selections must be overridden to bugfix only when the same positive critical blocker evidence exists.",
+    "Task proposal resolution reasons, events, manifests, and planning context must remain sanitized and must not echo raw logs, paths, commands, environment values, secrets, token-like values, omission placeholders, or attacker-controlled payloads."
   ],
-  "summary": "jj is a CLI that turns a user planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains a core constraint, and jj serve includes guarded per-run detail pages, a guarded run history browser, a guarded two-run comparison view, and a guarded sanitized JSON audit export for a single run. Guarded run inspection surfaces now share sanitized metadata construction so validation, redaction, unavailable states, denied states, and safe links remain consistent across detail, history, comparison, and audit export handlers.",
+  "summary": "jj is a CLI that turns a user planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains a core constraint, and jj serve includes guarded per-run detail pages, a guarded run history browser, a guarded two-run comparison view, and a guarded sanitized JSON audit export for a single run. Guarded run inspection surfaces share sanitized metadata construction so validation, redaction, unavailable states, denied states, and safe links remain consistent across detail, history, comparison, and audit export handlers. Automatic and balanced task proposal resolution now selects bugfix only from positive current blocker evidence, while healthy, negated, or completed-task context does not create false-positive bugfix loops.",
   "title": "jj Security Boundary and Dashboard Run Inspection",
-  "updated_at": "2026-04-28T16:43:47Z",
+  "updated_at": "2026-04-28T16:59:38Z",
   "version": 1
 }
