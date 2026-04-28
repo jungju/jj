@@ -1555,6 +1555,35 @@
       "updated_at": "2026-04-28T23:43:06Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Existing jj status output remains behaviorally unchanged for normal workspace, no runs, active run present, validation metadata present, malformed metadata, denied run, hostile labels, token-like run IDs, and deterministic label cases.",
+        "Existing jj runs output remains behaviorally unchanged for normal recent runs, no runs, malformed metadata, denied runs, hostile labels, token-like run IDs, validation and evaluation labels, tied or missing timestamps, stale metadata, and internally inconsistent metadata.",
+        "Dashboard Recent Runs, Active Run, Validation Status, run detail Validation Evidence, Compare Previous, and Run Artifacts behavior remain unchanged where touched.",
+        "Duplicated or unnecessarily complex sanitized run-summary ordering, timestamp labeling, state labeling, provider/result/evaluation/validation label selection, or safe row formatting is reduced through a narrow shared helper or clearer existing helper structure.",
+        "Refactored CLI and dashboard paths still derive rendered data only from shared sanitized DTO/helper output and do not perform local raw manifest, artifact, command, environment, diff, validation output, planner handoff, TASK.md, EVAL.md, document body, arbitrary file, or unsafe path reads after input parsing.",
+        "No persisted artifact, served response, jj status output, or jj runs output gains raw secrets, token-like values, unsafe absolute paths, omission placeholders, raw commands, raw environment values, raw manifests, raw diffs, validation payloads, planner handoff payloads, TASK/EVAL/document bodies, or attacker-controlled denied payloads.",
+        "No new CLI flags, dashboard pages, raw export endpoints, scanners, config behavior, pagination, manifest schema changes, artifact uploads, broad file browsing, dashboard layout changes, or user-facing output semantics are introduced.",
+        "Focused CLI and serve/dashboard tests pass after the refactor, and gofmt is applied to touched Go files."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t34",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T23:44:30Z",
+      "created_by_run": "autopilot-20260428-160202-t34",
+      "created_by_turn": null,
+      "id": "TASK-0055",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent override asks for code refactoring and simplification. Recent completed work added related sanitized CLI and dashboard run-summary surfaces, so the safest useful next task is a behavior-preserving quality cleanup that reduces duplicated ordering and label formatting while keeping existing security boundaries closed.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized run summary formatting helpers",
+      "updated_at": "2026-04-28T23:52:51Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

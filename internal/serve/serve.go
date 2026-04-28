@@ -135,6 +135,15 @@ type runLink struct {
 	CompareURL               string
 }
 
+type runSummaryLabels struct {
+	RunID           string
+	Status          string
+	EvaluationState string
+	TimestampLabel  string
+	DetailURL       string
+	AuditURL        string
+}
+
 type runHistoryFilters struct {
 	Status          string
 	DryRun          string
@@ -3153,17 +3162,19 @@ func latestRunSummaryFromRuns(runs []runLink) latestRunSummary {
 	if !ok {
 		return latestRunNoneSummary()
 	}
+	labels, ok := runSummaryLabelsFor(selected)
+	if !ok {
+		return latestRunNoneSummary()
+	}
 	summary := latestRunSummary{
 		State:           "available",
 		Available:       true,
-		RunID:           latestRunIDLabel(selected.ID),
-		Status:          latestRunDisplayText(selected.Status, "unknown"),
-		EvaluationState: latestRunDisplayText(selected.Validation, "unknown"),
-		TimestampLabel:  latestRunTimestampLabel(selected),
+		RunID:           labels.RunID,
+		Status:          labels.Status,
+		EvaluationState: labels.EvaluationState,
+		TimestampLabel:  labels.TimestampLabel,
 		HistoryURL:      "/runs",
-	}
-	if summary.RunID == "" {
-		return latestRunNoneSummary()
+		DetailURL:       labels.DetailURL,
 	}
 	if selected.Invalid {
 		summary.State = "unavailable"
@@ -3174,12 +3185,10 @@ func latestRunSummaryFromRuns(runs []runLink) latestRunSummary {
 			summary.EvaluationState = "unavailable"
 		}
 		summary.Message = latestRunDisplayText(firstNonEmpty(selected.ErrorSummary, "Latest run metadata unavailable."), "Latest run metadata unavailable.")
-		summary.DetailURL = guardedRunDetailURL(summary.RunID)
 		return summary
 	}
 	summary.ProviderOrResult = latestProviderOrResult(selected)
-	summary.DetailURL = guardedRunDetailURL(summary.RunID)
-	summary.AuditURL = guardedRunAuditURL(summary.RunID)
+	summary.AuditURL = labels.AuditURL
 	return summary
 }
 
@@ -3209,18 +3218,18 @@ func recentRunsSummaryFromRuns(runs []runLink) recentRunsSummary {
 }
 
 func recentRunItemFromRun(run runLink) (recentRunItem, bool) {
-	runID := latestRunIDLabel(run.ID)
-	if runID == "" {
+	labels, ok := runSummaryLabelsFor(run)
+	if !ok {
 		return recentRunItem{}, false
 	}
 	item := recentRunItem{
 		State:           "available",
-		RunID:           runID,
-		Status:          latestRunDisplayText(run.Status, "unknown"),
-		EvaluationState: latestRunDisplayText(run.Validation, "unknown"),
+		RunID:           labels.RunID,
+		Status:          labels.Status,
+		EvaluationState: labels.EvaluationState,
 		ValidationState: recentRunValidationState(run),
-		TimestampLabel:  latestRunTimestampLabel(run),
-		DetailURL:       guardedRunDetailURL(runID),
+		TimestampLabel:  labels.TimestampLabel,
+		DetailURL:       labels.DetailURL,
 	}
 	if evaluationInconsistent(run, validationStatusMetadataForRun(run)) {
 		item.State = "unknown"
@@ -3248,7 +3257,7 @@ func recentRunItemFromRun(run runLink) (recentRunItem, bool) {
 		return item, true
 	}
 	item.ProviderOrResult = latestProviderOrResult(run)
-	item.AuditURL = guardedRunAuditURL(runID)
+	item.AuditURL = labels.AuditURL
 	return item, true
 }
 
@@ -3284,8 +3293,8 @@ func activeRunsSummaryFromRuns(runs []runLink) activeRunsSummary {
 }
 
 func activeRunItemFromRun(run runLink) (activeRunItem, bool) {
-	runID := latestRunIDLabel(run.ID)
-	if runID == "" || run.Invalid || !activeRunMetadataConsistent(run) {
+	labels, ok := runSummaryLabelsFor(run)
+	if !ok || run.Invalid || !activeRunMetadataConsistent(run) {
 		return activeRunItem{}, false
 	}
 	status := activeRunStatusToken(run.Status)
@@ -3293,13 +3302,13 @@ func activeRunItemFromRun(run runLink) (activeRunItem, bool) {
 		return activeRunItem{}, false
 	}
 	return activeRunItem{
-		RunID:            runID,
+		RunID:            labels.RunID,
 		Status:           status,
 		ProviderOrResult: activeRunProviderOrResult(run, status),
 		EvaluationState:  activeRunEvaluationState(run),
-		TimestampLabel:   latestRunTimestampLabel(run),
-		DetailURL:        guardedRunDetailURL(runID),
-		AuditURL:         guardedRunAuditURL(runID),
+		TimestampLabel:   labels.TimestampLabel,
+		DetailURL:        labels.DetailURL,
+		AuditURL:         labels.AuditURL,
 	}, true
 }
 
@@ -3397,8 +3406,8 @@ func validationStatusNoneSummary() validationStatusSummary {
 }
 
 func validationStatusUnavailableItemFromRun(run runLink) (validationStatusItem, bool) {
-	runID := latestRunIDLabel(run.ID)
-	if runID == "" {
+	labels, ok := runSummaryLabelsFor(run)
+	if !ok {
 		return validationStatusItem{}, false
 	}
 	state := "unavailable"
@@ -3406,17 +3415,17 @@ func validationStatusUnavailableItemFromRun(run runLink) (validationStatusItem, 
 		state = "denied"
 	}
 	return validationStatusItem{
-		RunID:           runID,
+		RunID:           labels.RunID,
 		ValidationState: state,
-		TimestampLabel:  latestRunTimestampLabel(run),
-		DetailURL:       guardedRunDetailURL(runID),
-		AuditURL:        guardedRunAuditURL(runID),
+		TimestampLabel:  labels.TimestampLabel,
+		DetailURL:       labels.DetailURL,
+		AuditURL:        labels.AuditURL,
 	}, true
 }
 
 func validationStatusItemFromRun(run runLink) (validationStatusItem, bool) {
-	runID := latestRunIDLabel(run.ID)
-	if runID == "" || !validationRunCompleted(run.Status) {
+	labels, ok := runSummaryLabelsFor(run)
+	if !ok || !validationRunCompleted(run.Status) {
 		return validationStatusItem{}, false
 	}
 	metadata := validationStatusMetadataForRun(run)
@@ -3434,12 +3443,12 @@ func validationStatusItemFromRun(run runLink) (validationStatusItem, bool) {
 		return validationStatusItem{}, false
 	}
 	return validationStatusItem{
-		RunID:           runID,
+		RunID:           labels.RunID,
 		ValidationState: state,
 		CountsLabel:     validationStatusCountsLabel(metadata),
-		TimestampLabel:  latestRunTimestampLabel(run),
-		DetailURL:       guardedRunDetailURL(runID),
-		AuditURL:        guardedRunAuditURL(runID),
+		TimestampLabel:  labels.TimestampLabel,
+		DetailURL:       labels.DetailURL,
+		AuditURL:        labels.AuditURL,
 	}, true
 }
 
@@ -3550,8 +3559,8 @@ func validationStatusCountsLabel(metadata runEvaluationMetadata) string {
 
 func validationEvidenceFromRun(run runLink) validationEvidenceSummary {
 	summary := validationEvidenceNoneSummary()
-	runID := latestRunIDLabel(run.ID)
-	if runID == "" {
+	runLabels, ok := runSummaryLabelsFor(run)
+	if !ok {
 		return summary
 	}
 	if run.Invalid {
@@ -3565,12 +3574,12 @@ func validationEvidenceFromRun(run runLink) validationEvidenceSummary {
 			Visible:         true,
 			State:           state,
 			Message:         message,
-			RunID:           runID,
+			RunID:           runLabels.RunID,
 			ValidationState: state,
-			TimestampLabel:  latestRunTimestampLabel(run),
+			TimestampLabel:  runLabels.TimestampLabel,
 			Labels:          []string{"category " + state},
-			DetailURL:       guardedRunDetailURL(runID),
-			AuditURL:        guardedRunAuditURL(runID),
+			DetailURL:       runLabels.DetailURL,
+			AuditURL:        runLabels.AuditURL,
 		}
 	}
 	if !validationRunCompleted(run.Status) {
@@ -3590,18 +3599,18 @@ func validationEvidenceFromRun(run runLink) validationEvidenceSummary {
 	if state == "" || state == "none" {
 		return summary
 	}
-	labels := validationEvidenceLabelsForRun(run, metadata, state)
+	evidenceLabels := validationEvidenceLabelsForRun(run, metadata, state)
 	return validationEvidenceSummary{
 		Visible:         true,
 		State:           state,
 		Message:         validationEvidenceMessage(state),
-		RunID:           runID,
+		RunID:           runLabels.RunID,
 		ValidationState: state,
 		CountsLabel:     validationEvidenceCountsLabel(metadata),
-		TimestampLabel:  latestRunTimestampLabel(run),
-		Labels:          labels,
-		DetailURL:       guardedRunDetailURL(runID),
-		AuditURL:        guardedRunAuditURL(runID),
+		TimestampLabel:  runLabels.TimestampLabel,
+		Labels:          evidenceLabels,
+		DetailURL:       runLabels.DetailURL,
+		AuditURL:        runLabels.AuditURL,
 	}
 }
 
@@ -4302,6 +4311,21 @@ func latestRunNoneSummary() latestRunSummary {
 		TimestampLabel:   "none",
 		HistoryURL:       "/runs",
 	}
+}
+
+func runSummaryLabelsFor(run runLink) (runSummaryLabels, bool) {
+	runID := latestRunIDLabel(run.ID)
+	if runID == "" {
+		return runSummaryLabels{}, false
+	}
+	return runSummaryLabels{
+		RunID:           runID,
+		Status:          latestRunDisplayText(run.Status, "unknown"),
+		EvaluationState: latestRunDisplayText(run.Validation, "unknown"),
+		TimestampLabel:  latestRunTimestampLabel(run),
+		DetailURL:       guardedRunDetailURL(runID),
+		AuditURL:        guardedRunAuditURL(runID),
+	}, true
 }
 
 func selectLatestRun(runs []runLink) (runLink, bool) {
