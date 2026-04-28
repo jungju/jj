@@ -506,13 +506,9 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 				manifest.Planner.Artifacts[name] = path
 			}
 		}
-		_, manifestReport := security.RedactJSONValueWithReport(manifest)
+		_, manifestReport := sanitizePersistenceJSONValueWithReport(safeManifestForPersistence(manifest, store), runArtifactHandoffRoots(store)...)
 		redactionKindCounts := store.RedactionKindCounts()
-		for kind, count := range manifestReport.Kinds {
-			if count > 0 {
-				redactionKindCounts[kind] += int64(count)
-			}
-		}
+		addRedactionReportCounts(redactionKindCounts, manifestReport)
 		manifest.RedactionCount = store.RedactionCount() + int64(manifestReport.Count)
 		manifest.Security.RedactionCount = manifest.RedactionCount
 		manifest.RedactionKindCounts = redactionKindCounts
@@ -520,7 +516,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		manifest.Security.RedactionKindCounts = redactionKindCounts
 		manifest.Security.RedactionKinds = manifest.RedactionKinds
 		refreshManifestSecurityDiagnostics(&manifest, manifest.RedactionCount)
-		redactedManifest, redactionReport := security.RedactJSONValueWithReport(manifest)
+		redactedManifest, redactionReport := sanitizePersistenceJSONValueWithReport(safeManifestForPersistence(manifest, store), runArtifactHandoffRoots(store)...)
 		store.RecordRedactionReport(redactionReport)
 		data, err := json.MarshalIndent(redactedManifest, "", "  ")
 		if err != nil {
@@ -672,7 +668,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		record("git_baseline", p)
 		manifest.Git.BaselinePath = "git/baseline.json"
 	}
-	if p, err := store.WriteString("git/baseline.txt", renderGitBaseline(gitState)); err != nil {
+	if p, err := store.WriteString("git/baseline.txt", sanitizeHandoffText(renderGitBaseline(gitState), runArtifactHandoffRoots(store)...)); err != nil {
 		return fail(StatusPartial, err)
 	} else {
 		record("git_baseline_txt", p)
@@ -1398,19 +1394,13 @@ func sanitizeHandoffText(s string, roots ...security.CommandPathRoot) string {
 }
 
 func writeHandoffFile(store artifact.Store, rel string, data []byte) (string, error) {
-	sanitized, report := security.SanitizeHandoffContentWithReport(rel, data,
-		security.CommandPathRoot{Path: store.RunDir, Label: "[run]"},
-		security.CommandPathRoot{Path: store.CWD, Label: "[workspace]"},
-	)
+	sanitized, report := security.SanitizeHandoffContentWithReport(rel, data, runArtifactHandoffRoots(store)...)
 	store.RecordRedactionReport(report)
 	return store.WriteFile(rel, sanitized)
 }
 
 func writeHandoffJSON(store artifact.Store, rel string, value any) (string, error) {
-	sanitized, report := security.SanitizeHandoffJSONValueWithReport(value,
-		security.CommandPathRoot{Path: store.RunDir, Label: "[run]"},
-		security.CommandPathRoot{Path: store.CWD, Label: "[workspace]"},
-	)
+	sanitized, report := security.SanitizeHandoffJSONValueWithReport(value, runArtifactHandoffRoots(store)...)
 	store.RecordRedactionReport(report)
 	data, err := json.MarshalIndent(sanitized, "", "  ")
 	if err != nil {
@@ -1420,7 +1410,7 @@ func writeHandoffJSON(store artifact.Store, rel string, value any) (string, erro
 }
 
 func writeRedactedJSON(store artifact.Store, rel string, value any) (string, error) {
-	redacted, report := security.RedactJSONValueWithReport(value)
+	redacted, report := sanitizePersistenceJSONValueWithReport(value, runArtifactHandoffRoots(store)...)
 	store.RecordRedactionReport(report)
 	data, err := json.MarshalIndent(redacted, "", "  ")
 	if err != nil {
@@ -1428,6 +1418,115 @@ func writeRedactedJSON(store artifact.Store, rel string, value any) (string, err
 	}
 	data = append([]byte(redactSecrets(string(data))), '\n')
 	return store.WriteFile(rel, data)
+}
+
+func runArtifactHandoffRoots(store artifact.Store) []security.CommandPathRoot {
+	return []security.CommandPathRoot{
+		{Path: store.RunDir, Label: "[run]"},
+		{Path: store.CWD, Label: "[workspace]"},
+	}
+}
+
+func sanitizePersistenceJSONValueWithReport(value any, roots ...security.CommandPathRoot) (any, security.RedactionReport) {
+	redacted, report := security.RedactJSONValueWithReport(value)
+	sanitized, displayReport := sanitizePersistenceDisplayJSONValue(redacted, roots...)
+	report.Merge(displayReport)
+	return sanitized, report
+}
+
+func sanitizePersistenceDisplayJSONValue(value any, roots ...security.CommandPathRoot) (any, security.RedactionReport) {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		report := security.RedactionReport{}
+		for key, child := range v {
+			safeChild, childReport := sanitizePersistenceDisplayJSONValue(child, roots...)
+			out[key] = safeChild
+			report.Merge(childReport)
+		}
+		return out, report
+	case []any:
+		out := make([]any, len(v))
+		report := security.RedactionReport{}
+		for i, child := range v {
+			safeChild, childReport := sanitizePersistenceDisplayJSONValue(child, roots...)
+			out[i] = safeChild
+			report.Merge(childReport)
+		}
+		return out, report
+	case string:
+		return security.SanitizeDisplayStringWithReport(v, roots...)
+	default:
+		return value, security.RedactionReport{}
+	}
+}
+
+func safeManifestForPersistence(manifest Manifest, store artifact.Store) Manifest {
+	manifest.CWD = "[workspace]"
+	manifest.PlanPath = safeManifestPathLabel(manifest.PlanPath, store)
+	manifest.InputPath = safeManifestPathLabel(manifest.InputPath, store)
+	manifest.Config.ConfigFile = safeManifestPathLabel(manifest.Config.ConfigFile, store)
+	manifest.Config.CodexBin = safeManifestDisplayString(manifest.Config.CodexBin, store)
+	manifest.Git.Root = safeManifestPathLabel(manifest.Git.Root, store)
+	manifest.Repository.RepoDir = safeManifestPathLabel(manifest.Repository.RepoDir, store)
+	for i := range manifest.Validation.Commands {
+		manifest.Validation.Commands[i].Command = ""
+	}
+	return manifest
+}
+
+func safeManifestPathLabel(value string, store artifact.Store) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	switch {
+	case value == "[workspace]", strings.HasPrefix(value, "[workspace]/"):
+		return value
+	case value == "[run]", strings.HasPrefix(value, "[run]/"):
+		return value
+	case value == "[path]":
+		return value
+	}
+	if filepath.IsAbs(value) {
+		workspace, err := filepath.Abs(store.CWD)
+		if err == nil {
+			if resolved, evalErr := filepath.EvalSymlinks(workspace); evalErr == nil {
+				workspace = resolved
+			}
+			candidate, absErr := filepath.Abs(value)
+			if absErr == nil {
+				if resolved, evalErr := filepath.EvalSymlinks(candidate); evalErr == nil {
+					candidate = resolved
+				}
+				if rel, relErr := filepath.Rel(workspace, candidate); relErr == nil {
+					if rel == "." {
+						return "[workspace]"
+					}
+					if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+						return "[workspace]/" + filepath.ToSlash(rel)
+					}
+				}
+			}
+		}
+		return "[path]"
+	}
+	if clean, err := security.CleanRelativePath(filepath.ToSlash(value), security.PathPolicy{AllowHidden: strings.HasPrefix(value, ".")}); err == nil {
+		return clean
+	}
+	return safeManifestDisplayString(value, store)
+}
+
+func safeManifestDisplayString(value string, store artifact.Store) string {
+	return strings.TrimSpace(sanitizeHandoffText(value, runArtifactHandoffRoots(store)...))
+}
+
+func addRedactionReportCounts(counts map[string]int64, report security.RedactionReport) {
+	for kind, count := range report.Kinds {
+		if strings.TrimSpace(kind) != "" && count > 0 {
+			counts[kind] += int64(count)
+		}
+	}
 }
 
 func sanitizePlanningDraft(draft ai.PlanningDraft) ai.PlanningDraft {

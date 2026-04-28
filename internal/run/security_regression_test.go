@@ -614,6 +614,93 @@ func TestSecurityReleaseGateValidationFailureOutputIsSanitized(t *testing.T) {
 	assertTreeCleanOfSecurityLeaks(t, result.RunDir, forbidden)
 }
 
+func TestSecurityReleaseGateRunArtifactsUseSafePathLabels(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		dryRun bool
+	}{
+		{name: "dry-run", dryRun: true},
+		{name: "full-run", dryRun: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if !tc.dryRun {
+				dir = initGit(t)
+				prepareCommittedWorkspace(t, dir)
+			}
+			planPath := filepath.Join(dir, "plans", "boundary-plan.md")
+			if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+				t.Fatalf("mkdir plan dir: %v", err)
+			}
+			if err := os.WriteFile(planPath, []byte("# Boundary plan\n\nKeep paths guarded.\n"), 0o644); err != nil {
+				t.Fatalf("write plan: %v", err)
+			}
+			externalConfigDir := t.TempDir()
+			externalConfig := filepath.Join(externalConfigDir, "jjrc.json")
+			if err := os.WriteFile(externalConfig, []byte(`{"openai_model":"test-model"}`), 0o644); err != nil {
+				t.Fatalf("write external config: %v", err)
+			}
+
+			result, err := Execute(context.Background(), Config{
+				PlanPath:               planPath,
+				CWD:                    dir,
+				ConfigFile:             externalConfig,
+				RunID:                  "safe-path-labels-" + strings.ReplaceAll(tc.name, "-", ""),
+				PlanningAgents:         1,
+				PlanningAgentsExplicit: true,
+				OpenAIModel:            "test-model",
+				OpenAIModelExplicit:    true,
+				AllowNoGit:             true,
+				AllowNoGitExplicit:     true,
+				DryRun:                 tc.dryRun,
+				DryRunExplicit:         true,
+				Stdout:                 io.Discard,
+				Stderr:                 io.Discard,
+				Planner:                &fakePlanner{},
+				CodexRunner:            &fakeCodexRunner{mutate: !tc.dryRun},
+			})
+			if err != nil {
+				t.Fatalf("execute safe path label run: %v", err)
+			}
+
+			manifest := readManifest(t, filepath.Join(result.RunDir, "manifest.json"))
+			if manifest.CWD != "[workspace]" {
+				t.Fatalf("manifest cwd should be a safe workspace label, got %q", manifest.CWD)
+			}
+			for label, value := range map[string]string{
+				"plan_path":         manifest.PlanPath,
+				"input_path":        manifest.InputPath,
+				"config_file":       manifest.Config.ConfigFile,
+				"git_root":          manifest.Git.Root,
+				"repository_dir":    manifest.Repository.RepoDir,
+				"git_baseline_path": manifest.Git.BaselinePath,
+			} {
+				if filepath.IsAbs(value) || strings.Contains(value, dir) || strings.Contains(value, externalConfigDir) {
+					t.Fatalf("%s persisted unsafe path %q in manifest %#v", label, value, manifest)
+				}
+			}
+			if !strings.Contains(manifest.PlanPath, "plans/boundary-plan.md") || !strings.Contains(manifest.InputPath, "plans/boundary-plan.md") {
+				t.Fatalf("manifest should retain safe relative plan labels, got plan=%q input=%q", manifest.PlanPath, manifest.InputPath)
+			}
+
+			assertTreeCleanOfSecurityLeaks(t, result.RunDir, []string{
+				dir,
+				filepath.ToSlash(dir),
+				planPath,
+				filepath.ToSlash(planPath),
+				externalConfig,
+				filepath.ToSlash(externalConfig),
+				externalConfigDir,
+				filepath.ToSlash(externalConfigDir),
+			})
+			baseline := readFile(t, filepath.Join(result.RunDir, "git", "baseline.txt"))
+			if strings.Contains(baseline, dir) || strings.Contains(baseline, filepath.ToSlash(dir)) {
+				t.Fatalf("git baseline leaked raw workspace path:\n%s", baseline)
+			}
+		})
+	}
+}
+
 func TestSecurityRegressionDiagnosticsNormalizeStringsWithoutLeaks(t *testing.T) {
 	secret := "diagnostic-secret-value"
 	t.Setenv("JJ_DIAGNOSTIC_SECRET", secret)

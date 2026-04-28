@@ -986,6 +986,34 @@
       "updated_at": "2026-04-28T19:03:33Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Focused Go tests fail if serve detail, history, compare, or audit handlers render tampered raw manifest, artifact, command, environment, diff, validation, planner, or path payloads.",
+        "Focused Go tests fail if guarded artifact or run metadata helpers allow traversal, absolute escape, encoded escape, symlink escape, duplicate hostile query values, or secret-looking run IDs to influence persisted or served output.",
+        "Planner and Codex handoff persistence tests prove metadata contains only sanitized categories, counts, booleans, provider labels, mode labels, and safe relative labels.",
+        "Dry-run and non-dry-run hostile fixtures produce equivalent redaction, boundary, diagnostic, validation output, planner handoff metadata, and git diff evidence behavior.",
+        "Any confirmed gap is patched using existing sanitizer, path guard, artifact store, and shared DTO helpers; no new dashboard pages, CLI flags, scanners, raw exports, redaction algorithm expansion, or unrelated user-facing features are added.",
+        "Healthy or negated evidence still does not resolve auto or balanced task proposal mode to bugfix.",
+        "go test ./internal/serve, go test ./internal/run, go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t14",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T19:07:21Z",
+      "created_by_run": "autopilot-20260428-160202-t14",
+      "created_by_turn": null,
+      "id": "TASK-0035",
+      "mode": "security",
+      "priority": "high",
+      "reason": "Auto mode resolves to security because the source-of-truth spec is dominated by secret, workspace-boundary, command metadata, artifact, planner handoff, validation output, git diff, and dashboard exposure risks. There is no positive current blocker evidence, so bugfix is not appropriate, and all prior tasks are complete; this task should prevent future disclosure or boundary regressions without reopening completed work.",
+      "resolved_task_proposal_mode": "security",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Add explicit security boundary contract validation",
+      "updated_at": "2026-04-28T19:24:39Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

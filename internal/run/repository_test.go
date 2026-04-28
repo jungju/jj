@@ -131,7 +131,7 @@ func TestExecuteRepositoryWorkflowClonesBranchesAndCommitsWithoutPush(t *testing
 	if !manifest.Repository.Enabled || manifest.Repository.Provider != "github" {
 		t.Fatalf("repository metadata missing: %#v", manifest.Repository)
 	}
-	if manifest.Repository.SanitizedRepoURL != redactSecrets(origin) || manifest.Repository.RepoDir != redactSecrets(repoDir) || manifest.Repository.BaseBranch != "main" || manifest.Repository.WorkBranch != "jj/run-repo-run" {
+	if manifest.Repository.RepoURL != "[path]" || manifest.Repository.SanitizedRepoURL != "[path]" || manifest.Repository.RepoDir != "[workspace]" || manifest.Repository.BaseBranch != "main" || manifest.Repository.WorkBranch != "jj/run-repo-run" {
 		t.Fatalf("unexpected repository metadata: %#v", manifest.Repository)
 	}
 	if manifest.Repository.PushEnabled || manifest.Repository.PushStatus != "not_pushed" || manifest.Repository.Pushed || manifest.Repository.PushedRef != "" {
@@ -159,7 +159,9 @@ func TestExecuteRepositoryWorkflowClonesBranchesAndCommitsWithoutPush(t *testing
 	if strings.Contains(events, secret) || strings.Contains(codexRunner.lastRequest.Prompt, secret) {
 		t.Fatalf("token leaked into events or codex prompt")
 	}
-	assertTreeDoesNotContain(t, runDir, secret)
+	for _, forbidden := range []string{secret, origin, filepath.ToSlash(origin), repoDir, filepath.ToSlash(repoDir), planDir, filepath.ToSlash(planDir)} {
+		assertTreeDoesNotContain(t, runDir, forbidden)
+	}
 	config := runGitOutput(t, repoDir, "config", "--get", "remote.origin.url")
 	if strings.Contains(config, secret) || strings.Contains(config, "@github.com") {
 		t.Fatalf("origin URL should be sanitized, got %q", config)

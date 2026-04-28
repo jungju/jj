@@ -371,7 +371,7 @@ func redactDashboardLogPaths(text string) string {
 
 func webRunDone(status string) bool {
 	switch status {
-	case "dry_run_complete", "complete", "partial_failed", "planned", "completed", "succeeded", "planning_failed", "implementation_failed", "partial", "success", "failed", "cancelled":
+	case "dry_run_complete", "complete", "partial_failed", "planned", "completed", "succeeded", "planning_failed", "implementation_failed", "partial", "success", "needs_work", "failed", "cancelled":
 		return true
 	default:
 		return false
