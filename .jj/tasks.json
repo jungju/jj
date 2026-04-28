@@ -1097,6 +1097,33 @@
       "updated_at": "2026-04-28T19:52:27Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "CI workflow triggers and release validation documentation remain consistent with scripts/validate.sh as the single local and CI release gate.",
+        "CI release-gate configuration does not use continue-on-error, verbose shell tracing, child output passthrough, raw artifact upload, raw manifest upload, raw diff upload, secret echoing, or environment dumps.",
+        "If inspection finds no concrete CI or release-gate privacy gap, no implementation code is changed and completed security tasks remain closed.",
+        "If a concrete gap is found, the patch is limited to the affected CI, script, docs, or focused regression coverage and emits only sanitized categories, counts, booleans, safe labels, and exit codes.",
+        "No dashboard page, CLI flag, raw export endpoint, scanner expansion, artifact upload behavior, or unrelated user-facing feature is added.",
+        "./scripts/validate.sh passes."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t18",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T19:56:46Z",
+      "created_by_run": "autopilot-20260428-160202-t18",
+      "created_by_turn": null,
+      "id": "TASK-0039",
+      "mode": "security",
+      "priority": "high",
+      "reason": "Auto mode resolves to security because CI release validation, command execution, artifacts, diagnostics, and dashboard-adjacent metadata are privacy-sensitive. There is no positive blocker evidence, so this is not a bugfix and must not reopen completed guardrails; it should only verify CI release-gate privacy behavior and patch confirmed gaps.",
+      "resolved_task_proposal_mode": "security",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Verify CI release-gate privacy contract",
+      "updated_at": "2026-04-28T20:05:27Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

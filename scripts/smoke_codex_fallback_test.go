@@ -218,6 +218,72 @@ exit 0
 	}
 }
 
+func TestReleaseValidationWorkflowUsesSanitizedValidateGate(t *testing.T) {
+	repoRoot := testRepoRoot(t)
+	data, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", "release-validation.yml"))
+	if err != nil {
+		t.Fatalf("read release-validation workflow: %v", err)
+	}
+	text := string(data)
+
+	for _, want := range []string{
+		"pull_request:",
+		"push:",
+		`- ".github/workflows/**"`,
+		`- "**/*.go"`,
+		`- "scripts/**"`,
+		`- "docs/**"`,
+		`- "README.md"`,
+		`- ".jj/spec.json"`,
+		`- ".jj/tasks.json"`,
+		"persist-credentials: false",
+		"cache: false",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("release validation workflow missing required privacy control %q", want)
+		}
+	}
+
+	runCount := 0
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "run:") {
+			continue
+		}
+		runCount++
+		if trimmed != "run: ./scripts/validate.sh" {
+			t.Fatalf("release validation workflow must invoke only scripts/validate.sh, got sanitized run step %q", trimmed)
+		}
+	}
+	if runCount != 1 {
+		t.Fatalf("release validation workflow must have exactly one run step, got %d", runCount)
+	}
+
+	lowerText := strings.ToLower(text)
+	for _, forbidden := range []string{
+		"continue-on-error",
+		"set -x",
+		"bash -x",
+		"sh -x",
+		"actions_step_debug",
+		"upload-artifact",
+		"printenv",
+		"env |",
+		"env >",
+		"cat ",
+		"tee ",
+		".jj/runs",
+		"manifest.json",
+		"diff-summary",
+		"git diff",
+		"secrets.",
+	} {
+		if strings.Contains(lowerText, forbidden) {
+			t.Fatalf("release validation workflow uses forbidden privacy-sensitive construct %q", forbidden)
+		}
+	}
+}
+
 func TestCodexAutopilotContinuesAfterPassUntilMaxTurns(t *testing.T) {
 	repoRoot := testRepoRoot(t)
 	baseRunID := "autopilot-script-warning-" + strconv.FormatInt(timeNowUnixNano(), 10)

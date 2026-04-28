@@ -320,6 +320,6 @@ Default validation must not require live OpenAI API access, real Codex CLI execu
 ./scripts/validate.sh
 ```
 
-`./scripts/validate.sh` is the local and CI release validation gate. It runs the focused serve and run security boundary suites plus the full Go test suite with `OPENAI_API_KEY` cleared, then `go vet ./...`, `go build -o jj ./cmd/jj`, and `git diff --check`.
+`./scripts/validate.sh` is the single local and CI release validation gate. It runs the focused serve and run security boundary suites plus the full Go test suite with `OPENAI_API_KEY` cleared, then `go vet ./...`, `go build -o jj ./cmd/jj`, and `git diff --check`.
 
 The script suppresses child command output and reports only deterministic release-gate metadata: fixed step labels, categories, booleans, counts, and exit codes. A failure in any step exits non-zero.
