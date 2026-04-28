@@ -176,6 +176,21 @@ type recentRunsSummary struct {
 	Items      []recentRunItem
 }
 
+type activeRunsSummary struct {
+	State string
+	Items []activeRunItem
+}
+
+type activeRunItem struct {
+	RunID            string
+	Status           string
+	ProviderOrResult string
+	EvaluationState  string
+	TimestampLabel   string
+	DetailURL        string
+	AuditURL         string
+}
+
 type recentRunItem struct {
 	State            string
 	Message          string
@@ -598,7 +613,7 @@ type pageData struct {
 	Runs               []runLink
 	Readiness          []readinessItem
 	DefaultPlan        string
-	ActiveRuns         []webRunView
+	ActiveRuns         activeRunsSummary
 	Artifacts          []artifactLink
 	RunForm            *runFormData
 	RunResult          *runStartResult
@@ -802,7 +817,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Runs:               runs,
 		Readiness:          readiness,
 		DefaultPlan:        firstReadyPath(readiness, "Plan"),
-		ActiveRuns:         s.webRuns.activeViews(),
+		ActiveRuns:         activeRunsSummaryFromRuns(runs),
 	})
 }
 
@@ -3086,6 +3101,92 @@ func recentRunItemFromRun(run runLink) (recentRunItem, bool) {
 	item.ProviderOrResult = latestProviderOrResult(run)
 	item.AuditURL = guardedRunAuditURL(runID)
 	return item, true
+}
+
+func activeRunsSummaryFromRuns(runs []runLink) activeRunsSummary {
+	summary := activeRunsSummary{State: "none"}
+	candidates := sortedLatestRunCandidates(runs)
+	for _, run := range candidates {
+		item, ok := activeRunItemFromRun(run)
+		if !ok {
+			continue
+		}
+		summary.Items = append(summary.Items, item)
+	}
+	if len(summary.Items) > 0 {
+		summary.State = "available"
+	}
+	return summary
+}
+
+func activeRunItemFromRun(run runLink) (activeRunItem, bool) {
+	runID := latestRunIDLabel(run.ID)
+	if runID == "" || run.Invalid || !activeRunMetadataConsistent(run) {
+		return activeRunItem{}, false
+	}
+	status := activeRunStatusToken(run.Status)
+	if status == "" {
+		return activeRunItem{}, false
+	}
+	return activeRunItem{
+		RunID:            runID,
+		Status:           status,
+		ProviderOrResult: activeRunProviderOrResult(run, status),
+		EvaluationState:  activeRunEvaluationState(run),
+		TimestampLabel:   latestRunTimestampLabel(run),
+		DetailURL:        guardedRunDetailURL(runID),
+		AuditURL:         guardedRunAuditURL(runID),
+	}, true
+}
+
+func activeRunMetadataConsistent(run runLink) bool {
+	if latestRunDisplayText(run.FinishedAt, "") != "" {
+		return false
+	}
+	return !evaluationInconsistent(run, evaluationMetadataForRun(run))
+}
+
+func activeRunStatusToken(status string) string {
+	switch dashboardCategory(status, "") {
+	case "planning":
+		return "planning"
+	case "implementing":
+		return "implementing"
+	case "validating":
+		return "validating"
+	case "running", "in_progress", "inprogress", "progress", "started", "starting":
+		return "running"
+	case "queued", "queue", "pending":
+		return "queued"
+	default:
+		return ""
+	}
+}
+
+func activeRunProviderOrResult(run runLink, status string) string {
+	if provider := latestRunDisplayText(run.PlannerProvider, ""); provider != "" && provider != "unknown" {
+		return provider
+	}
+	return "result " + latestRunDisplayText(status, "unknown")
+}
+
+func activeRunEvaluationState(run runLink) string {
+	evaluation := evaluationMetadataForRun(run)
+	switch evaluation.State {
+	case "", "none":
+		return "unknown"
+	case "unavailable":
+		return "unavailable"
+	case "denied":
+		return "denied"
+	case "unknown":
+		return "unknown"
+	default:
+		if state := latestRunDisplayText(run.Validation, ""); state != "" {
+			return state
+		}
+		return strings.TrimPrefix(evaluation.SummaryLabel, "evaluation ")
+	}
 }
 
 func evaluationFindingsSummaryFromRuns(runs []runLink) evaluationFindingsSummary {
@@ -5729,12 +5830,16 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          <a class="button" href="/runs">Open Runs</a>
 	        </div>
       </section>
-      {{if .ActiveRuns}}
+      {{if .ActiveRuns.Items}}
       <section>
-        <h2>Active Web Runs</h2>
+        <h2>Active Run</h2>
         <ul>
-        {{range .ActiveRuns}}
-          <li><a href="/run/progress?id={{q .RunID}}">{{.RunID}}</a> <span class="muted">{{.Status}} {{.Phase}} turn {{.CurrentTurn.Number}} {{.StopReason}}</span></li>
+        {{range .ActiveRuns.Items}}
+          <li>
+            <a href="{{.DetailURL}}">{{.RunID}}</a> <span class="muted">{{.Status}} · {{.TimestampLabel}}</span>
+            <div class="muted">provider/result {{.ProviderOrResult}}{{if .EvaluationState}} · evaluation {{.EvaluationState}}{{end}}</div>
+            <div><a href="{{.DetailURL}}">Run detail</a>{{if .AuditURL}} · <a href="{{.AuditURL}}">Audit export</a>{{end}}</div>
+          </li>
         {{end}}
         </ul>
       </section>

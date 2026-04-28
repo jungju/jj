@@ -1355,6 +1355,35 @@
       "updated_at": "2026-04-28T22:03:40Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Dashboard root shows a compact Active Run section when at least one valid guarded non-terminal run exists.",
+        "Each active-run item exposes only sanitized run ID label, status, provider or result label, evaluation state when available, timestamp label, and guarded links to existing run views.",
+        "Active-run selection is deterministic when timestamps are missing, malformed, duplicated, or tied.",
+        "No-active, missing metadata, denied, malformed, partial, stale, hostile-label, token-like, or internally inconsistent run metadata renders deterministic none, unavailable, unknown, or denied states without server errors.",
+        "Active Run data is derived only from shared sanitized run DTO/helper output, with no handler-local raw manifest, artifact, command, environment, diff, validation output, EVAL.md body, document body, or filesystem reads after route input parsing.",
+        "No Active Run response contains raw manifests, raw artifact bodies, raw command text, raw environment values, validation payloads, diff bodies, unsafe absolute paths, denied payloads, token-like values, configured secrets, private key blocks, omission placeholders, or raw document bodies.",
+        "Existing TASK.md summary, latest-run summary, next-action summary, Project Docs shortcuts, Recent Runs, and Evaluation Findings behavior remains unchanged when Active Run is rendered.",
+        "Focused Go serve/dashboard tests cover active, no-active, malformed, denied, stale, hostile-label, token-like, deterministic ordering, and unchanged existing dashboard sections."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t27",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T22:06:13Z",
+      "created_by_run": "autopilot-20260428-160202-t27",
+      "created_by_turn": null,
+      "id": "TASK-0048",
+      "mode": "feature",
+      "priority": "high",
+      "reason": "All 47 existing tasks are done and there is no current validation, CI, test, boundary, disclosure, privacy, or blocker evidence for security or bugfix work. The next useful one-turn user-facing capability is a compact Active Run dashboard section that shows non-terminal guarded runs using existing sanitized run DTO/helper paths without exposing raw artifacts.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Show sanitized active run progress on the dashboard",
+      "updated_at": "2026-04-28T22:17:57Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

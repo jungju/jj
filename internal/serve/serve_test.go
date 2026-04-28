@@ -569,6 +569,270 @@ func TestDashboardRecentRunsSummaryInvalidMetadataAndHostileIDsAreSafe(t *testin
 	}
 }
 
+func TestDashboardActiveRunShowsSanitizedNonTerminalRunsAndPreservesSections(t *testing.T) {
+	dir := t.TempDir()
+	secret := "sk-proj-activerun1234567890"
+	t.Setenv("JJ_ACTIVE_RUN_SECRET", secret)
+	writeFile(t, dir, "plan.md", "# Plan\n")
+	writeFile(t, dir, "README.md", "# README\n")
+	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n")
+	writeFile(t, dir, "docs/EVAL.md", "# Eval\n")
+	writeFile(t, dir, "docs/TASK.md", `# Tasks
+
+- [~] TASK-0048 [feature] Show sanitized active run progress on the dashboard
+`)
+	writeFile(t, dir, ".jj/runs/20260429-130000-complete/manifest.json", `{
+		"run_id":"20260429-130000-complete",
+		"status":"complete",
+		"started_at":"2026-04-29T13:00:00Z",
+		"planner_provider":"openai",
+		"artifacts":{"manifest":"manifest.json"},
+		"validation":{"status":"passed","evidence_status":"recorded"}
+	}`)
+	writeFile(t, dir, ".jj/runs/20260429-120000-active/manifest.json", `{
+		"run_id":"20260429-120000-active",
+		"status":"implementing",
+		"started_at":"2026-04-29T12:00:00Z",
+		"planner_provider":"codex",
+		"repository":{"enabled":true,"repo_url":"https://user:`+secret+`@example.invalid/repo.git"},
+		"artifacts":{"manifest":"manifest.json","validation_summary":"validation/summary.md"},
+		"validation":{"status":"passed","evidence_status":"recorded","summary_path":"validation/summary.md"}
+	}`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+
+	active := dashboardActiveRunSection(t, body)
+	for _, want := range []string{
+		"Active Run",
+		"20260429-120000-active",
+		"implementing",
+		"provider/result codex",
+		"evaluation passed (recorded)",
+		"2026-04-29T12:00:00Z",
+		`href="/runs/20260429-120000-active"`,
+		`href="/runs/audit?run=20260429-120000-active"`,
+	} {
+		if !strings.Contains(active, want) {
+			t.Fatalf("active run summary missing %q:\n%s", want, active)
+		}
+	}
+	for _, leaked := range []string{
+		secret,
+		"repo_url",
+		"raw command text",
+		"OPENAI_API_KEY",
+		"raw artifact body",
+		"token=",
+		"validation/summary.md",
+		"manifest.json",
+		security.RedactionMarker,
+		"[omitted]",
+		`href="/run/progress`,
+		"turn ",
+	} {
+		if strings.Contains(active, leaked) {
+			t.Fatalf("active run summary leaked %q:\n%s", leaked, active)
+		}
+	}
+	if strings.Contains(active, "20260429-130000-complete") {
+		t.Fatalf("active run summary included terminal run:\n%s", active)
+	}
+
+	taskSection := htmlSection(body, "Current TASK", "Latest Run")
+	for _, want := range []string{"TASK-0048", "feature", "in-progress", "Show sanitized active run progress on the dashboard"} {
+		if !strings.Contains(taskSection, want) {
+			t.Fatalf("TASK summary changed, missing %q:\n%s", want, taskSection)
+		}
+	}
+	latest := htmlSection(body, "Latest Run", "Risks And Failures")
+	for _, want := range []string{"20260429-130000-complete", "provider/result openai", "evaluation passed (recorded)"} {
+		if !strings.Contains(latest, want) {
+			t.Fatalf("latest-run summary changed, missing %q:\n%s", want, latest)
+		}
+	}
+	recent := htmlSection(body, "Recent Runs", "Next Action")
+	for _, want := range []string{"20260429-130000-complete", "20260429-120000-active"} {
+		if !strings.Contains(recent, want) {
+			t.Fatalf("recent-runs summary changed, missing %q:\n%s", want, recent)
+		}
+	}
+	findings := htmlSection(body, "Evaluation Findings", "Recent Runs")
+	if !strings.Contains(findings, "20260429-130000-complete") || !strings.Contains(findings, "all-clear") {
+		t.Fatalf("evaluation findings summary changed:\n%s", findings)
+	}
+	next := htmlSection(body, "Next Action", "Project Docs")
+	for _, want := range []string{"Continue Task", "continue_task", "TASK-0048"} {
+		if !strings.Contains(next, want) {
+			t.Fatalf("next-action summary changed, missing %q:\n%s", want, next)
+		}
+	}
+	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
+	for _, want := range []string{"plan.md", "docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md", "README.md"} {
+		if !strings.Contains(projectDocs, want) {
+			t.Fatalf("project docs summary changed, missing %q:\n%s", want, projectDocs)
+		}
+	}
+}
+
+func TestDashboardActiveRunNoActiveState(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	if strings.Contains(body, "<h2>Active Run</h2>") || strings.Contains(body, "Active Web Runs") {
+		t.Fatalf("dashboard should not render active section without guarded non-terminal runs:\n%s", body)
+	}
+	summary := activeRunsSummaryFromRuns([]runLink{{ID: "20260429-120000-complete", Status: "complete"}})
+	if summary.State != "none" || len(summary.Items) != 0 {
+		t.Fatalf("no-active helper state should be deterministic none, got %#v", summary)
+	}
+}
+
+func TestDashboardActiveRunUnsafeMetadataStatesAreSafe(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	secret := "sk-proj-activeunsafe1234567890"
+	t.Setenv("JJ_ACTIVE_RUN_UNSAFE_SECRET", secret)
+	writeFile(t, dir, ".jj/runs/20260429-120000-badjson/manifest.json", `{"run_id":"20260429-120000-badjson","status":"`+secret+`",`)
+	writeFile(t, dir, ".jj/runs/20260429-121000-partial/manifest.json", `{"run_id":"20260429-121000-partial","status":"planning"}`)
+	writeFile(t, dir, ".jj/runs/20260429-122000-mismatch/manifest.json", `{"run_id":"20260429-000000-other","status":"planning","artifacts":{"manifest":"manifest.json"}}`)
+	writeFile(t, dir, ".jj/runs/20260429-123000-stale/manifest.json", `{"run_id":"20260429-123000-stale","status":"stale","started_at":"2026-04-29T12:30:00Z","artifacts":{"manifest":"manifest.json"}}`)
+	writeFile(t, dir, ".jj/runs/20260429-124000-finished-active/manifest.json", `{"run_id":"20260429-124000-finished-active","status":"planning","started_at":"2026-04-29T12:40:00Z","finished_at":"2026-04-29T12:41:00Z","artifacts":{"manifest":"manifest.json"}}`)
+	writeFile(t, dir, ".jj/runs/20260429-125000-hostile-status/manifest.json", `{"run_id":"20260429-125000-hostile-status","status":"token=`+secret+`","started_at":"2026-04-29T12:50:00Z","artifacts":{"manifest":"manifest.json"}}`)
+	writeFile(t, dir, ".jj/runs/20260429-126000-token-provider/manifest.json", `{
+		"run_id":"20260429-126000-token-provider",
+		"status":"planning",
+		"started_at":"not-a-time",
+		"planner_provider":"token=`+secret+`",
+		"artifacts":{"manifest":"manifest.json","validation_summary":"validation/summary.md"},
+		"validation":{"status":"`+secret+`","summary_path":"validation/summary.md"},
+		"errors":["Authorization: Bearer `+secret+`"],
+		"risks":["raw diff body `+secret+`"]
+	}`)
+	writeFile(t, dir, ".jj/runs/sk-proj-activerunid1234567890/manifest.json", `{"run_id":"sk-proj-activerunid1234567890","status":"planning","artifacts":{"manifest":"manifest.json"}}`)
+	writeFile(t, dir, ".jj/runs/20260429-127000-%2fescape/manifest.json", `{"run_id":"20260429-127000-%2fescape","status":"planning","artifacts":{"manifest":"manifest.json"}}`)
+	writeFile(t, outside, "target/manifest.json", `{"run_id":"20260429-128000-link","status":"planning","artifacts":{"manifest":"manifest.json"}}`)
+	if err := os.MkdirAll(filepath.Join(dir, ".jj/runs"), 0o755); err != nil {
+		t.Fatalf("mkdir runs: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "target"), filepath.Join(dir, ".jj/runs/20260429-128000-link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	active := dashboardActiveRunSection(t, body)
+	for _, want := range []string{
+		"20260429-126000-token-provider",
+		"planning",
+		"provider/result result planning",
+		"evaluation unknown",
+		"unknown",
+		`href="/runs/20260429-126000-token-provider"`,
+		`href="/runs/audit?run=20260429-126000-token-provider"`,
+	} {
+		if !strings.Contains(active, want) {
+			t.Fatalf("unsafe active state missing %q:\n%s", want, active)
+		}
+	}
+	for _, leaked := range []string{
+		secret,
+		"token=",
+		"Authorization: Bearer",
+		"raw diff body",
+		"validation/summary.md",
+		"20260429-120000-badjson",
+		"20260429-121000-partial",
+		"20260429-122000-mismatch",
+		"20260429-123000-stale",
+		"20260429-124000-finished-active",
+		"20260429-125000-hostile-status",
+		"sk-proj-activerunid",
+		"20260429-127000-%2fescape",
+		"20260429-128000-link",
+		outside,
+		filepath.ToSlash(outside),
+		security.RedactionMarker,
+		"[omitted]",
+		"Raw manifest",
+	} {
+		if strings.Contains(active, leaked) {
+			t.Fatalf("unsafe active state leaked %q:\n%s", leaked, active)
+		}
+	}
+	for _, leaked := range []string{secret, "token=", "Authorization: Bearer", "raw diff body", outside, filepath.ToSlash(outside), security.RedactionMarker, "[omitted]"} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("dashboard leaked unsafe active payload %q:\n%s", leaked, body)
+		}
+	}
+}
+
+func TestActiveRunSelectionIsDeterministicForTimestampFallbacksAndTies(t *testing.T) {
+	summary := activeRunsSummaryFromRuns([]runLink{
+		{ID: "20260429-235959-id-late", Status: "planning", StartedAt: "2026-04-29T10:00:00Z"},
+		{ID: "20260429-090000-clock-late", Status: "planning", StartedAt: "2026-04-29T13:00:00Z"},
+		{ID: "20260429-140000-tie-b", Status: "implementing", StartedAt: "2026-04-29T12:00:00Z"},
+		{ID: "20260429-130000-tie-a", Status: "validating", StartedAt: "2026-04-29T12:00:00Z"},
+		{ID: "20260429-160000-id-fallback", Status: "running", StartedAt: "not-a-time"},
+		{ID: "20260429-150000-no-time", Status: "queued"},
+		{ID: "20260429-170000-complete", Status: "complete", StartedAt: "2026-04-29T17:00:00Z"},
+	})
+	got := make([]string, 0, len(summary.Items))
+	for _, item := range summary.Items {
+		got = append(got, item.RunID)
+	}
+	want := []string{
+		"20260429-160000-id-fallback",
+		"20260429-150000-no-time",
+		"20260429-090000-clock-late",
+		"20260429-140000-tie-b",
+		"20260429-130000-tie-a",
+		"20260429-235959-id-late",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("active run order = %v, want %v", got, want)
+	}
+	if summary.State != "available" {
+		t.Fatalf("active summary state = %q, want available", summary.State)
+	}
+
+	unsafe := activeRunsSummaryFromRuns([]runLink{
+		{ID: "sk-proj-activehelper1234567890", Status: "planning"},
+		{ID: "20260429-180000-denied", Status: "denied", Invalid: true, ErrorSummary: "run metadata denied"},
+		{ID: "20260429-181000-stale", Status: "stale"},
+		{ID: "20260429-182000-inconsistent", Status: "planning", Validation: "passed", Failures: []string{"failure"}},
+	})
+	if unsafe.State != "none" || len(unsafe.Items) != 0 {
+		t.Fatalf("unsafe active metadata should produce deterministic none state: %#v", unsafe)
+	}
+
+	staleEvaluation := activeRunsSummaryFromRuns([]runLink{
+		{ID: "20260429-183000-stale-eval", Status: "planning", Validation: "stale (recorded)"},
+	})
+	if staleEvaluation.State != "available" || len(staleEvaluation.Items) != 1 || staleEvaluation.Items[0].EvaluationState != "unavailable" {
+		t.Fatalf("stale active evaluation should render unavailable, got %#v", staleEvaluation)
+	}
+}
+
 func TestDashboardEvaluationFindingsShowsLatestFindingsAndPreservesSections(t *testing.T) {
 	dir := t.TempDir()
 	secret := "sk-proj-evalfindings1234567890"
@@ -3889,6 +4153,14 @@ func dashboardEvaluationFindingsSection(t *testing.T, server *Server) string {
 		t.Fatalf("dashboard status = %d body=%s", rec.Code, body)
 	}
 	return htmlSection(body, "Evaluation Findings", "Recent Runs")
+}
+
+func dashboardActiveRunSection(t *testing.T, body string) string {
+	t.Helper()
+	if !strings.Contains(body, "<h2>Active Run</h2>") {
+		t.Fatalf("dashboard missing Active Run section:\n%s", body)
+	}
+	return htmlSection(body, "Active Run", "State Files")
 }
 
 type loopFakeExecutor struct {
