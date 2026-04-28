@@ -1526,6 +1526,35 @@
       "updated_at": "2026-04-28T23:30:26Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "jj runs exits successfully in a valid workspace and prints a compact sanitized recent-run list.",
+        "The command derives output only from shared sanitized run DTO/helper behavior used by dashboard Recent Runs.",
+        "Output includes only safe labels: run label, status or result, provider when available, evaluation state when available, validation state when available, and timestamp label.",
+        "No-run, malformed, denied, hostile-label, token-like, stale, partial, or internally inconsistent metadata renders deterministic none, unavailable, unknown, or denied states without panic.",
+        "Output contains no raw API keys, token-like values, private key blocks, raw commands, raw environment values, unsafe absolute paths, raw manifests, raw artifacts, raw diffs, validation payloads, planner handoff payloads, TASK/EVAL/document bodies, or omission placeholders.",
+        "Run ordering is deterministic when timestamps are missing, malformed, duplicated, or tied.",
+        "The task does not add raw export, artifact browsing, dashboard pages, pagination, configurable limits, .jjrc behavior, or unrelated CLI/config behavior.",
+        "Focused CLI tests and relevant dashboard shared-helper regressions pass, then ./scripts/validate.sh passes."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t33",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T23:31:43Z",
+      "created_by_run": "autopilot-20260428-160202-t33",
+      "created_by_turn": null,
+      "id": "TASK-0054",
+      "mode": "feature",
+      "priority": "high",
+      "reason": "All prior tasks are done and current evidence shows no blocker, bug, validation, CI, disclosure, or boundary regression. A read-only jj runs command is the smallest useful user-facing continuation of the completed dashboard Recent Runs and jj status work, giving terminal run-history visibility while reusing existing sanitized DTO/helper boundaries.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Add sanitized recent runs CLI summary",
+      "updated_at": "2026-04-28T23:43:06Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

@@ -490,6 +490,156 @@ func TestStatusCommandDeterministicLabels(t *testing.T) {
 	assertStatusOutputSafe(t, out, dir)
 }
 
+func TestRunsCommandPrintsSanitizedRecentRunsWithDeterministicOrdering(t *testing.T) {
+	dir := t.TempDir()
+	writeRecentRunManifest := func(id, status, startedAt, provider, validation string) {
+		fields := []string{
+			fmt.Sprintf(`"run_id":%q`, id),
+			fmt.Sprintf(`"status":%q`, status),
+			fmt.Sprintf(`"planner_provider":%q`, provider),
+			`"artifacts":{"manifest":"manifest.json"}`,
+			fmt.Sprintf(`"validation":{"ran":true,"status":%q,"evidence_status":"recorded","command_count":2,"passed_count":1,"failed_count":0}`, validation),
+		}
+		if startedAt != "" {
+			fields = append(fields, fmt.Sprintf(`"started_at":%q`, startedAt))
+		}
+		writeStatusFile(t, dir, ".jj/runs/"+id+"/manifest.json", "{"+strings.Join(fields, ",")+"}")
+	}
+	writeRecentRunManifest("20260429-120000-tie-b", "needs_work", "2026-04-29T15:00:00Z", "codex", "needs_work")
+	writeRecentRunManifest("20260429-110000-tie-a", "complete", "2026-04-29T15:00:00Z", "openai", "passed")
+	writeRecentRunManifest("20260429-140000-id-fallback", "failed", "not-a-time", "local", "failed")
+	writeRecentRunManifest("20260429-130000-no-time", "complete", "", "codex", "passed")
+	writeRecentRunManifest("20260429-100000-fifth", "complete", "2026-04-29T10:00:00Z", "openai", "passed")
+	writeRecentRunManifest("20260429-090000-excluded", "complete", "2026-04-29T09:00:00Z", "openai", "passed")
+
+	out := runRunsCommandOutput(t, dir)
+	for _, want := range []string{
+		"Runs: state=available total=5",
+		"Run 1: state=available run=20260429-120000-tie-b status=needs_work provider_or_result=codex evaluation=needs_work validation=needs_work timestamp=2026-04-29T15:00:00Z",
+		"Run 2: state=available run=20260429-110000-tie-a status=complete provider_or_result=openai evaluation=passed validation=passed timestamp=2026-04-29T15:00:00Z",
+		"Run 3: state=available run=20260429-140000-id-fallback status=failed provider_or_result=local evaluation=failed validation=failed timestamp=unknown",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("runs output missing %q:\n%s", want, out)
+		}
+	}
+	ordered := []string{
+		"20260429-120000-tie-b",
+		"20260429-110000-tie-a",
+		"20260429-140000-id-fallback",
+		"20260429-130000-no-time",
+		"20260429-100000-fifth",
+	}
+	last := -1
+	for _, id := range ordered {
+		idx := strings.Index(out, id)
+		if idx < 0 || idx <= last {
+			t.Fatalf("runs output order is not deterministic around %q:\n%s", id, out)
+		}
+		last = idx
+	}
+	if strings.Contains(out, "20260429-090000-excluded") {
+		t.Fatalf("runs output should use the dashboard recent-run limit:\n%s", out)
+	}
+	assertStatusOutputSafe(t, out, dir)
+}
+
+func TestRunsCommandNoRuns(t *testing.T) {
+	dir := t.TempDir()
+
+	out := runRunsCommandOutput(t, dir)
+	if strings.TrimSpace(out) != "Runs: state=none total=0" {
+		t.Fatalf("unexpected no-run output:\n%s", out)
+	}
+	assertStatusOutputSafe(t, out, dir)
+}
+
+func TestRunsCommandMalformedPartialAndDeniedRunsAreDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside-sk-proj-runsdenied1234567890.json")
+	writeStatusFile(t, dir, ".jj/runs/20260429-120000-badjson/manifest.json", `{"run_id":"20260429-120000-badjson","status":"complete",`)
+	writeStatusFile(t, dir, ".jj/runs/20260429-121000-partial/manifest.json", `{"run_id":"20260429-121000-partial","status":"success"}`)
+	writeStatusFile(t, dir, ".jj/runs/20260429-122000-mismatch/manifest.json", `{"run_id":"20260429-000000-other","status":"success","artifacts":{"manifest":"manifest.json"}}`)
+	if err := os.MkdirAll(filepath.Join(dir, ".jj", "runs", "20260429-123000-missing"), 0o755); err != nil {
+		t.Fatalf("mkdir missing run: %v", err)
+	}
+	if err := os.WriteFile(outside, []byte(`{"run_id":"20260429-124000-denied","status":"complete","artifacts":{"manifest":"manifest.json"}}`), 0o644); err != nil {
+		t.Fatalf("write outside manifest: %v", err)
+	}
+	deniedDir := filepath.Join(dir, ".jj", "runs", "20260429-124000-denied")
+	if err := os.MkdirAll(deniedDir, 0o755); err != nil {
+		t.Fatalf("mkdir denied run: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(deniedDir, "manifest.json")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	out := runRunsCommandOutput(t, dir)
+	for _, want := range []string{
+		"Runs: state=available total=5",
+		"Run 1: state=denied run=20260429-124000-denied status=denied provider_or_result=denied evaluation=denied validation=denied timestamp=unknown",
+		"Run 2: state=unavailable run=20260429-123000-missing status=unavailable provider_or_result=unavailable evaluation=unavailable validation=unavailable timestamp=unknown",
+		"Run 3: state=unavailable run=20260429-122000-mismatch status=unavailable provider_or_result=unavailable evaluation=unavailable validation=unavailable timestamp=unknown",
+		"Run 4: state=unavailable run=20260429-121000-partial status=unavailable provider_or_result=unavailable evaluation=unavailable validation=unavailable timestamp=unknown",
+		"Run 5: state=unavailable run=20260429-120000-badjson status=unavailable provider_or_result=unavailable evaluation=unavailable validation=unavailable timestamp=unknown",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("runs output missing %q:\n%s", want, out)
+		}
+	}
+	assertStatusOutputSafe(t, out, dir, outside, "sk-proj-runsdenied1234567890", "manifest is malformed", "manifest is incomplete")
+}
+
+func TestRunsCommandHostileLabelsAndTokenLikeRunIDsAreSanitized(t *testing.T) {
+	dir := t.TempDir()
+	secret := "sk-proj-runshostile1234567890"
+	writeStatusFile(t, dir, ".jj/runs/20260429-130000-hostile/manifest.json", fmt.Sprintf(`{
+		"run_id":"20260429-130000-hostile",
+		"status":"complete",
+		"started_at":"2026-04-29T13:00:00Z",
+		"planner_provider":"Authorization: Bearer %s",
+		"artifacts":{"manifest":"manifest.json"},
+		"validation":{"ran":true,"status":"passed","evidence_status":"recorded","commands":[{"label":"API_KEY=%s","status":"passed"}]}
+	}`, secret, secret))
+	tokenRunID := "sk-proj-runstoken1234567890"
+	writeStatusFile(t, dir, ".jj/runs/"+tokenRunID+"/manifest.json", fmt.Sprintf(`{"run_id":%q,"status":"complete","artifacts":{"manifest":"manifest.json"}}`, tokenRunID))
+
+	out := runRunsCommandOutput(t, dir)
+	if !strings.Contains(out, "Run: state=available run=20260429-130000-hostile status=complete provider_or_result=result complete evaluation=passed validation=passed timestamp=2026-04-29T13:00:00Z") {
+		t.Fatalf("runs output did not use deterministic sanitized hostile labels:\n%s", out)
+	}
+	assertStatusOutputSafe(t, out, dir, secret, tokenRunID, "Authorization", "API_KEY=")
+}
+
+func TestRunsCommandStaleAndInternallyInconsistentMetadata(t *testing.T) {
+	dir := t.TempDir()
+	writeStatusFile(t, dir, ".jj/runs/20260429-140000-inconsistent/manifest.json", `{
+		"run_id":"20260429-140000-inconsistent",
+		"status":"complete",
+		"started_at":"2026-04-29T14:00:00Z",
+		"artifacts":{"manifest":"manifest.json"},
+		"validation":{"ran":true,"status":"passed","evidence_status":"recorded","command_count":1,"failed_count":1}
+	}`)
+	writeStatusFile(t, dir, ".jj/runs/20260429-130000-stale/manifest.json", `{
+		"run_id":"20260429-130000-stale",
+		"status":"stale",
+		"started_at":"2026-04-29T13:00:00Z",
+		"artifacts":{"manifest":"manifest.json"},
+		"validation":{"ran":true,"status":"stale","evidence_status":"stale"}
+	}`)
+
+	out := runRunsCommandOutput(t, dir)
+	for _, want := range []string{
+		"Run 1: state=unknown run=20260429-140000-inconsistent status=unknown provider_or_result=unknown evaluation=unknown validation=unknown timestamp=2026-04-29T14:00:00Z",
+		"Run 2: state=unavailable run=20260429-130000-stale status=unavailable provider_or_result=unavailable evaluation=unavailable validation=unavailable timestamp=2026-04-29T13:00:00Z",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("runs output missing %q:\n%s", want, out)
+		}
+	}
+	assertStatusOutputSafe(t, out, dir)
+}
+
 type cliLoopFakeExecutor struct {
 	calls       []run.Config
 	statuses    []string
@@ -560,6 +710,25 @@ func runStatusCommandOutput(t *testing.T, dir string) string {
 	cmd.SetArgs([]string{"status", "--cwd", dir})
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("status command failed: %v stderr=%s", err, stderr.String())
+	}
+	return stdout.String()
+}
+
+func runRunsCommandOutput(t *testing.T, dir string) string {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	cmd := newRootCommandWithServeAndIO(
+		func(_ context.Context, _ run.Config) (*run.Result, error) {
+			t.Fatal("run executor should not be called")
+			return nil, nil
+		},
+		serve.Execute,
+		&stdout,
+		&stderr,
+	)
+	cmd.SetArgs([]string{"runs", "--cwd", dir})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("runs command failed: %v stderr=%s", err, stderr.String())
 	}
 	return stdout.String()
 }

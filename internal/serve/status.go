@@ -83,39 +83,73 @@ type StatusValidationStatusItem struct {
 	TimestampLabel  string
 }
 
+// RecentRunsSummary is the sanitized dashboard Recent Runs DTO used by `jj runs`.
+type RecentRunsSummary struct {
+	State   string
+	Message string
+	Items   []RecentRunItem
+}
+
+type RecentRunItem struct {
+	State            string
+	RunID            string
+	Status           string
+	ProviderOrResult string
+	EvaluationState  string
+	ValidationState  string
+	TimestampLabel   string
+}
+
 // LoadStatusSummary returns the same sanitized high-level state used by the
 // dashboard root without starting an HTTP server.
 func LoadStatusSummary(_ context.Context, cfg Config) (StatusSummary, error) {
-	resolved, err := ResolveConfig(cfg)
+	server, err := statusServerFromConfig(cfg)
 	if err != nil {
 		return StatusSummary{}, err
+	}
+	return server.StatusSummary(), nil
+}
+
+// LoadRecentRunsSummary returns the same sanitized Recent Runs data used by the
+// dashboard root without starting an HTTP server.
+func LoadRecentRunsSummary(_ context.Context, cfg Config) (RecentRunsSummary, error) {
+	server, err := statusServerFromConfig(cfg)
+	if err != nil {
+		return RecentRunsSummary{}, err
+	}
+	return server.RecentRunsSummary(), nil
+}
+
+func statusServerFromConfig(cfg Config) (*Server, error) {
+	resolved, err := ResolveConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
 	cwd := strings.TrimSpace(resolved.CWD)
 	if cwd == "" {
 		cwd, err = os.Getwd()
 		if err != nil {
-			return StatusSummary{}, err
+			return nil, err
 		}
 	}
 	abs, err := filepath.Abs(cwd)
 	if err != nil {
-		return StatusSummary{}, errors.New("cwd is not allowed")
+		return nil, errors.New("cwd is not allowed")
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return StatusSummary{}, errors.New("cwd does not exist")
+			return nil, errors.New("cwd does not exist")
 		}
-		return StatusSummary{}, errors.New("cwd is not readable")
+		return nil, errors.New("cwd is not readable")
 	}
 	if !info.IsDir() {
-		return StatusSummary{}, errors.New("cwd is not a directory")
+		return nil, errors.New("cwd is not a directory")
 	}
 	if resolvedAbs, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = resolvedAbs
 	}
-	server := &Server{cwd: abs}
-	return server.StatusSummary(), nil
+	return &Server{cwd: abs}, nil
 }
 
 // StatusSummary returns a CLI-safe summary derived from dashboard DTO helpers.
@@ -153,6 +187,21 @@ func (s *Server) StatusSummary() StatusSummary {
 		activeRunsSummaryFromRuns(runs),
 		validationStatusSummaryFromRuns(runs),
 	)
+}
+
+// RecentRunsSummary returns a CLI-safe recent-run list derived from the
+// dashboard Recent Runs summary helper.
+func (s *Server) RecentRunsSummary() RecentRunsSummary {
+	runs, err := s.discoverRuns()
+	if err != nil {
+		state := statusDiscoveryState(err)
+		return RecentRunsSummary{
+			State:   state,
+			Message: "Run metadata " + state + ".",
+		}
+	}
+	runs = s.sanitizeRunHistoryLinks(runs)
+	return recentRunsSummaryFromDashboard(recentRunsSummaryFromRuns(runs))
 }
 
 func statusDiscoveryState(err error) string {
@@ -273,6 +322,102 @@ func statusValidationStatusSummaryFromDashboard(summary validationStatusSummary)
 		})
 	}
 	return out
+}
+
+func recentRunsSummaryFromDashboard(summary recentRunsSummary) RecentRunsSummary {
+	out := RecentRunsSummary{
+		State:   statusState(summary.State, "none"),
+		Message: statusSafeText(summary.Message, ""),
+	}
+	seen := map[string]bool{}
+	for _, item := range summary.Items {
+		dto, ok := recentRunItemFromDashboard(item)
+		if !ok || seen[dto.RunID] {
+			continue
+		}
+		seen[dto.RunID] = true
+		out.Items = append(out.Items, dto)
+	}
+	if len(out.Items) > 0 {
+		out.State = "available"
+	} else if out.State == "" {
+		out.State = "none"
+	}
+	return out
+}
+
+func recentRunItemFromDashboard(item recentRunItem) (RecentRunItem, bool) {
+	runID := latestRunIDLabel(item.RunID)
+	if runID == "" {
+		return RecentRunItem{}, false
+	}
+	dto := RecentRunItem{
+		State:            statusState(item.State, "unknown"),
+		RunID:            runID,
+		Status:           statusToken(item.Status, "unknown"),
+		ProviderOrResult: statusSafeText(item.ProviderOrResult, "unknown"),
+		EvaluationState:  statusEvaluationState(item.EvaluationState),
+		ValidationState:  statusState(item.ValidationState, "unknown"),
+		TimestampLabel:   statusTimestampLabel(item.TimestampLabel),
+	}
+	return normalizeRecentRunDTO(dto), true
+}
+
+func normalizeRecentRunDTO(item RecentRunItem) RecentRunItem {
+	switch item.State {
+	case "denied":
+		item.Status = "denied"
+		item.ProviderOrResult = "denied"
+		item.EvaluationState = "denied"
+		item.ValidationState = "denied"
+	case "unavailable":
+		item.Status = "unavailable"
+		item.ProviderOrResult = "unavailable"
+		if item.EvaluationState == "" || item.EvaluationState == "unknown" {
+			item.EvaluationState = "unavailable"
+		}
+		if item.ValidationState == "" || item.ValidationState == "unknown" {
+			item.ValidationState = "unavailable"
+		}
+	case "unknown":
+		item.Status = "unknown"
+		item.ProviderOrResult = "unknown"
+		item.EvaluationState = "unknown"
+		item.ValidationState = "unknown"
+	}
+	switch item.Status {
+	case "stale", "malformed", "partial":
+		item.State = "unavailable"
+		item.Status = "unavailable"
+		item.ProviderOrResult = "unavailable"
+		item.EvaluationState = "unavailable"
+		item.ValidationState = "unavailable"
+	case "inconsistent":
+		item.State = "unknown"
+		item.Status = "unknown"
+		item.ProviderOrResult = "unknown"
+		item.EvaluationState = "unknown"
+		item.ValidationState = "unknown"
+	}
+	if item.State == "" {
+		item.State = "unknown"
+	}
+	if item.Status == "" {
+		item.Status = "unknown"
+	}
+	if item.ProviderOrResult == "" {
+		item.ProviderOrResult = "unknown"
+	}
+	if item.EvaluationState == "" {
+		item.EvaluationState = "unknown"
+	}
+	if item.ValidationState == "" {
+		item.ValidationState = "unknown"
+	}
+	if item.TimestampLabel == "" {
+		item.TimestampLabel = "unknown"
+	}
+	return item
 }
 
 func statusRunOrTaskID(value string) string {

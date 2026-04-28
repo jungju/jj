@@ -24,6 +24,7 @@ import (
 type executor func(context.Context, run.Config) (*run.Result, error)
 type serveExecutor func(context.Context, serve.Config) error
 type statusExecutor func(context.Context, serve.Config) (serve.StatusSummary, error)
+type runsExecutor func(context.Context, serve.Config) (serve.RecentRunsSummary, error)
 
 // NewRootCommand builds the jj CLI.
 func NewRootCommand() *cobra.Command {
@@ -39,10 +40,10 @@ func newRootCommandWithServe(exec executor, serveExec serveExecutor) *cobra.Comm
 }
 
 func newRootCommandWithServeAndIO(exec executor, serveExec serveExecutor, stdout, stderr io.Writer) *cobra.Command {
-	return newRootCommandWithExecutors(exec, serveExec, serve.LoadStatusSummary, stdout, stderr)
+	return newRootCommandWithExecutors(exec, serveExec, serve.LoadStatusSummary, serve.LoadRecentRunsSummary, stdout, stderr)
 }
 
-func newRootCommandWithExecutors(exec executor, serveExec serveExecutor, statusExec statusExecutor, stdout, stderr io.Writer) *cobra.Command {
+func newRootCommandWithExecutors(exec executor, serveExec serveExecutor, statusExec statusExecutor, runsExec runsExecutor, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "jj",
 		Short:         "Run a planning-to-Codex implementation pipeline",
@@ -55,6 +56,7 @@ func newRootCommandWithExecutors(exec executor, serveExec serveExecutor, statusE
 	cmd.AddCommand(newRunCommand(exec, stdout, stderr))
 	cmd.AddCommand(newServeCommand(serveExec, stdout))
 	cmd.AddCommand(newStatusCommand(statusExec, stdout))
+	cmd.AddCommand(newRunsCommand(runsExec, stdout))
 	return cmd
 }
 
@@ -424,6 +426,33 @@ func newStatusCommand(exec statusExecutor, stdout io.Writer) *cobra.Command {
 	return cmd
 }
 
+func newRunsCommand(exec runsExecutor, stdout io.Writer) *cobra.Command {
+	cfg := serve.Config{}
+
+	cmd := &cobra.Command{
+		Use:   "runs",
+		Short: "Print a compact sanitized recent-run list",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.CWDExplicit = cmd.Flags().Changed("cwd")
+			if cwd, err := os.Getwd(); err == nil {
+				cfg.ConfigSearchDir = cwd
+			} else {
+				return err
+			}
+			summary, err := exec(cmd.Context(), cfg)
+			if err != nil {
+				return err
+			}
+			writeRunsSummary(stdout, summary)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&cfg.CWD, "cwd", "", "directory containing jj state and .jj/runs (defaults to current directory)")
+	return cmd
+}
+
 func writeStatusSummary(w io.Writer, summary serve.StatusSummary) {
 	if w == nil {
 		w = io.Discard
@@ -518,6 +547,32 @@ func writeStatusSummary(w io.Writer, summary serve.StatusSummary) {
 			fmt.Fprintf(w, " counts=%s", statusOutputValue(item.CountsLabel, ""))
 		}
 		fmt.Fprintf(w, " timestamp=%s\n", statusOutputValue(item.TimestampLabel, "unknown"))
+	}
+}
+
+func writeRunsSummary(w io.Writer, summary serve.RecentRunsSummary) {
+	if w == nil {
+		w = io.Discard
+	}
+	fmt.Fprintf(w, "Runs: state=%s total=%d\n",
+		statusOutputValue(summary.State, "none"),
+		maxInt(len(summary.Items), 0),
+	)
+	for i, item := range summary.Items {
+		label := "Run"
+		if len(summary.Items) > 1 {
+			label = fmt.Sprintf("Run %d", i+1)
+		}
+		fmt.Fprintf(w, "%s: state=%s run=%s status=%s provider_or_result=%s evaluation=%s validation=%s timestamp=%s\n",
+			label,
+			statusOutputValue(item.State, "unknown"),
+			statusOutputValue(item.RunID, "unknown"),
+			statusOutputValue(item.Status, "unknown"),
+			statusOutputValue(item.ProviderOrResult, "unknown"),
+			statusOutputValue(item.EvaluationState, "unknown"),
+			statusOutputValue(item.ValidationState, "unknown"),
+			statusOutputValue(item.TimestampLabel, "unknown"),
+		)
 	}
 }
 

@@ -238,6 +238,7 @@ type recentRunItem struct {
 	Status           string
 	ProviderOrResult string
 	EvaluationState  string
+	ValidationState  string
 	TimestampLabel   string
 	DetailURL        string
 	AuditURL         string
@@ -3217,17 +3218,28 @@ func recentRunItemFromRun(run runLink) (recentRunItem, bool) {
 		RunID:           runID,
 		Status:          latestRunDisplayText(run.Status, "unknown"),
 		EvaluationState: latestRunDisplayText(run.Validation, "unknown"),
+		ValidationState: recentRunValidationState(run),
 		TimestampLabel:  latestRunTimestampLabel(run),
 		DetailURL:       guardedRunDetailURL(runID),
+	}
+	if evaluationInconsistent(run, validationStatusMetadataForRun(run)) {
+		item.State = "unknown"
+		item.Status = "unknown"
+		item.EvaluationState = "unknown"
+		item.ValidationState = "unknown"
+		item.ProviderOrResult = "unknown"
+		return item, true
 	}
 	if run.Invalid {
 		item.State = "unavailable"
 		item.Status = "unavailable"
 		item.ProviderOrResult = "unavailable"
+		item.ValidationState = "unavailable"
 		if strings.Contains(dashboardCategory(run.ErrorSummary, ""), "denied") {
 			item.State = "denied"
 			item.Status = "denied"
 			item.ProviderOrResult = "denied"
+			item.ValidationState = "denied"
 		}
 		if item.EvaluationState == "unknown" {
 			item.EvaluationState = item.Status
@@ -3238,6 +3250,21 @@ func recentRunItemFromRun(run runLink) (recentRunItem, bool) {
 	item.ProviderOrResult = latestProviderOrResult(run)
 	item.AuditURL = guardedRunAuditURL(runID)
 	return item, true
+}
+
+func recentRunValidationState(run runLink) string {
+	metadata := validationStatusMetadataForRun(run)
+	if !validationMetadataRecorded(run, metadata) {
+		return "unknown"
+	}
+	if evaluationInconsistent(run, metadata) {
+		return "unknown"
+	}
+	state := validationStatusState(metadata)
+	if state == "" || state == "none" {
+		return "unknown"
+	}
+	return state
 }
 
 func activeRunsSummaryFromRuns(runs []runLink) activeRunsSummary {
