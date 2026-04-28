@@ -196,6 +196,167 @@ func TestIndexShowsMalformedIncompleteAndLegacyRuns(t *testing.T) {
 	}
 }
 
+func TestRunHistoryListsNewestFirstAndLinksGuardedDetails(t *testing.T) {
+	dir := newTestWorkspace(t)
+	writeFile(t, dir, ".jj/runs/20260425-125000-codex/manifest.json", `{"run_id":"20260425-125000-codex","status":"complete","started_at":"2026-04-25T12:50:00Z","dry_run":false,"planner_provider":"codex","artifacts":{"manifest":"manifest.json"},"validation":{"status":"passed"}}`)
+	writeFile(t, dir, ".jj/runs/20260425-130000-openai/manifest.json", `{"run_id":"20260425-130000-openai","status":"dry_run_complete","started_at":"2026-04-25T13:00:00Z","dry_run":true,"planner_provider":"openai","artifacts":{"manifest":"manifest.json"},"validation":{"status":"missing","evidence_status":"missing"}}`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{
+		"Filters",
+		`name="status"`,
+		`name="dry_run"`,
+		`name="planner_provider"`,
+		`name="evaluation"`,
+		`href="/runs/20260425-130000-openai"`,
+		`href="/runs/20260425-125000-codex"`,
+		"dry-run true",
+		"dry-run false",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("history missing %q:\n%s", want, body)
+		}
+	}
+	first := strings.Index(body, "20260425-130000-openai")
+	second := strings.Index(body, "20260425-125000-codex")
+	third := strings.Index(body, "20260425-120000-bbbbbb")
+	if first < 0 || second < 0 || third < 0 || !(first < second && second < third) {
+		t.Fatalf("history is not newest-first:\n%s", body)
+	}
+	if strings.Contains(body, `href="/run?id=`) {
+		t.Fatalf("history used unguarded legacy run links:\n%s", body)
+	}
+}
+
+func TestRunHistoryFiltersAndInvalidQueries(t *testing.T) {
+	dir := newTestWorkspace(t)
+	secret := "sk-proj-historyfilter1234567890"
+	writeFile(t, dir, ".jj/runs/20260425-125000-openai-pass/manifest.json", `{"run_id":"20260425-125000-openai-pass","status":"complete","started_at":"2026-04-25T12:50:00Z","dry_run":true,"planner_provider":"openai","artifacts":{"manifest":"manifest.json"},"validation":{"status":"passed","evidence_status":"recorded"}}`)
+	writeFile(t, dir, ".jj/runs/20260425-130000-openai-fail/manifest.json", `{"run_id":"20260425-130000-openai-fail","status":"failed","started_at":"2026-04-25T13:00:00Z","dry_run":true,"planner_provider":"openai","artifacts":{"manifest":"manifest.json"},"validation":{"status":"failed","evidence_status":"recorded"}}`)
+	writeFile(t, dir, ".jj/runs/20260425-131000-codex-fail/manifest.json", `{"run_id":"20260425-131000-codex-fail","status":"failed","started_at":"2026-04-25T13:10:00Z","dry_run":true,"planner_provider":"codex","artifacts":{"manifest":"manifest.json"},"validation":{"status":"failed","evidence_status":"recorded"}}`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs?status=failed&dry_run=true&planner_provider=openai&evaluation=failed&q=openai-fail", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("filtered status = %d body=%s", rec.Code, body)
+	}
+	if !strings.Contains(body, "20260425-130000-openai-fail") {
+		t.Fatalf("filtered history missing matching run:\n%s", body)
+	}
+	for _, blocked := range []string{"20260425-125000-openai-pass", "20260425-131000-codex-fail", "20260425-120000-bbbbbb"} {
+		if strings.Contains(body, blocked) {
+			t.Fatalf("filtered history included %q:\n%s", blocked, body)
+		}
+	}
+	for _, selected := range []string{`value="failed" selected`, `value="true" selected`, `value="openai" selected`} {
+		if !strings.Contains(body, selected) {
+			t.Fatalf("filter control did not preserve safe selected value %q:\n%s", selected, body)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	target := "/runs?status=..%2f" + url.QueryEscape(secret) +
+		"&dry_run=maybe&planner_provider=" + url.QueryEscape(secret) +
+		"&evaluation=%3Cscript%3E&q=..%2f" + url.QueryEscape(secret)
+	req = httptest.NewRequest(http.MethodGet, target, nil)
+	server.Handler().ServeHTTP(rec, req)
+	body = rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("invalid filter status = %d body=%s", rec.Code, body)
+	}
+	if !strings.Contains(body, "Some unsupported filters were ignored.") {
+		t.Fatalf("invalid filters should produce a generic notice:\n%s", body)
+	}
+	for _, leaked := range []string{secret, "../", "<script", "maybe", security.RedactionMarker} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("invalid filter response leaked %q:\n%s", leaked, body)
+		}
+	}
+}
+
+func TestRunHistoryRendersMalformedMissingPartialAndSecretManifestsSafely(t *testing.T) {
+	dir := newTestWorkspace(t)
+	secret := "sk-proj-historysecret1234567890"
+	writeFile(t, dir, ".jj/runs/20260425-140000-badjson/manifest.json", `{"run_id":"20260425-140000-badjson","status":"`+secret+`",`)
+	writeFile(t, dir, ".jj/runs/20260425-141000-incomplete/manifest.json", `{"run_id":"20260425-141000-incomplete","status":"success"}`)
+	writeFile(t, dir, ".jj/runs/20260425-142000-secretstatus/manifest.json", `{"run_id":"20260425-142000-secretstatus","status":"`+secret+`","started_at":"2026-04-25T14:20:00Z","planner_provider":"openai","artifacts":{"manifest":"manifest.json"},"errors":["token=`+secret+`"]}`)
+	if err := os.MkdirAll(filepath.Join(dir, ".jj/runs/20260425-143000-missing"), 0o755); err != nil {
+		t.Fatalf("mkdir missing manifest run: %v", err)
+	}
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{
+		`href="/runs/20260425-140000-badjson"`,
+		"manifest is malformed",
+		`href="/runs/20260425-141000-incomplete"`,
+		"manifest is incomplete: missing artifacts",
+		`href="/runs/20260425-142000-secretstatus"`,
+		`href="/runs/20260425-143000-missing"`,
+		"manifest unavailable",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("history missing safe state %q:\n%s", want, body)
+		}
+	}
+	for _, leaked := range []string{secret, security.RedactionMarker, dir, filepath.ToSlash(dir), `href="/runs/` + secret} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("history leaked %q:\n%s", leaked, body)
+		}
+	}
+}
+
+func TestRunHistoryIgnoresSymlinkAndUnsafeRunDirectories(t *testing.T) {
+	dir := newTestWorkspace(t)
+	outside := t.TempDir()
+	secret := "run-history-outside-secret"
+	target := filepath.Join(outside, "target")
+	writeFile(t, target, "manifest.json", `{"run_id":"20260425-150000-link","status":"complete","artifacts":{"manifest":"manifest.json"}}`)
+	writeFile(t, target, "secret.txt", secret)
+	if err := os.Symlink(target, filepath.Join(dir, ".jj/runs/20260425-150000-link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	writeFile(t, dir, ".jj/runs/20260425-151000-%2fescape/manifest.json", `{"run_id":"20260425-151000-%2fescape","status":"complete","artifacts":{"manifest":"manifest.json"}}`)
+	writeFile(t, dir, ".jj/runs/sk-proj-historyrunid1234567890/manifest.json", `{"run_id":"sk-proj-historyrunid1234567890","status":"complete","artifacts":{"manifest":"manifest.json"}}`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs?status=%2e%2e%2f&q=..%2foutside", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	for _, leaked := range []string{
+		"20260425-150000-link",
+		"20260425-151000-%2fescape",
+		"sk-proj-historyrunid1234567890",
+		secret,
+		outside,
+		filepath.ToSlash(outside),
+	} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("history exposed unsafe run directory data %q:\n%s", leaked, body)
+		}
+	}
+}
+
 func TestIndexShowsPlanningValidationFailureRun(t *testing.T) {
 	dir := newTestWorkspace(t)
 	runID := "20260425-170000-emptytask"

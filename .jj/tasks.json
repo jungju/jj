@@ -616,6 +616,37 @@
       "updated_at": "2026-04-28T14:41:39Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "jj serve dashboard includes a link to a guarded run history page.",
+        "GET /runs lists discoverable run directories under the guarded .jj/runs root sorted newest first, using sanitized manifest-derived fields only.",
+        "The run history page supports allowlisted filters for status, dry-run mode, planner provider, evaluation state, and run-id substring query without server errors.",
+        "Invalid or unknown filter values do not echo raw input and produce deterministic safe behavior.",
+        "Each listed run links only to the existing guarded run detail route.",
+        "Missing manifests, malformed manifests, missing artifacts, partial manifests, and older manifests render safe unknown or unavailable states without server errors.",
+        "The rendered run history page contains no raw API keys, token-looking values, private key blocks, omission placeholders, raw command text, raw env dumps, unsafe absolute paths, or attacker-controlled denied path payloads.",
+        "Traversal, absolute, encoded, or symlinked path attempts cannot influence which run directories are listed or linked.",
+        "Focused Go tests cover ordering, filters, invalid queries, malformed and missing manifests, guarded detail links, and redaction-safe rendering.",
+        "go test ./..., go vet ./..., and go build -o jj ./cmd/jj pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-142809-t02",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T14:43:59Z",
+      "created_by_run": "autopilot-20260428-142809-t02",
+      "created_by_turn": null,
+      "id": "T-FEATURE-002",
+      "mode": "feature",
+      "priority": "high",
+      "reason": "After guarded run detail pages, the most useful small user-facing improvement is a safe run history browser so users can find failed, dry-run, unevaluated, provider-specific, or older runs without manually scanning .jj/runs or opening raw manifests. The task stays within existing security constraints by reusing guarded run-root resolution and sanitized manifest/dashboard data.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "feature",
+      "status": "done",
+      "title": "Add guarded run history filters to jj serve",
+      "updated_at": "2026-04-28T14:54:59Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

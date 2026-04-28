@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -102,6 +103,28 @@ type runLink struct {
 	SecurityDetails          []string
 	Invalid                  bool
 	ValidationArtifact       string
+}
+
+type runHistoryFilters struct {
+	Status          string
+	DryRun          string
+	PlannerProvider string
+	Evaluation      string
+	Query           string
+	Notice          string
+	HasActive       bool
+}
+
+type runHistoryFilterOptions struct {
+	Statuses         []string
+	DryRunModes      []runHistoryFilterOption
+	PlannerProviders []string
+	Evaluations      []string
+}
+
+type runHistoryFilterOption struct {
+	Value string
+	Label string
 }
 
 type dashboardManifest struct {
@@ -289,26 +312,28 @@ type runStartResult struct {
 }
 
 type pageData struct {
-	Title       string
-	CWD         string
-	SelectedRun string
-	TaskSummary string
-	Docs        []docLink
-	Runs        []runLink
-	Readiness   []readinessItem
-	DefaultPlan string
-	ActiveRuns  []webRunView
-	Artifacts   []artifactLink
-	RunForm     *runFormData
-	RunResult   *runStartResult
-	WebRun      *webRunView
-	RunDetail   *runDetail
-	RunsOnly    bool
-	Path        string
-	RunID       string
-	Content     string
-	Rendered    template.HTML
-	Error       string
+	Title            string
+	CWD              string
+	SelectedRun      string
+	TaskSummary      string
+	Docs             []docLink
+	Runs             []runLink
+	Readiness        []readinessItem
+	DefaultPlan      string
+	ActiveRuns       []webRunView
+	Artifacts        []artifactLink
+	RunForm          *runFormData
+	RunResult        *runStartResult
+	WebRun           *webRunView
+	RunDetail        *runDetail
+	RunFilters       *runHistoryFilters
+	RunFilterOptions runHistoryFilterOptions
+	RunsOnly         bool
+	Path             string
+	RunID            string
+	Content          string
+	Rendered         template.HTML
+	Error            string
 }
 
 func Execute(ctx context.Context, cfg Config) error {
@@ -913,11 +938,17 @@ func (s *Server) handleRunsIndex(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusInternalServerError, err)
 		return
 	}
+	options := runHistoryFilterOptionsFor(runs)
+	filters := runHistoryFiltersFromQuery(r.URL.Query(), options)
+	runs = applyRunHistoryFilters(runs, filters)
+	runs = s.sanitizeRunHistoryLinks(runs)
 	s.render(w, pageData{
-		Title:    "runs",
-		CWD:      displayWorkspace,
-		Runs:     runs,
-		RunsOnly: true,
+		Title:            "run history",
+		CWD:              displayWorkspace,
+		Runs:             runs,
+		RunFilters:       &filters,
+		RunFilterOptions: options,
+		RunsOnly:         true,
 	})
 }
 
@@ -1353,6 +1384,9 @@ func (s *Server) discoverRuns() ([]runLink, error) {
 		if err := artifact.ValidateRunID(entry.Name()); err != nil {
 			continue
 		}
+		if !safeDisplayRunID(entry.Name()) {
+			continue
+		}
 		runDir := filepath.Join(runsDir, entry.Name())
 		loaded := loadDashboardManifest(entry.Name(), runDir)
 		run := runLink{ID: entry.Name()}
@@ -1415,15 +1449,344 @@ func (s *Server) discoverRuns() ([]runLink, error) {
 		runs = append(runs, run)
 	}
 	sort.Slice(runs, func(i, j int) bool {
-		if runs[i].ID == s.runID {
-			return true
-		}
-		if runs[j].ID == s.runID {
-			return false
-		}
 		return runs[i].ID > runs[j].ID
 	})
 	return runs, nil
+}
+
+func safeDisplayRunID(runID string) bool {
+	redacted := secrets.Redact(runID)
+	return redacted == runID && !strings.Contains(redacted, security.RedactionMarker)
+}
+
+func runHistoryFilterOptionsFor(runs []runLink) runHistoryFilterOptions {
+	statuses := map[string]bool{
+		"cancelled":               true,
+		"complete":                true,
+		"completed":               true,
+		"completed_with_warnings": true,
+		"dry_run_complete":        true,
+		"failed":                  true,
+		"implementing":            true,
+		"partial_failed":          true,
+		"planned":                 true,
+		"planning":                true,
+		"running":                 true,
+		"success":                 true,
+		"unavailable":             true,
+		"unknown":                 true,
+		"validating":              true,
+	}
+	providers := map[string]bool{
+		"codex":       true,
+		"local":       true,
+		"openai":      true,
+		"unavailable": true,
+		"unknown":     true,
+	}
+	evaluations := map[string]bool{
+		"failed":      true,
+		"missing":     true,
+		"passed":      true,
+		"recorded":    true,
+		"skipped":     true,
+		"unavailable": true,
+		"unknown":     true,
+	}
+	for _, run := range runs {
+		statuses[runHistoryStatusValue(run)] = true
+		providers[runHistoryProviderValue(run)] = true
+		evaluations[runHistoryEvaluationValue(run)] = true
+	}
+	return runHistoryFilterOptions{
+		Statuses: sortedRunHistoryValues(statuses),
+		DryRunModes: []runHistoryFilterOption{
+			{Value: "true", Label: "dry-run"},
+			{Value: "false", Label: "full-run"},
+		},
+		PlannerProviders: sortedRunHistoryValues(providers),
+		Evaluations:      sortedRunHistoryValues(evaluations),
+	}
+}
+
+func runHistoryFiltersFromQuery(query url.Values, options runHistoryFilterOptions) runHistoryFilters {
+	var filters runHistoryFilters
+	ignored := false
+	if value, ok := parseAllowlistedRunHistoryFilter(firstQueryValue(query, "status"), options.Statuses); ok {
+		filters.Status = value
+	} else {
+		ignored = true
+	}
+	if value, ok := parseRunHistoryDryRunFilter(firstQueryValue(query, "dry_run", "dry-run", "dry")); ok {
+		filters.DryRun = value
+	} else {
+		ignored = true
+	}
+	if value, ok := parseAllowlistedRunHistoryFilter(firstQueryValue(query, "planner_provider", "provider"), options.PlannerProviders); ok {
+		filters.PlannerProvider = value
+	} else {
+		ignored = true
+	}
+	if value, ok := parseAllowlistedRunHistoryFilter(firstQueryValue(query, "evaluation", "eval"), options.Evaluations); ok {
+		filters.Evaluation = value
+	} else {
+		ignored = true
+	}
+	if value, ok := parseRunHistoryQueryFilter(firstQueryValue(query, "q", "run_id", "id")); ok {
+		filters.Query = value
+	} else {
+		ignored = true
+	}
+	filters.HasActive = filters.Status != "" || filters.DryRun != "" || filters.PlannerProvider != "" || filters.Evaluation != "" || filters.Query != ""
+	if ignored {
+		filters.Notice = "Some unsupported filters were ignored."
+	}
+	return filters
+}
+
+func firstQueryValue(query url.Values, names ...string) string {
+	for _, name := range names {
+		if values, ok := query[name]; ok && len(values) > 0 {
+			return values[0]
+		}
+	}
+	return ""
+}
+
+func parseAllowlistedRunHistoryFilter(raw string, allowed []string) (string, bool) {
+	token, ok := runHistoryQueryToken(raw)
+	if !ok || token == "" {
+		return "", ok
+	}
+	if token == "all" || token == "any" {
+		return "", true
+	}
+	for _, value := range allowed {
+		if token == value {
+			return token, true
+		}
+	}
+	return "", false
+}
+
+func parseRunHistoryDryRunFilter(raw string) (string, bool) {
+	token, ok := runHistoryQueryToken(raw)
+	if !ok || token == "" {
+		return "", ok
+	}
+	switch token {
+	case "1", "true", "yes", "dry_run", "dryrun":
+		return "true", true
+	case "0", "false", "no", "full_run", "fullrun", "non_dry_run", "nondryrun":
+		return "false", true
+	case "all", "any":
+		return "", true
+	default:
+		return "", false
+	}
+}
+
+func parseRunHistoryQueryFilter(raw string) (string, bool) {
+	value := strings.TrimSpace(secrets.Redact(raw))
+	if value == "" {
+		return "", true
+	}
+	if strings.Contains(value, security.RedactionMarker) || len(value) > 128 {
+		return "", false
+	}
+	if value == "." || value == ".." || strings.HasPrefix(value, ".") || strings.Contains(value, "..") {
+		return "", false
+	}
+	for _, r := range value {
+		valid := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.'
+		if !valid {
+			return "", false
+		}
+	}
+	return value, true
+}
+
+func runHistoryQueryToken(raw string) (string, bool) {
+	value := strings.TrimSpace(secrets.Redact(raw))
+	if value == "" {
+		return "", true
+	}
+	if strings.Contains(value, security.RedactionMarker) {
+		return "", false
+	}
+	token := dashboardCategory(value, "")
+	if token == "" {
+		return "", false
+	}
+	return token, true
+}
+
+func applyRunHistoryFilters(runs []runLink, filters runHistoryFilters) []runLink {
+	if !filters.HasActive {
+		return runs
+	}
+	out := make([]runLink, 0, len(runs))
+	query := strings.ToLower(filters.Query)
+	for _, run := range runs {
+		if filters.Status != "" && runHistoryStatusValue(run) != filters.Status {
+			continue
+		}
+		if filters.DryRun != "" && runHistoryDryRunValue(run) != filters.DryRun {
+			continue
+		}
+		if filters.PlannerProvider != "" && runHistoryProviderValue(run) != filters.PlannerProvider {
+			continue
+		}
+		if filters.Evaluation != "" && runHistoryEvaluationValue(run) != filters.Evaluation {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(run.ID), query) {
+			continue
+		}
+		out = append(out, run)
+	}
+	return out
+}
+
+func runHistoryStatusValue(run runLink) string {
+	if run.Invalid && strings.TrimSpace(run.Status) == "" {
+		return "unavailable"
+	}
+	return runHistoryToken(firstNonEmpty(run.Status, "unknown"), "unknown")
+}
+
+func runHistoryDryRunValue(run runLink) string {
+	if run.Invalid {
+		return "unknown"
+	}
+	if run.DryRun {
+		return "true"
+	}
+	return "false"
+}
+
+func runHistoryProviderValue(run runLink) string {
+	if run.Invalid {
+		return "unavailable"
+	}
+	return runHistoryToken(firstNonEmpty(run.PlannerProvider, "unknown"), "unknown")
+}
+
+func runHistoryEvaluationValue(run runLink) string {
+	if run.Invalid {
+		return "unavailable"
+	}
+	value := strings.ToLower(strings.TrimSpace(secrets.Redact(run.Validation)))
+	if value == "" {
+		return "unknown"
+	}
+	if strings.Contains(value, security.RedactionMarker) {
+		return "unknown"
+	}
+	for _, candidate := range []string{"failed", "passed", "missing", "skipped", "recorded"} {
+		if strings.Contains(value, candidate) {
+			return candidate
+		}
+	}
+	return runHistoryToken(value, "unknown")
+}
+
+func runHistoryToken(value, fallback string) string {
+	value = strings.TrimSpace(secrets.Redact(value))
+	if value == "" || strings.Contains(value, security.RedactionMarker) {
+		return fallback
+	}
+	return dashboardCategory(value, fallback)
+}
+
+func sortedRunHistoryValues(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s *Server) sanitizeRunHistoryLinks(runs []runLink) []runLink {
+	out := make([]runLink, 0, len(runs))
+	for _, run := range runs {
+		out = append(out, s.sanitizeRunHistoryLink(run))
+	}
+	return out
+}
+
+func (s *Server) sanitizeRunHistoryLink(run runLink) runLink {
+	runDir, _ := s.runDir(run.ID)
+	roots := []security.CommandPathRoot{{Path: s.cwd, Label: displayWorkspace}}
+	if strings.TrimSpace(runDir) != "" {
+		roots = append(roots, security.CommandPathRoot{Path: runDir, Label: ".jj/runs/" + run.ID})
+	}
+	run.Status = historyDisplayText(run.Status, "unknown", roots...)
+	run.StartedAt = historyDisplayText(run.StartedAt, "", roots...)
+	run.FinishedAt = historyDisplayText(run.FinishedAt, "", roots...)
+	run.PlannerProvider = historyDisplayText(run.PlannerProvider, "unknown", roots...)
+	run.Validation = historyDisplayText(run.Validation, "", roots...)
+	run.TaskProposalMode = historyDisplayText(run.TaskProposalMode, "", roots...)
+	run.ResolvedTaskProposalMode = historyDisplayText(run.ResolvedTaskProposalMode, "", roots...)
+	run.SelectedTaskID = historyDisplayText(run.SelectedTaskID, "", roots...)
+	run.RepositoryURL = historyDisplayText(run.RepositoryURL, "", roots...)
+	run.BaseBranch = historyDisplayText(run.BaseBranch, "", roots...)
+	run.WorkBranch = historyDisplayText(run.WorkBranch, "", roots...)
+	run.PushStatus = historyDisplayText(run.PushStatus, "", roots...)
+	run.PushedRef = historyDisplayText(run.PushedRef, "", roots...)
+	run.ErrorSummary = historySensitiveText(run.ErrorSummary, roots...)
+	run.RiskSummary = historySensitiveText(run.RiskSummary, roots...)
+	run.Risks = historySensitiveList(run.Risks, roots...)
+	run.Failures = historySensitiveList(run.Failures, roots...)
+	run.NextActions = historySensitiveList(run.NextActions, roots...)
+	run.SecuritySummary = historyDisplayText(run.SecuritySummary, "", roots...)
+	run.SecurityDetails = historySensitiveList(run.SecurityDetails, roots...)
+	if display, ok := safeRunDetailPath(run.ValidationArtifact, roots...); ok {
+		run.ValidationArtifact = display
+	} else {
+		run.ValidationArtifact = ""
+	}
+	return run
+}
+
+func historyDisplayText(value, fallback string, roots ...security.CommandPathRoot) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	raw := sanitizeDashboardText(value, roots...)
+	if strings.Contains(raw, security.RedactionMarker) {
+		return fallback
+	}
+	text := strings.TrimSpace(sanitizeRunDetailText(value, roots...))
+	if text == "" {
+		return fallback
+	}
+	return text
+}
+
+func historySensitiveText(value string, roots ...security.CommandPathRoot) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	text := strings.TrimSpace(sanitizeRunDetailText(value, roots...))
+	if text == "" {
+		return ""
+	}
+	return text
+}
+
+func historySensitiveList(items []string, roots ...security.CommandPathRoot) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if text := historySensitiveText(item, roots...); text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
 }
 
 func unavailableRunError(reason string) string {
@@ -2459,6 +2822,8 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
     .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 12px; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 6px; background: color-mix(in srgb, CanvasText 5%, Canvas); color: CanvasText; text-decoration: none; font: inherit; cursor: pointer; }
     .button.primary { background: LinkText; color: Canvas; border-color: LinkText; }
     form { max-width: 760px; display: grid; gap: 14px; }
+    form.filters { max-width: none; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end; margin: 12px 0 18px; }
+    form.filters .actions { margin: 0; }
     label { display: grid; gap: 5px; font-size: 13px; font-weight: 600; }
     input, textarea, select { padding: 6px 8px; border: 1px solid color-mix(in srgb, CanvasText 22%, transparent); border-radius: 4px; background: Canvas; color: CanvasText; font: inherit; }
     input, select { min-height: 34px; }
@@ -2729,10 +3094,54 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
       {{end}}
     {{else if .RunsOnly}}
       <p><a href="/">← dashboard</a></p>
+      <h2>Filters</h2>
+      <form class="filters" method="get" action="/runs">
+        <label>status
+          <select name="status">
+            <option value="">any</option>
+            {{range .RunFilterOptions.Statuses}}
+              <option value="{{.}}" {{if eq . $.RunFilters.Status}}selected{{end}}>{{.}}</option>
+            {{end}}
+          </select>
+        </label>
+        <label>dry-run
+          <select name="dry_run">
+            <option value="">any</option>
+            {{range .RunFilterOptions.DryRunModes}}
+              <option value="{{.Value}}" {{if eq .Value $.RunFilters.DryRun}}selected{{end}}>{{.Label}}</option>
+            {{end}}
+          </select>
+        </label>
+        <label>planner provider
+          <select name="planner_provider">
+            <option value="">any</option>
+            {{range .RunFilterOptions.PlannerProviders}}
+              <option value="{{.}}" {{if eq . $.RunFilters.PlannerProvider}}selected{{end}}>{{.}}</option>
+            {{end}}
+          </select>
+        </label>
+        <label>evaluation
+          <select name="evaluation">
+            <option value="">any</option>
+            {{range .RunFilterOptions.Evaluations}}
+              <option value="{{.}}" {{if eq . $.RunFilters.Evaluation}}selected{{end}}>{{.}}</option>
+            {{end}}
+          </select>
+        </label>
+        <label>run id
+          <input name="q" value="{{.RunFilters.Query}}" placeholder="substring">
+        </label>
+        <div class="actions">
+          <button class="button primary" type="submit">Apply Filters</button>
+          <a class="button" href="/runs">Clear</a>
+        </div>
+      </form>
+      {{if .RunFilters.Notice}}<p class="muted">{{.RunFilters.Notice}}</p>{{end}}
+      {{if .RunFilters.HasActive}}<p class="muted">Filtered run history.</p>{{end}}
       <h2>Runs</h2>
       <ul>
       {{range .Runs}}
-        <li>{{if .Invalid}}<strong>{{.ID}}</strong>{{else}}<a href="/runs/{{q .ID}}">{{.ID}}</a>{{end}} <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}}{{if .Validation}} · validation {{.Validation}}{{end}}{{if .TaskProposalMode}} · mode {{.TaskProposalMode}}{{if .ResolvedTaskProposalMode}} → {{.ResolvedTaskProposalMode}}{{end}}{{end}}{{if .SecuritySummary}} · {{.SecuritySummary}}{{end}}</span>{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{end}}</li>
+        <li><a href="/runs/{{q .ID}}">{{.ID}}</a> <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}} · dry-run {{.DryRun}}{{if .Validation}} · validation {{.Validation}}{{end}}{{if .TaskProposalMode}} · mode {{.TaskProposalMode}}{{if .ResolvedTaskProposalMode}} → {{.ResolvedTaskProposalMode}}{{end}}{{end}}{{if .SecuritySummary}} · {{.SecuritySummary}}{{end}}</span>{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{end}}</li>
       {{else}}
         <li class="muted">No jj runs found.</li>
       {{end}}
