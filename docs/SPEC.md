@@ -105,7 +105,6 @@ Security metadata records:
 
 Required validation for this baseline:
 
-- `go test ./...`
-- `go vet ./...`
-- `go build -o jj ./cmd/jj`
 - `./scripts/validate.sh`
+
+`./scripts/validate.sh` is the single release validation entry point. It runs focused security boundary tests for `internal/serve` and `internal/run`, the full Go test suite, vet, CLI build, and diff-check. The entry point exits non-zero on any failed step and emits only fixed labels, categories, counts, booleans, and exit codes.

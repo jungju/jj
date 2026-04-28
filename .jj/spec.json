@@ -50,10 +50,6 @@
     "Handlers do not read raw manifests, raw artifacts, raw commands, raw environment values, raw diffs, or filesystem paths directly after route input parsing except through guarded helper APIs.",
     "Focused Go regression tests prove consistent sanitized fields and denial semantics across detail, history, compare, and audit export for valid and unsafe inputs.",
     "Security behavior is covered by focused Go tests for redaction, path guards, artifact writing, manifest scrubbing, command metadata, dry-run and non-dry-run parity, diagnostics, serve access, run inspection access, Codex artifact symlink rejection, low-information configured literal filtering, secret-looking run ID denial, guarded plan input handling, sanitized validation output handling, git diff redaction evidence, and planner/Codex handoff sanitization.",
-    "Focused Go tests cover in-workspace plans, explicit external plans, traversal, encoded traversal, absolute in-workspace and external paths, symlink internal and external paths, symlink swaps, unreadable files, secret-looking filenames, dry-run parity, and non-dry-run parity.",
-    "Focused Go tests cover valid audit export shape, missing/malformed/partial/older manifests, traversal/absolute/encoded/symlink denial, dashboard link presence, and secret/path/command/diff redaction in the JSON response.",
-    "Focused Go regression fixtures cover secret-looking diff content, unsafe absolute paths, private key blocks, command-looking strings, token-like values, denied path payloads, duplicate hostile query values, and dry-run/non-dry-run parity.",
-    "Focused Go tests cover dry-run and non-dry-run safe path label persistence and fail if raw workspace, plan, or external config paths are persisted in run artifacts or manifests.",
     "Focused Go tests cover needs_work as a terminal web-run status to prevent validation completion races.",
     "Auto or balanced mode resolves to bugfix only for explicit positive current evidence including validation failed, tests failed, failed_count greater than zero, failed or blocked runnable task, provider failure, panic, fatal error, or regression.",
     "Auto or balanced mode does not resolve to bugfix for healthy or negated evidence including no blocker, not blocked, no validation failed, validation passed, failed_count: 0, status passed, tests pass, no regressions found, all tasks done, or no runnable tasks.",
@@ -72,7 +68,14 @@
     "jj serve detail, history, compare, and audit export routes render deterministic denied, unknown, unavailable, or sanitized states for stale, partial, malformed, and internally inconsistent run metadata without reflecting mutated payloads.",
     "Valid untampered runs continue to render expected sanitized fields and guarded links.",
     "Hardened run inspection DTOs sanitize unsafe category text, guarded artifact labels, validation counts, and command argv display values before detail, history, compare, or audit export rendering.",
-    "No new dashboard pages, CLI flags, raw artifact export, raw manifest export, raw diff export, broad external file import, new scanner, redaction algorithm expansion, or unrelated user-facing features are added by guarded plan input hardening, validation output handling, git diff evidence handling, planner handoff hardening, tampered run metadata hardening, or security validation follow-up work.",
+    "scripts/validate.sh is documented as the single release validation entry point.",
+    "The release validation entry point runs the focused internal/serve and internal/run security boundary suites, full tests, vet, CLI build, and diff-check.",
+    "The release validation entry point exits non-zero on any security boundary, redaction, path guard, artifact, planner handoff, diff, validation output, dashboard, test, vet, build, or diff-check regression.",
+    "The release validation entry point suppresses child command output and prints only deterministic release-gate metadata with fixed labels, categories, booleans, counts, and exit codes.",
+    "A Go regression test using fake child tools proves hostile child output is not reflected while required release validation steps are invoked.",
+    "No raw secrets, token-like values, private key blocks, raw command text, raw environment values, unsafe absolute paths, raw manifests, raw artifact bodies, raw diff bodies, validation payloads, planner handoff payloads, or attacker-controlled denied payloads are printed or persisted by the validation entry point.",
+    "No completed task is reopened unless the validation entry point finds a concrete failing disclosure or boundary case.",
+    "No new dashboard pages, CLI flags, raw export endpoints, broad file import behavior, scanners, redaction algorithm expansion, or unrelated user-facing behavior are added by the security validation follow-up.",
     "go test ./internal/serve, go test ./internal/run, go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass."
   ],
   "created_at": "2026-04-28",
@@ -88,7 +91,8 @@
     "Lock completed security guardrails with deterministic release validation that patches only confirmed disclosure or boundary regressions.",
     "Treat stale, partial, malformed, manually edited, or internally inconsistent run metadata as untrusted on served run inspection surfaces unless fields are sanitized through guarded DTO helpers.",
     "Persist manifest and general JSON metadata using safe workspace, run, or path labels so raw workspace, plan, and external config paths are not stored.",
-    "Treat needs_work web-run status as terminal so validation completion does not race against further status polling."
+    "Treat needs_work web-run status as terminal so validation completion does not race against further status polling.",
+    "Use scripts/validate.sh as the single documented release validation entry point for completed security guardrails and standard release checks."
   ],
   "non_goals": [
     "Provide a hosted cloud service.",
@@ -104,12 +108,13 @@
     "Add new dashboard pages or CLI flags as part of guarded plan input hardening, validation output handling, git diff evidence policy, planner handoff hardening, tampered run metadata hardening, or security validation follow-up work.",
     "Add new product features while fixing automatic task proposal blocker classification.",
     "Allow explicitly provided plan files outside the workspace by default.",
-    "Reopen completed tasks without fresh failing validation, tests, or confirmed regression evidence."
+    "Reopen completed tasks without fresh failing validation, tests, or confirmed regression evidence.",
+    "Expose child command stdout or stderr from the release validation entry point; release validation reports sanitized release-gate metadata only."
   ],
   "open_questions": [],
   "requirements": [
     "jj run must read a non-empty Markdown plan from the explicitly provided path using documented path resolution behavior, then require the resolved plan file to remain inside the configured workspace boundary.",
-    "The resolved --cwd value, or process cwd when --cwd is absent, is the workspace boundary for generated docs, run artifacts, workspace mutations, and accepted plan input files.",
+    "The resolved cwd value, or process cwd when cwd is absent, is the workspace boundary for generated docs, run artifacts, workspace mutations, and accepted plan input files.",
     "Plan path validation must canonicalize requested paths, reject unsupported encoded traversal and escape forms, evaluate symlinks where applicable, reject traversal attempts, and reject symlink or absolute-path escapes outside the workspace before reading content.",
     "Plan input files must be revalidated through the same guarded path result immediately before readback so symlink replacement cannot cause out-of-workspace reads or persistence.",
     "Rejected external, traversal, absolute-escape, encoded-escape, symlink-escape, unreadable, malformed, or secret-looking plan inputs must produce deterministic sanitized errors without reflecting raw paths, raw OS errors, secrets, token-like values, omission placeholders, or attacker-controlled payloads.",
@@ -145,7 +150,7 @@
     "Traversal, absolute, encoded, or symlinked path attempts must not influence which run directories are listed or linked from run history.",
     "Run IDs may contain only letters, numbers, dots, underscores, and dashes, must not use reserved traversal-like forms, and must be rejected when they match configured secrets or common token patterns.",
     "Run ID validation failures must use generic deterministic errors that do not echo rejected run ID values.",
-    "jj serve must expose a guarded run comparison page for exactly two requested run IDs, such as [path]\u003crun-id\u003e\u0026right=\u003crun-id\u003e.",
+    "jj serve must expose a guarded run comparison page for exactly two requested run IDs.",
     "The run comparison page must resolve both run IDs only beneath the guarded .jj/runs root using existing path guards and sanitized run DTO construction.",
     "The run comparison page must render side-by-side sanitized status, timestamps, dry-run mode, planner/provider metadata, generated doc availability, artifact availability, evaluation state, Codex result metadata, command metadata, and disclosure-safe security diagnostic summaries.",
     "Invalid, missing, identical, malformed, partial, older, traversal, absolute, encoded, or symlinked run inputs must render deterministic unavailable or denied states without server errors or raw query reflection.",
@@ -169,11 +174,15 @@
     "Task proposal resolution reasons, events, manifests, and planning context must remain sanitized and must not echo raw logs, paths, commands, environment values, secrets, token-like values, omission placeholders, or attacker-controlled payloads.",
     "Untrusted or partial manifest validation reason and summary text must not render on served run inspection surfaces unless the manifest is trusted.",
     "A consolidated fixture-driven security release-gate validation path must exercise hostile fixtures across persisted run artifacts, manifest scrubbing, command metadata, Codex artifacts, shared run DTOs, run detail, history, compare, audit export, unsafe run IDs, path denial, accepted and denied guarded plan input handling, sanitized validation failure artifacts and metadata, git diff redaction evidence, planner and Codex handoff payloads, tampered run metadata, duplicate hostile serve query values, and dry-run/non-dry-run parity.",
+    "scripts/validate.sh must remain the single documented release validation entry point for release-blocking security validation.",
+    "The release validation entry point must run the existing focused serve and run security boundary suites, the full Go test suite, vet, CLI build, and diff-check.",
+    "The release validation entry point must suppress child command stdout and stderr, emit only deterministic sanitized metadata with fixed step labels, categories, booleans, counts, and exit codes, and exit non-zero when any step fails.",
+    "Release validation regression coverage must prove hostile child output is not reflected while the required validation steps are invoked.",
     "Release-gate assertions must check rendered HTML, audit JSON, manifests, persisted checked artifacts, validation artifacts, events, summaries, planner/fallback metadata, and git diff artifacts for absence of raw secrets, token-like values, private key blocks, raw command text, raw environment values, unsafe absolute paths, omission placeholders, raw artifact bodies, raw manifests, raw diff bodies, and attacker-controlled denied path payloads.",
     "Release-gate failure output must expose only sanitized categories, counts, booleans, and safe relative labels."
   ],
-  "summary": "jj is a CLI that turns a planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains a core constraint: generated artifacts, served run-inspection surfaces, explicit plan inputs, command metadata, manifests, validation outputs, git diff artifacts, planner and Codex handoff metadata, and run metadata are guarded, redacted, and kept inside the configured workspace or allowed run artifact roots. jj serve includes guarded dashboard, run detail, run history, run comparison, and sanitized audit export flows, while automatic task proposal resolution selects bugfix only from positive current blocker evidence. TASK-0035 added validated persistence hardening so manifest and general JSON writes use safe path labels, validation command text is stripped from persisted manifests, git baseline text is sanitized before artifact writes, and dry-run and non-dry-run fixtures prove raw workspace, plan, and external config paths are not persisted. Git diff evidence policy is resolved as redacted-in-place persisted diff artifacts plus optional sanitized metadata containing only booleans, counts, categories, and safe relative labels. Release-gate regression coverage locks accepted and denied guarded plan input behavior across dry-run and full-run flows, sanitized validation failure artifacts, disclosure-safe validation metadata, stale or tampered run metadata, planner/Codex handoff payload boundaries, and guarded duplicate-query serve route parsing for run and path inputs.",
+  "summary": "jj is a CLI that turns a planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains a core constraint: generated artifacts, served run-inspection surfaces, explicit plan inputs, command metadata, manifests, validation outputs, git diff artifacts, planner and Codex handoff metadata, and run metadata are guarded, redacted, and kept inside the configured workspace or allowed run artifact roots. jj serve includes guarded dashboard, run detail, run history, run comparison, and sanitized audit export flows, while automatic task proposal resolution selects bugfix only from positive current blocker evidence. TASK-0035 added validated persistence hardening so manifest and general JSON writes use safe path labels, validation command text is stripped from persisted manifests, git baseline text is sanitized before artifact writes, and dry-run and non-dry-run fixtures prove raw workspace, plan, and external config paths are not persisted. Git diff evidence policy is resolved as redacted-in-place persisted diff artifacts plus optional sanitized metadata containing only booleans, counts, categories, and safe relative labels. Release-gate regression coverage locks accepted and denied guarded plan input behavior across dry-run and full-run flows, sanitized validation failure artifacts, disclosure-safe validation metadata, stale or tampered run metadata, planner/Codex handoff payload boundaries, guarded duplicate-query serve route parsing for run and path inputs, and TASK-0036 release validation. scripts/validate.sh is now the documented single release validation entry point: it runs the focused serve and run security boundary suites, the full Go test suite, vet, CLI build, and diff-check; suppresses child output; emits only fixed sanitized release-gate metadata; and exits non-zero when any step fails.",
   "title": "jj Security Boundary and Dashboard Run Inspection",
-  "updated_at": "2026-04-28T19:26:50Z",
+  "updated_at": "2026-04-28T19:39:35Z",
   "version": 1
 }

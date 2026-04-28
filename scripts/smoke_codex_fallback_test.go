@@ -128,6 +128,96 @@ func TestValidateScriptDoesNotInvokeCodexSmoke(t *testing.T) {
 	}
 }
 
+func TestValidateScriptReleaseGateOutputIsSanitized(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("validate.sh uses POSIX shell semantics")
+	}
+	repoRoot := testRepoRoot(t)
+	tmp := t.TempDir()
+	callLog := filepath.Join(tmp, "calls.log")
+	hostileOutput := "OPENAI_API_KEY=sk-proj-releasevalidator1234567890 /tmp/unsafe-release-validator diff --git -----BEGIN PRIVATE KEY----- token=secret\n"
+	fakeGo := `#!/bin/sh
+printf 'go %s\n' "$*" >> "$JJ_VALIDATE_FAKE_CALL_LOG"
+printf '%s' "$JJ_VALIDATE_HOSTILE_OUTPUT"
+printf '%s' "$JJ_VALIDATE_HOSTILE_OUTPUT" >&2
+if [ "$*" = "test ./internal/run" ]; then
+	exit 7
+fi
+exit 0
+`
+	fakeGit := `#!/bin/sh
+printf 'git %s\n' "$*" >> "$JJ_VALIDATE_FAKE_CALL_LOG"
+printf '%s' "$JJ_VALIDATE_HOSTILE_OUTPUT"
+printf '%s' "$JJ_VALIDATE_HOSTILE_OUTPUT" >&2
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(tmp, "go"), []byte(fakeGo), 0o755); err != nil {
+		t.Fatalf("write fake go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "git"), []byte(fakeGit), 0o755); err != nil {
+		t.Fatalf("write fake git: %v", err)
+	}
+
+	cmd := exec.Command("bash", filepath.Join(repoRoot, "scripts", "validate.sh"))
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(),
+		"PATH="+tmp+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"JJ_VALIDATE_FAKE_CALL_LOG="+callLog,
+		"JJ_VALIDATE_HOSTILE_OUTPUT="+hostileOutput,
+		"OPENAI_API_KEY=sk-proj-parentvalidator1234567890",
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("validate.sh should fail when a release-gate step fails:\n%s", out)
+	}
+	output := string(out)
+	for _, want := range []string{
+		"release_validation status=failed total=6 failed=1 cache_configured=true",
+		"step label=security_serve category=security_boundary passed=true exit_code=0",
+		"step label=security_run category=security_boundary passed=false exit_code=7",
+		"step label=diff_check category=diff passed=true exit_code=0",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("validate.sh output missing %q:\n%s", want, output)
+		}
+	}
+	for _, forbidden := range []string{
+		"OPENAI_API_KEY",
+		"sk-proj-releasevalidator1234567890",
+		"sk-proj-parentvalidator1234567890",
+		"/tmp/unsafe-release-validator",
+		"diff --git",
+		"-----BEGIN PRIVATE KEY-----",
+		"token=secret",
+		"go test",
+		"go vet",
+		"go build",
+		"git diff",
+	} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("validate.sh leaked %q in output:\n%s", forbidden, output)
+		}
+	}
+
+	data, err := os.ReadFile(callLog)
+	if err != nil {
+		t.Fatalf("read fake tool call log: %v", err)
+	}
+	calls := string(data)
+	for _, want := range []string{
+		"go test ./internal/serve\n",
+		"go test ./internal/run\n",
+		"go test ./...\n",
+		"go vet ./...\n",
+		"go build -o jj ./cmd/jj\n",
+		"git diff --check\n",
+	} {
+		if !strings.Contains(calls, want) {
+			t.Fatalf("validate.sh did not run required step %q; calls:\n%s", want, calls)
+		}
+	}
+}
+
 func TestCodexAutopilotContinuesAfterPassUntilMaxTurns(t *testing.T) {
 	repoRoot := testRepoRoot(t)
 	baseRunID := "autopilot-script-warning-" + strconv.FormatInt(timeNowUnixNano(), 10)

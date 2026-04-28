@@ -1014,6 +1014,35 @@
       "updated_at": "2026-04-28T19:24:39Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "A single documented release validation entry point runs the existing security boundary tests plus required build, vet, diff-check, and validation commands.",
+        "The validation entry point exits non-zero on any security boundary, redaction, path guard, artifact, planner handoff, diff, validation output, or dashboard regression.",
+        "Failure output contains only sanitized categories, counts, booleans, and safe relative labels.",
+        "No raw secrets, token-like values, private key blocks, raw command text, raw environment values, unsafe absolute paths, raw manifests, raw artifact bodies, raw diff bodies, validation payloads, planner handoff payloads, or attacker-controlled denied payloads are printed or persisted by the validation entry point.",
+        "The task reuses existing Go security tests and scripts/validate.sh coverage, adding only the smallest missing orchestration or fixture assertions needed for release-blocking use.",
+        "No completed task is reopened unless the validation entry point finds a concrete failing disclosure or boundary case.",
+        "No new dashboard pages, CLI flags, raw export endpoints, broad file import behavior, scanners, redaction algorithm expansion, or unrelated user-facing behavior are added.",
+        "go test ./internal/serve, go test ./internal/run, go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t15",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T19:26:52Z",
+      "created_by_run": "autopilot-20260428-160202-t15",
+      "created_by_turn": null,
+      "id": "TASK-0036",
+      "mode": "security",
+      "priority": "high",
+      "reason": "Auto mode must not select bugfix because all 35 existing tasks are done and there is no positive evidence of failed validation, failed tests, blocked runnable work, provider failure, panic, fatal error, or regression. Security remains the correct category because jj handles secrets, workspace boundaries, command metadata, artifacts, planner handoffs, git diffs, validation output, and dashboard exposure. This task reduces residual release risk by consolidating existing security boundary coverage into one deterministic, sanitized validation entry point without reopening completed work or adding new user-facing features.",
+      "resolved_task_proposal_mode": "security",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Add release-blocking security validation entry point",
+      "updated_at": "2026-04-28T19:35:27Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
