@@ -2745,8 +2745,14 @@ func dashboardCategoryList(items []string, fallback string) []string {
 }
 
 func dashboardCategory(value, fallback string) string {
+	if unsafeRunDetailText(value) {
+		return fallback
+	}
 	value = strings.ToLower(strings.TrimSpace(secrets.Redact(value)))
 	if value == "" || strings.Contains(value, security.RedactionMarker) {
+		return fallback
+	}
+	if unsafeRunDetailText(value) {
 		return fallback
 	}
 	var b strings.Builder
@@ -3128,7 +3134,14 @@ func (s *Server) runArtifactStatuses(manifest dashboardManifest, runDir, runID s
 	artifacts := make([]runArtifactStatus, 0, len(manifest.Artifacts))
 	for _, raw := range manifest.Artifacts {
 		clean, err := cleanAllowedArtifactPath(raw)
-		if err != nil || seen[clean] {
+		if err != nil {
+			if !seen["guarded artifact"] {
+				seen["guarded artifact"] = true
+				artifacts = append(artifacts, runArtifactStatus{Path: "guarded artifact", Status: "guarded"})
+			}
+			continue
+		}
+		if seen[clean] {
 			continue
 		}
 		seen[clean] = true
@@ -3151,11 +3164,11 @@ func (s *Server) runValidationDetail(manifest dashboardManifest, runDir, runID s
 	detail := runValidationDetail{
 		Status:         safeText(firstNonEmpty(manifest.Validation.Status, "unknown")),
 		EvidenceStatus: safeText(firstNonEmpty(manifest.Validation.EvidenceStatus, "unknown")),
-		CommandCount:   manifest.Validation.CommandCount,
-		PassedCount:    manifest.Validation.PassedCount,
-		FailedCount:    manifest.Validation.FailedCount,
+		CommandCount:   maxInt(manifest.Validation.CommandCount, 0),
+		PassedCount:    maxInt(manifest.Validation.PassedCount, 0),
+		FailedCount:    maxInt(manifest.Validation.FailedCount, 0),
 	}
-	if detail.CommandCount == 0 {
+	if detail.CommandCount == 0 && len(manifest.Validation.Commands) > 0 {
 		detail.CommandCount = len(manifest.Validation.Commands)
 	}
 	if trustedManifest {
@@ -3232,7 +3245,7 @@ func validationCommandDetail(manifest dashboardManifest, runDir, runID string, c
 		Model:    safeText(command.Model),
 		CWD:      safeText(command.CWD),
 		RunID:    safeText(command.RunID),
-		Argv:     sanitizeRunDetailList(command.Argv, roots...),
+		Argv:     sanitizeRunCommandArgv(command.Argv, roots...),
 		Status:   safeText(command.Status),
 		ExitCode: command.ExitCode,
 		Duration: formatDurationMS(command.DurationMS),
@@ -3293,7 +3306,7 @@ func commandRecordDetail(source string, record commandRecord, roots ...security.
 		Model:    safeText(record.Model),
 		CWD:      safeText(record.CWD),
 		RunID:    safeText(record.RunID),
-		Argv:     sanitizeRunDetailList(record.Argv, roots...),
+		Argv:     sanitizeRunCommandArgv(record.Argv, roots...),
 		Status:   safeText(record.Status),
 		ExitCode: record.ExitCode,
 		Duration: formatDurationMS(record.DurationMS),
@@ -3434,7 +3447,7 @@ func maxInt(a, b int) int {
 
 func safeRunDetailPath(path string, roots ...security.CommandPathRoot) (string, bool) {
 	sanitized := sanitizeDashboardText(path, roots...)
-	if sanitized == "" || sanitized != path || strings.Contains(sanitized, security.RedactionMarker) {
+	if sanitized == "" || sanitized != path || strings.Contains(sanitized, security.RedactionMarker) || unsafeRunDetailText(sanitized) {
 		return "", false
 	}
 	return sanitized, true
@@ -3451,8 +3464,84 @@ func sanitizeRunDetailList(items []string, roots ...security.CommandPathRoot) []
 	return out
 }
 
+func sanitizeRunCommandArgv(argv []string, roots ...security.CommandPathRoot) []string {
+	sanitized := security.SanitizeCommandArgv(argv, roots...)
+	out := make([]string, 0, len(sanitized))
+	redactNext := false
+	lastRemoved := false
+	addRemoved := func() {
+		if !lastRemoved {
+			out = append(out, "sensitive argument removed")
+			lastRemoved = true
+		}
+	}
+	for _, arg := range sanitized {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			continue
+		}
+		if redactNext {
+			addRemoved()
+			redactNext = false
+			continue
+		}
+		if sensitiveDisplayArgName(arg) {
+			addRemoved()
+			if !strings.Contains(arg, "=") {
+				redactNext = true
+			}
+			continue
+		}
+		text := strings.TrimSpace(sanitizeRunDetailText(arg, roots...))
+		if text == "" {
+			continue
+		}
+		if text == "sensitive value removed" || text == "unsafe value removed" {
+			addRemoved()
+			continue
+		}
+		out = append(out, text)
+		lastRemoved = false
+	}
+	return out
+}
+
+func sensitiveDisplayArgName(arg string) bool {
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		return false
+	}
+	name := arg
+	if before, _, ok := strings.Cut(name, "="); ok {
+		name = before
+	}
+	name = strings.TrimSpace(strings.TrimPrefix(name, "export "))
+	name = strings.TrimLeft(name, "-")
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	upperName := strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(name))
+	if security.SensitiveEnvKey(upperName) {
+		return true
+	}
+	lowerName := strings.ToLower(upperName)
+	for _, marker := range []string{"api_key", "access_token", "refresh_token", "auth_token", "token", "password", "secret", "authorization", "credential", "cookie"} {
+		if strings.Contains(lowerName, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func sanitizeRunDetailText(text string, roots ...security.CommandPathRoot) string {
+	if unsafeRunDetailText(text) {
+		return "unsafe value removed"
+	}
 	text = sanitizeDashboardText(text, roots...)
+	if unsafeRunDetailText(text) {
+		return "unsafe value removed"
+	}
 	if strings.Contains(text, security.RedactionMarker) {
 		text = strings.ReplaceAll(text, security.RedactionMarker, "sensitive value removed")
 	}
@@ -3462,6 +3551,50 @@ func sanitizeRunDetailText(text string, roots ...security.CommandPathRoot) strin
 	text = strings.ReplaceAll(text, "{removed}", "sensitive value removed")
 	text = strings.ReplaceAll(text, "<hidden>", "sensitive value removed")
 	return text
+}
+
+func unsafeRunDetailText(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	lower := strings.ToLower(text)
+	for _, token := range []string{
+		"%00",
+		"%2e",
+		"%2f",
+		"%5c",
+		"../",
+		"..\\",
+		"/..",
+		"\\..",
+		"attacker-controlled",
+		"denial payload",
+		"raw artifact body",
+		"raw diff body",
+		"raw environment",
+		"api_key=",
+		"api-key=",
+		"access_token=",
+		"auth_token=",
+		"token=",
+		"secret=",
+		"password=",
+		"authorization:",
+		"cookie:",
+		"--api-key",
+		"--token",
+		"--secret",
+		"--password",
+		"private key",
+		"-----begin",
+		"-----end",
+	} {
+		if strings.Contains(lower, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func sanitizeDashboardList(items []string, roots ...security.CommandPathRoot) []string {

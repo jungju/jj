@@ -275,6 +275,183 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	}
 }
 
+func TestSecurityReleaseGateTamperedRunMetadataDTOsStaySanitized(t *testing.T) {
+	dir := newTestWorkspace(t)
+	secret := "tampered-run-metadata-secret-value"
+	apiKey := "sk-proj-tamperedmetadata1234567890"
+	privateKey := "-----BEGIN PRIVATE KEY-----\ntampered-private-key-body\n-----END PRIVATE KEY-----"
+	rawCommand := "OPENAI_API_KEY=" + apiKey + " ./scripts/validate.sh --token " + secret
+	rawEnv := "JJ_TAMPERED_SECRET=" + secret
+	rawArtifactBody := "raw artifact body should not render"
+	rawDiffBody := "raw diff body should not render"
+	denialPayload := "attacker-controlled-denial-payload"
+	t.Setenv("JJ_TAMPERED_SECRET", secret)
+
+	validID := "20260428-221000-tamper-valid"
+	tamperedID := "20260428-222000-tampered"
+	writeSecurityReleaseGateRun(t, dir, validID, false, "complete")
+	writeSecurityReleaseGateRun(t, dir, tamperedID, false, "complete")
+	mutateSecurityReleaseGateManifest(t, dir, tamperedID, func(manifest map[string]any) {
+		manifest["status"] = "complete " + denialPayload
+		manifest["started_at"] = "../" + denialPayload
+		manifest["finished_at"] = "2026-04-28T22:20:02Z%2f" + denialPayload
+		manifest["planner_provider"] = denialPayload
+		manifest["task_proposal_mode"] = "security%2f" + denialPayload
+		manifest["resolved_task_proposal_mode"] = denialPayload
+		manifest["selected_task_id"] = "TASK-0032/" + denialPayload
+		manifest["errors"] = []any{rawCommand, rawEnv, privateKey, denialPayload}
+		manifest["risks"] = []any{"../" + denialPayload, rawDiffBody}
+
+		planner := manifestMap(t, manifest, "planner")
+		planner["provider"] = denialPayload
+		planner["model"] = "gpt-" + denialPayload
+
+		artifacts := manifestMap(t, manifest, "artifacts")
+		artifacts["validation_summary"] = "validation/%2fsummary.md"
+		artifacts["validation_results"] = "../validation/results.json"
+		artifacts["git_diff"] = "git/../diff.patch"
+		artifacts["tampered"] = rawArtifactBody
+
+		gitMeta := manifestMap(t, manifest, "git")
+		gitMeta["diff_path"] = "../git/diff.patch"
+		gitMeta["diff_stat_path"] = "git/%2fdiff.stat.txt"
+		gitMeta["diff_summary_path"] = rawDiffBody
+		gitMeta["diff_redaction_categories"] = []any{denialPayload, apiKey, "private_key"}
+		gitMeta["diff_redaction_category_counts"] = map[string]any{denialPayload: float64(1), apiKey: float64(1)}
+		gitMeta["diff_artifact_labels"] = []any{"git_diff", "../outside", rawDiffBody}
+
+		validation := manifestMap(t, manifest, "validation")
+		validation["status"] = "passed%2f" + denialPayload
+		validation["evidence_status"] = denialPayload
+		validation["reason"] = rawArtifactBody + " " + rawCommand
+		validation["summary"] = privateKey + "\n" + rawArtifactBody + "\n" + denialPayload + "\n[omitted]"
+		validation["results_path"] = "../validation/results.json"
+		validation["summary_path"] = "validation/%2fsummary.md"
+		validation["command_count"] = float64(-7)
+		validation["passed_count"] = float64(-2)
+		validation["failed_count"] = float64(-3)
+		commands, ok := validation["commands"].([]any)
+		if !ok || len(commands) == 0 {
+			t.Fatalf("validation commands missing from fixture: %#v", validation["commands"])
+		}
+		command, ok := commands[0].(map[string]any)
+		if !ok {
+			t.Fatalf("validation command has unexpected shape: %#v", commands[0])
+		}
+		command["label"] = denialPayload
+		command["name"] = rawCommand
+		command["command"] = rawCommand
+		command["cwd"] = filepath.Join(dir, "outside-"+secret)
+		command["argv"] = []any{"OPENAI_API_KEY=" + apiKey, "--token", secret, "./scripts/validate.sh", "../escape", "%2fencoded", "safe-arg"}
+		command["stdout_path"] = "../validation/stdout.txt"
+		command["stderr_path"] = "validation/%2fstderr.txt"
+		command["error"] = rawEnv
+
+		codex := manifestMap(t, manifest, "codex")
+		codex["model"] = denialPayload
+		codex["error"] = privateKey
+		codex["events_path"] = "codex/%2fevents.jsonl"
+		codex["summary_path"] = "../codex/summary.md"
+		codex["exit_path"] = "codex/%2e%2e/exit.json"
+
+		securityMeta := manifestMap(t, manifest, "security")
+		diagnostics := manifestMap(t, securityMeta, "diagnostics")
+		diagnostics["root_labels"] = []any{"workspace", denialPayload, apiKey}
+		diagnostics["denied_path_categories"] = []any{denialPayload, rawEnv}
+		diagnostics["denied_path_category_counts"] = map[string]any{denialPayload: float64(2), rawEnv: float64(1)}
+		diagnostics["failure_categories"] = []any{privateKey, rawArtifactBody}
+		diagnostics["failure_category_counts"] = map[string]any{privateKey: float64(1), rawArtifactBody: float64(1)}
+		diagnostics["command_cwd_label"] = filepath.Join(dir, "outside-"+secret)
+		diagnostics["command_sanitization_status"] = rawCommand
+		diagnostics["dry_run_parity_status"] = denialPayload
+		diagnostics["git_diff_redaction_categories"] = []any{rawDiffBody, denialPayload}
+		diagnostics["git_diff_redaction_category_counts"] = map[string]any{rawDiffBody: float64(1), denialPayload: float64(1)}
+		diagnostics["git_diff_artifact_labels"] = []any{"git_diff", "../outside", rawDiffBody}
+	})
+	writeFile(t, dir, ".jj/runs/"+tamperedID+"/codex/exit.json", fmt.Sprintf(`{"provider":"codex","name":"%s","model":"%s","cwd":"%s","run_id":%q,"argv":["codex","--api-key=%s","exec","%s"],"status":"success","exit_code":0,"duration_ms":2200}`, denialPayload, denialPayload, filepath.Join(dir, "outside-"+secret), tamperedID, apiKey, rawDiffBody))
+
+	server := newTestServer(t, dir, "")
+	forbidden := []string{
+		secret,
+		apiKey,
+		"OPENAI_API_KEY",
+		"JJ_TAMPERED_SECRET",
+		"tampered-private-key-body",
+		"-----BEGIN",
+		"-----END",
+		"private key",
+		rawCommand,
+		rawEnv,
+		rawArtifactBody,
+		rawDiffBody,
+		denialPayload,
+		"../",
+		"%2f",
+		"%2e",
+		"[omitted]",
+		security.RedactionMarker,
+		dir,
+		filepath.ToSlash(dir),
+	}
+	probes := []struct {
+		name   string
+		target string
+		want   []string
+	}{
+		{name: "detail", target: "/runs/" + tamperedID, want: []string{tamperedID, "manifest available", "unsafe value removed", "sensitive argument removed", "guarded artifact"}},
+		{name: "history", target: "/runs", want: []string{tamperedID, "unsafe value removed"}},
+		{name: "compare", target: "/runs/compare?left=" + validID + "&right=" + tamperedID, want: []string{validID, tamperedID, "Right Run", "unsafe value removed"}},
+	}
+	for _, probe := range probes {
+		t.Run(probe.name, func(t *testing.T) {
+			body := securityReleaseGateServe(t, server, probe.target, http.StatusOK)
+			for _, want := range probe.want {
+				if !strings.Contains(body, want) {
+					t.Fatalf("%s missing %q:\n%s", probe.target, want, body)
+				}
+			}
+			assertSecurityReleaseGateClean(t, probe.target, body, forbidden)
+		})
+	}
+
+	export, body := getRunAuditExport(t, server, "/runs/audit?run="+tamperedID, http.StatusOK)
+	if export.State != "available" || export.ManifestState != "manifest available" {
+		t.Fatalf("tampered audit export should remain structurally available with sanitized DTO fields: %#v\n%s", export, body)
+	}
+	if export.Evaluation.CommandCount != 1 || export.Evaluation.PassedCount != 0 || export.Evaluation.FailedCount != 0 {
+		t.Fatalf("tampered validation counts were not clamped through DTO: %#v\n%s", export.Evaluation, body)
+	}
+	assertSecurityReleaseGateClean(t, "/runs/audit?run="+tamperedID, body, forbidden)
+}
+
+func mutateSecurityReleaseGateManifest(t *testing.T, dir, runID string, mutate func(map[string]any)) {
+	t.Helper()
+	path := filepath.Join(dir, ".jj", "runs", runID, "manifest.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read manifest for mutation: %v", err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("decode manifest for mutation: %v", err)
+	}
+	mutate(manifest)
+	encoded, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatalf("encode mutated manifest: %v", err)
+	}
+	writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", string(encoded)+"\n")
+}
+
+func manifestMap(t *testing.T, manifest map[string]any, key string) map[string]any {
+	t.Helper()
+	value, ok := manifest[key].(map[string]any)
+	if !ok {
+		t.Fatalf("manifest field %q has unexpected shape: %#v", key, manifest[key])
+	}
+	return value
+}
+
 func writeSecurityReleaseGateRun(t *testing.T, dir, runID string, dryRun bool, status string) {
 	t.Helper()
 	codexRan := !dryRun

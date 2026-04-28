@@ -59,7 +59,11 @@
     "Dry-run and non-dry-run fixtures produce equivalent redaction, boundary, diagnostic, validation output, and git diff redaction behavior.",
     "Failure output exposes only sanitized categories, counts, booleans, and safe relative labels.",
     "Untrusted or partial manifests do not render free-form validation reason or summary text on served run inspection surfaces.",
-    "No new dashboard pages, CLI flags, raw artifact export, raw manifest export, raw diff export, broad external file import, new scanner, redaction algorithm expansion, or unrelated user-facing features are added by guarded plan input hardening, validation output handling, git diff evidence handling, or release-gate security validation.",
+    "Fixtures create valid runs, then mutate manifest fields, artifact references, validation summaries, command metadata, diff metadata, provider fields, timestamps, and next-action hints with secret-looking values, unsafe paths, traversal strings, encoded escapes, raw command text, raw environment-looking values, private key blocks, omission placeholders, and attacker-controlled denial payloads.",
+    "jj serve detail, history, compare, and audit export routes render deterministic denied, unknown, unavailable, or sanitized states for stale, partial, malformed, and internally inconsistent run metadata without reflecting mutated payloads.",
+    "Valid untampered runs continue to render expected sanitized fields and guarded links.",
+    "Hardened run inspection DTOs sanitize unsafe category text, guarded artifact labels, validation counts, and command argv display values before detail, history, compare, or audit export rendering.",
+    "No new dashboard pages, CLI flags, raw artifact export, raw manifest export, raw diff export, broad external file import, new scanner, redaction algorithm expansion, or unrelated user-facing features are added by guarded plan input hardening, validation output handling, git diff evidence handling, tampered run metadata hardening, or release-gate security validation.",
     "go test ./internal/serve, go test ./..., go vet ./..., go build -o jj ./cmd/jj, ./scripts/validate.sh, and git diff --check pass."
   ],
   "created_at": "2026-04-28",
@@ -72,7 +76,8 @@
     "Ensure auto and balanced task proposal resolution selects bugfix only from positive current blocker evidence and does not loop on healthy, negated, or completed-task context.",
     "Enforce plan input path handling so explicitly provided plans cannot escape the configured workspace or leak external sensitive content through artifacts, manifests, logs, events, planner context, eval output, Codex summaries, validation output, git diff artifacts, or dashboard surfaces.",
     "Persist git diff artifacts only after redaction and expose any diff redaction evidence through sanitized metadata only.",
-    "Lock completed security guardrails with deterministic release validation that patches only confirmed disclosure or boundary regressions."
+    "Lock completed security guardrails with deterministic release validation that patches only confirmed disclosure or boundary regressions.",
+    "Treat stale, partial, malformed, manually edited, or internally inconsistent run metadata as untrusted on served run inspection surfaces unless fields are sanitized through guarded DTO helpers."
   ],
   "non_goals": [
     "Provide a hosted cloud service.",
@@ -81,11 +86,11 @@
     "Become a general-purpose workflow engine.",
     "Add unrelated user-facing features while unresolved security risks remain.",
     "Expose raw commands, environment dumps, secret values, sensitive absolute paths, private key material, token-like strings, omission placeholders, raw artifact bodies, raw manifests, raw diff bodies, validation output payloads, or attacker-controlled denied path payloads.",
-    "Add new security scanners or expand redaction algorithms as part of run history, run detail, run comparison, run audit export, guarded plan input handling, validation output handling, or git diff evidence handling.",
+    "Add new security scanners or expand redaction algorithms as part of run history, run detail, run comparison, run audit export, guarded plan input handling, validation output handling, git diff evidence handling, or tampered run metadata hardening.",
     "Add client-side full-text search over raw artifacts or manifests.",
     "Add raw artifact diffing or full-text document comparison as part of the guarded run comparison page.",
     "Add raw manifest export, raw artifact export, raw diff export, or artifact content bundling as part of the guarded run audit JSON export.",
-    "Add new dashboard pages or CLI flags as part of guarded plan input hardening, validation output handling, or git diff evidence policy.",
+    "Add new dashboard pages or CLI flags as part of guarded plan input hardening, validation output handling, git diff evidence policy, or tampered run metadata hardening.",
     "Add new product features while fixing automatic task proposal blocker classification.",
     "Allow explicitly provided plan files outside the workspace by default."
   ],
@@ -136,17 +141,19 @@
     "Shared run metadata construction must consistently populate status, timestamps, dry-run mode, planner/provider metadata, generated doc availability, artifact availability, evaluation state, Codex metadata, sanitized command metadata, disclosure-safe security diagnostics, sanitized git diff redaction evidence, and safe next-action hints where available.",
     "Safe detail, history, compare, and audit links must be generated only from validated run IDs and guarded route helpers.",
     "Existing public routes and JSON response shapes should remain compatible unless a field is currently unsafe or inconsistent.",
+    "Untrusted, stale, partial, malformed, manually edited, or internally inconsistent manifest fields, artifact references, validation summaries, command metadata, diff metadata, provider fields, timestamps, and next-action hints must render only deterministic denied, unknown, unavailable, or sanitized states on detail, history, compare, and audit export surfaces.",
+    "Unsafe manifest-derived category text, artifact labels, validation counts, command argv display values, provider metadata, timestamps, diff metadata, and next-action hints must be sanitized or normalized before display or JSON export.",
     "Auto or balanced task proposal resolution must choose bugfix only from positive current evidence of failed validation, failed tests, failed or blocked runnable tasks, provider failure, panic, fatal error, or regression.",
     "Healthy or negated evidence such as no blocker, not blocked, validation passed, tests pass, failed_count: 0, status passed, no regressions found, all tasks done, or no runnable tasks must not trigger bugfix resolution.",
     "Concrete feature, security, hardening, quality, or docs selections must be overridden to bugfix only when the same positive critical blocker evidence exists.",
     "Task proposal resolution reasons, events, manifests, and planning context must remain sanitized and must not echo raw logs, paths, commands, environment values, secrets, token-like values, omission placeholders, or attacker-controlled payloads.",
     "Untrusted or partial manifest validation reason and summary text must not render on served run inspection surfaces unless the manifest is trusted.",
-    "A consolidated fixture-driven security release-gate validation path must exercise hostile fixtures across persisted run artifacts, manifest scrubbing, command metadata, Codex artifacts, shared run DTOs, run detail, history, compare, audit export, unsafe run IDs, path denial, accepted and denied guarded plan input handling, sanitized validation failure artifacts and metadata, git diff redaction evidence, and dry-run/non-dry-run parity.",
+    "A consolidated fixture-driven security release-gate validation path must exercise hostile fixtures across persisted run artifacts, manifest scrubbing, command metadata, Codex artifacts, shared run DTOs, run detail, history, compare, audit export, unsafe run IDs, path denial, accepted and denied guarded plan input handling, sanitized validation failure artifacts and metadata, git diff redaction evidence, tampered run metadata, and dry-run/non-dry-run parity.",
     "Release-gate assertions must check rendered HTML, audit JSON, manifests, persisted checked artifacts, validation artifacts, events, summaries, and git diff artifacts for absence of raw secrets, token-like values, private key blocks, raw command text, raw environment values, unsafe absolute paths, omission placeholders, raw artifact bodies, raw manifests, raw diff bodies, and attacker-controlled denied path payloads.",
     "Release-gate failure output must expose only sanitized categories, counts, booleans, and safe relative labels."
   ],
-  "summary": "jj is a CLI that turns a planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains a core constraint: generated artifacts, served run-inspection surfaces, explicit plan inputs, command metadata, manifests, validation outputs, and git diff artifacts are guarded, redacted, and kept inside the configured workspace or allowed run artifact roots. jj serve includes guarded dashboard, run detail, run history, run comparison, and sanitized audit export flows, while automatic task proposal resolution selects bugfix only from positive current blocker evidence. Git diff evidence policy is resolved as redacted-in-place persisted diff artifacts plus optional sanitized metadata containing only booleans, counts, categories, and safe relative labels. Release-gate regression coverage now also locks accepted and denied guarded plan input behavior across dry-run and full-run flows, sanitized validation failure artifacts, and disclosure-safe validation metadata.",
+  "summary": "jj is a CLI that turns a planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains a core constraint: generated artifacts, served run-inspection surfaces, explicit plan inputs, command metadata, manifests, validation outputs, git diff artifacts, and run metadata are guarded, redacted, and kept inside the configured workspace or allowed run artifact roots. jj serve includes guarded dashboard, run detail, run history, run comparison, and sanitized audit export flows, while automatic task proposal resolution selects bugfix only from positive current blocker evidence. Git diff evidence policy is resolved as redacted-in-place persisted diff artifacts plus optional sanitized metadata containing only booleans, counts, categories, and safe relative labels. Release-gate regression coverage locks accepted and denied guarded plan input behavior across dry-run and full-run flows, sanitized validation failure artifacts, disclosure-safe validation metadata, and stale or tampered run metadata rendered through run inspection DTOs.",
   "title": "jj Security Boundary and Dashboard Run Inspection",
-  "updated_at": "2026-04-28T18:10:31Z",
+  "updated_at": "2026-04-28T18:25:58Z",
   "version": 1
 }

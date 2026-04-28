@@ -902,6 +902,33 @@
       "updated_at": "2026-04-28T18:08:44Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Fixtures create valid runs, then mutate manifest fields, artifact references, validation summaries, command metadata, diff metadata, provider fields, timestamps, and next-action hints with secret-looking values, unsafe paths, traversal strings, encoded escapes, raw command text, raw environment-looking values, private key blocks, omission placeholders, and attacker-controlled denial payloads.",
+        "jj serve detail, history, compare, and audit export routes render deterministic denied, unknown, unavailable, or sanitized states for stale, partial, malformed, and internally inconsistent run metadata without reflecting mutated payloads.",
+        "Valid untampered runs continue to render expected sanitized fields and guarded links.",
+        "Handlers continue to obtain run display data through shared guarded DTO/helper paths and do not add handler-local raw manifest, artifact, command, environment, diff, or path reads.",
+        "Failure diagnostics expose only sanitized categories, counts, booleans, and safe relative labels.",
+        "No new dashboard pages, CLI flags, scanners, raw exports, broad external file access, or redaction algorithm expansion are added."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t11",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T18:10:32Z",
+      "created_by_run": "autopilot-20260428-160202-t11",
+      "created_by_turn": null,
+      "id": "TASK-0032",
+      "mode": "security",
+      "priority": "high",
+      "reason": "Security is the best next category because all known tasks are complete, there is no positive blocker evidence to justify bugfix, and the remaining concrete risk is disclosure through stale, partial, malformed, or manually tampered run metadata rendered by jj serve surfaces.",
+      "resolved_task_proposal_mode": "security",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Harden stale and tampered run metadata trust boundaries",
+      "updated_at": "2026-04-28T18:24:04Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
