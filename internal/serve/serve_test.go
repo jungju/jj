@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	runpkg "github.com/jungju/jj/internal/run"
+	"github.com/jungju/jj/internal/security"
 )
 
 func TestIndexShowsDocsAndRuns(t *testing.T) {
@@ -795,6 +796,257 @@ func TestRunShowsStateArtifactsFirst(t *testing.T) {
 	manifest := strings.Index(body, "manifest.json")
 	if spec < 0 || task < 0 || manifest < 0 || !(spec < task && task < manifest) || strings.Contains(body, "snapshots/eval.json") {
 		t.Fatalf("state artifacts missing or not first in expected order:\n%s", body)
+	}
+}
+
+func TestRunDetailShowsManifestMetadataAndGuardedLinks(t *testing.T) {
+	dir := newTestWorkspace(t)
+	runID := "20260428-090000-detail"
+	secret := "run-detail-secret-value"
+	t.Setenv("JJ_RUN_DETAIL_SECRET", secret)
+	writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", fmt.Sprintf(`{
+		"run_id": %q,
+		"status": "complete",
+		"started_at": "2026-04-28T09:00:00Z",
+		"finished_at": "2026-04-28T09:00:03Z",
+		"duration_ms": 3456,
+		"dry_run": false,
+		"planner_provider": "openai",
+		"task_proposal_mode": "feature",
+		"resolved_task_proposal_mode": "feature",
+		"selected_task_id": "T-FEATURE-001",
+		"planner": {"provider": "openai", "model": "gpt-test"},
+		"workspace": {"spec_path": ".jj/spec.json", "task_path": ".jj/tasks.json", "spec_written": true, "task_written": true},
+		"artifacts": {
+			"manifest": "manifest.json",
+			"snapshot_spec_after": "snapshots/spec.after.json",
+			"snapshot_tasks_after": "snapshots/tasks.after.json",
+			"validation_summary": "validation/summary.md",
+			"validation_results": "validation/results.json",
+			"validation_stdout": "validation/001-validate.stdout.txt",
+			"validation_stderr": "validation/001-validate.stderr.txt",
+			"codex_summary": "codex/summary.md",
+			"codex_events": "codex/events.jsonl",
+			"codex_exit": "codex/exit.json",
+			"missing": "validation/missing.md"
+		},
+		"validation": {
+			"ran": true,
+			"status": "passed",
+			"evidence_status": "recorded",
+			"summary": "validate passed",
+			"results_path": "validation/results.json",
+			"summary_path": "validation/summary.md",
+			"command_count": 1,
+			"passed_count": 1,
+			"commands": [{
+				"label": "validate",
+				"name": "validate.sh",
+				"command": "OPENAI_API_KEY=%s ./scripts/validate.sh",
+				"provider": "local",
+				"cwd": "[workspace]",
+				"run_id": %q,
+				"argv": ["./scripts/validate.sh"],
+				"exit_code": 0,
+				"duration_ms": 1200,
+				"status": "passed",
+				"stdout_path": "validation/001-validate.stdout.txt",
+				"stderr_path": "validation/001-validate.stderr.txt"
+			}]
+		},
+		"codex": {
+			"ran": true,
+			"status": "success",
+			"model": "gpt-codex-test",
+			"exit_code": 0,
+			"duration_ms": 2200,
+			"events_path": "codex/events.jsonl",
+			"summary_path": "codex/summary.md",
+			"exit_path": "codex/exit.json"
+		},
+		"security": {
+			"redaction_applied": true,
+			"workspace_guardrails_applied": true,
+			"redaction_count": 3,
+			"diagnostics": {
+				"version": "1",
+				"redacted": true,
+				"root_labels": ["workspace", "run_artifacts"],
+				"denied_path_count": 1,
+				"denied_path_categories": ["outside_workspace"],
+				"denied_path_category_counts": {"outside_workspace": 1},
+				"command_record_count": 2,
+				"command_metadata_sanitized": true,
+				"command_argv_sanitized": true,
+				"command_cwd_label": "[workspace]",
+				"command_sanitization_status": "sanitized",
+				"raw_command_text_persisted": false,
+				"raw_environment_persisted": false,
+				"dry_run_parity_applied": true,
+				"dry_run_parity_status": "equivalent"
+			}
+		}
+	}`, runID, secret, runID))
+	writeFile(t, dir, ".jj/runs/"+runID+"/snapshots/spec.after.json", `{"title":"SPEC"}`)
+	writeFile(t, dir, ".jj/runs/"+runID+"/snapshots/tasks.after.json", `{"tasks":[{"id":"T-FEATURE-001"}]}`)
+	writeFile(t, dir, ".jj/runs/"+runID+"/validation/summary.md", "validation summary\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/validation/results.json", `{"status":"passed"}`)
+	writeFile(t, dir, ".jj/runs/"+runID+"/validation/001-validate.stdout.txt", "ok\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/validation/001-validate.stderr.txt", "\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/codex/summary.md", "summary\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/codex/events.jsonl", `{"type":"done"}`+"\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/codex/exit.json", fmt.Sprintf(`{"provider":"codex","name":"codex","model":"gpt-codex-test","cwd":"[workspace]","run_id":%q,"argv":["codex","--api-key=%s","exec"],"status":"success","exit_code":0,"duration_ms":2200}`, runID, secret))
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `href="/runs/`+runID+`"`) {
+		t.Fatalf("dashboard did not link run detail:\n%s", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{
+		"Overview",
+		runID,
+		"complete",
+		"dry-run false",
+		"provider openai",
+		"model gpt-test",
+		"selected task T-FEATURE-001",
+		"Generated State And Docs",
+		"snapshots/spec.after.json",
+		"snapshots/tasks.after.json",
+		"Evaluation",
+		"status passed",
+		"Validation summary",
+		"Codex",
+		"gpt-codex-test",
+		"Command Metadata",
+		"./scripts/validate.sh",
+		"raw command text not shown",
+		"security redactions 3",
+		"denied paths 1",
+		"dry-run parity equivalent",
+		"validation/missing.md",
+		"missing",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("detail missing %q:\n%s", want, body)
+		}
+	}
+	for _, leaked := range []string{
+		secret,
+		"OPENAI_API_KEY=",
+		"JJ_RUN_DETAIL_SECRET",
+		security.RedactionMarker,
+		dir,
+		filepath.ToSlash(dir),
+	} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("detail leaked %q:\n%s", leaked, body)
+		}
+	}
+	if !strings.Contains(body, `href="/artifact?run=`+runID) || strings.Contains(body, "validation/unlisted") {
+		t.Fatalf("detail did not use guarded artifact links:\n%s", body)
+	}
+}
+
+func TestRunDetailRendersSafeStatesForMalformedMissingAndLegacyManifests(t *testing.T) {
+	dir := newTestWorkspace(t)
+	secret := "sk-proj-detailbad1234567890"
+	writeFile(t, dir, ".jj/runs/20260428-100000-badjson/manifest.json", `{"run_id":"20260428-100000-badjson","status":"`+secret+`",`)
+	writeFile(t, dir, ".jj/runs/20260428-101000-incomplete/manifest.json", `{"run_id":"20260428-101000-incomplete","status":"success"}`)
+	writeFile(t, dir, ".jj/runs/20260428-102000-legacy/manifest.json", `{"run_id":"20260428-102000-legacy","status":"success","started_at":"2026-04-28T10:20:00Z","artifacts":{"manifest":"manifest.json"}}`)
+	if err := os.MkdirAll(filepath.Join(dir, ".jj/runs/20260428-103000-missing"), 0o755); err != nil {
+		t.Fatalf("mkdir missing manifest: %v", err)
+	}
+	server := newTestServer(t, dir, "")
+
+	probes := []struct {
+		target string
+		want   string
+	}{
+		{"/runs/20260428-100000-badjson", "manifest is malformed"},
+		{"/runs/20260428-101000-incomplete", "manifest is incomplete: missing artifacts"},
+		{"/runs/20260428-102000-legacy", "security diagnostics unavailable"},
+		{"/runs/20260428-103000-missing", "manifest unavailable"},
+	}
+	for _, probe := range probes {
+		t.Run(probe.target, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, probe.target, nil)
+			server.Handler().ServeHTTP(rec, req)
+			body := rec.Body.String()
+			if rec.Code != http.StatusOK {
+				t.Fatalf("detail status = %d body=%s", rec.Code, body)
+			}
+			if !strings.Contains(body, probe.want) {
+				t.Fatalf("detail missing %q:\n%s", probe.want, body)
+			}
+			for _, leaked := range []string{secret, security.RedactionMarker, dir, filepath.ToSlash(dir)} {
+				if strings.Contains(body, leaked) {
+					t.Fatalf("safe state leaked %q:\n%s", leaked, body)
+				}
+			}
+		})
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs/20260428-109999-notfound", nil)
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "run unavailable") {
+		t.Fatalf("missing run status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRunDetailRejectsUnsafeRunIDsAndSymlinkEscapes(t *testing.T) {
+	dir := newTestWorkspace(t)
+	outside := t.TempDir()
+	secret := "run-detail-outside-secret"
+	target := filepath.Join(outside, "target")
+	writeFile(t, target, "manifest.json", `{"run_id":"20260428-110000-link","status":"complete","artifacts":{"manifest":"manifest.json"}}`)
+	writeFile(t, target, "secret.txt", secret)
+	if err := os.Symlink(target, filepath.Join(dir, ".jj/runs/20260428-110000-link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	server := newTestServer(t, dir, "")
+
+	probes := []struct {
+		name   string
+		target string
+		status int
+	}{
+		{name: "relative traversal", target: "/runs/../README.md", status: http.StatusForbidden},
+		{name: "encoded traversal", target: "/runs/%2e%2e/README.md", status: http.StatusForbidden},
+		{name: "encoded slash traversal", target: "/runs/20260428-110000-link%2f..%2fother", status: http.StatusForbidden},
+		{name: "absolute query", target: "/run?id=" + url.QueryEscape(filepath.Join(outside, "target")), status: http.StatusForbidden},
+		{name: "symlink run root", target: "/runs/20260428-110000-link", status: http.StatusForbidden},
+	}
+	for _, probe := range probes {
+		t.Run(probe.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, probe.target, nil)
+			server.Handler().ServeHTTP(rec, req)
+			body := rec.Body.String()
+			if rec.Code != probe.status {
+				t.Fatalf("status = %d, want %d body=%s", rec.Code, probe.status, body)
+			}
+			for _, leaked := range []string{secret, outside, filepath.ToSlash(outside), dir, filepath.ToSlash(dir)} {
+				if strings.Contains(body, leaked) {
+					t.Fatalf("unsafe run detail leaked %q:\n%s", leaked, body)
+				}
+			}
+		})
 	}
 }
 

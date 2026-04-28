@@ -110,6 +110,7 @@ type dashboardManifest struct {
 	StartedAt                string `json:"started_at"`
 	FinishedAt               string `json:"finished_at"`
 	EndedAt                  string `json:"ended_at"`
+	DurationMS               int64  `json:"duration_ms"`
 	PlannerProvider          string `json:"planner_provider"`
 	TaskProposalMode         string `json:"task_proposal_mode"`
 	ResolvedTaskProposalMode string `json:"resolved_task_proposal_mode"`
@@ -125,18 +126,15 @@ type dashboardManifest struct {
 		PushedRef        string `json:"pushed_ref"`
 	} `json:"repository"`
 	Planner struct {
-		Provider string `json:"provider"`
+		Provider  string            `json:"provider"`
+		Model     string            `json:"model"`
+		Artifacts map[string]string `json:"artifacts"`
 	} `json:"planner"`
-	DryRun     bool `json:"dry_run"`
-	Validation struct {
-		Status         string `json:"status"`
-		EvidenceStatus string `json:"evidence_status"`
-		Reason         string `json:"reason"`
-		Summary        string `json:"summary"`
-		SummaryPath    string `json:"summary_path"`
-		ResultsPath    string `json:"results_path"`
-	} `json:"validation"`
-	Commit struct {
+	DryRun     bool                      `json:"dry_run"`
+	Workspace  runpkg.ManifestWorkspace  `json:"workspace"`
+	Codex      runpkg.ManifestCodex      `json:"codex"`
+	Validation runpkg.ManifestValidation `json:"validation"`
+	Commit     struct {
 		Ran    bool   `json:"ran"`
 		Status string `json:"status"`
 	} `json:"commit"`
@@ -154,6 +152,110 @@ type dashboardManifestLoad struct {
 
 type artifactLink struct {
 	Path string
+}
+
+type runDetail struct {
+	ID                       string
+	Status                   string
+	StartedAt                string
+	FinishedAt               string
+	Duration                 string
+	DryRun                   bool
+	PlannerProvider          string
+	PlannerModel             string
+	TaskProposalMode         string
+	ResolvedTaskProposalMode string
+	SelectedTaskID           string
+	RepositorySummary        string
+	ManifestState            string
+	Error                    string
+	Docs                     []runDetailLink
+	Artifacts                []runArtifactStatus
+	ArtifactNote             string
+	Validation               runValidationDetail
+	Codex                    runCodexDetail
+	Commands                 []runCommandDetail
+	SecuritySummary          string
+	SecurityDetails          []string
+	NextActions              []string
+}
+
+type runDetailLink struct {
+	Label     string
+	Path      string
+	URL       string
+	Available bool
+	Status    string
+}
+
+type runArtifactStatus struct {
+	Path      string
+	URL       string
+	Available bool
+	Status    string
+}
+
+type runValidationDetail struct {
+	Status         string
+	EvidenceStatus string
+	Reason         string
+	Summary        string
+	ResultsPath    string
+	ResultsURL     string
+	SummaryPath    string
+	SummaryURL     string
+	CommandCount   int
+	PassedCount    int
+	FailedCount    int
+}
+
+type runCodexDetail struct {
+	Ran         bool
+	Skipped     bool
+	Status      string
+	Model       string
+	ExitCode    int
+	Duration    string
+	EventsPath  string
+	EventsURL   string
+	SummaryPath string
+	SummaryURL  string
+	ExitPath    string
+	ExitURL     string
+	Error       string
+}
+
+type runCommandDetail struct {
+	Source     string
+	Label      string
+	Name       string
+	Provider   string
+	Model      string
+	CWD        string
+	RunID      string
+	Argv       []string
+	Status     string
+	ExitCode   int
+	Duration   string
+	StdoutPath string
+	StdoutURL  string
+	StderrPath string
+	StderrURL  string
+	Error      string
+	Note       string
+}
+
+type commandRecord struct {
+	Provider   string   `json:"provider"`
+	Name       string   `json:"name"`
+	Model      string   `json:"model"`
+	CWD        string   `json:"cwd"`
+	RunID      string   `json:"run_id"`
+	Argv       []string `json:"argv"`
+	Status     string   `json:"status"`
+	ExitCode   int      `json:"exit_code"`
+	DurationMS int64    `json:"duration_ms"`
+	Error      string   `json:"error"`
 }
 
 type runFormData struct {
@@ -200,6 +302,7 @@ type pageData struct {
 	RunForm     *runFormData
 	RunResult   *runStartResult
 	WebRun      *webRunView
+	RunDetail   *runDetail
 	RunsOnly    bool
 	Path        string
 	RunID       string
@@ -828,7 +931,7 @@ func (s *Server) handleRunsPath(w http.ResponseWriter, r *http.Request) {
 	parts := strings.SplitN(rest, "/", 2)
 	runID := parts[0]
 	if len(parts) == 1 {
-		s.renderRunArtifacts(w, runID)
+		s.renderRunDetail(w, runID)
 		return
 	}
 	switch parts[1] {
@@ -848,29 +951,38 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusBadRequest, errors.New("run id is required"))
 		return
 	}
-	s.renderRunArtifacts(w, runID)
+	s.renderRunDetail(w, runID)
 }
 
-func (s *Server) renderRunArtifacts(w http.ResponseWriter, runID string) {
+func (s *Server) renderRunDetail(w http.ResponseWriter, runID string) {
 	if strings.TrimSpace(runID) == "" {
 		s.renderError(w, http.StatusBadRequest, errors.New("run id is required"))
 		return
 	}
 	runDir, err := s.runDir(runID)
 	if err != nil {
-		s.renderError(w, http.StatusBadRequest, err)
+		s.renderError(w, http.StatusForbidden, errors.New("run id is not allowed"))
 		return
 	}
-	artifacts, err := discoverArtifacts(runDir)
+	info, err := os.Stat(runDir)
+	if errors.Is(err, os.ErrNotExist) {
+		s.renderError(w, http.StatusNotFound, errors.New("run unavailable"))
+		return
+	}
 	if err != nil {
-		s.renderError(w, http.StatusNotFound, err)
+		s.renderError(w, http.StatusForbidden, errors.New("run unavailable"))
 		return
 	}
+	if !info.IsDir() {
+		s.renderError(w, http.StatusNotFound, errors.New("run unavailable"))
+		return
+	}
+	detail := s.loadRunDetail(runID, runDir)
 	s.render(w, pageData{
-		Title:     "run " + runID,
+		Title:     "run " + detail.ID,
 		CWD:       displayWorkspace,
-		RunID:     runID,
-		Artifacts: artifacts,
+		RunID:     detail.ID,
+		RunDetail: &detail,
 	})
 }
 
@@ -1450,6 +1562,352 @@ func loadDashboardManifest(runID, runDir string) dashboardManifestLoad {
 	return dashboardManifestLoad{Manifest: manifest, Valid: true}
 }
 
+func (s *Server) loadRunDetail(runID, runDir string) runDetail {
+	roots := []security.CommandPathRoot{
+		{Path: s.cwd, Label: displayWorkspace},
+		{Path: runDir, Label: ".jj/runs/" + runID},
+	}
+	safeText := func(value string) string {
+		return sanitizeRunDetailText(value, roots...)
+	}
+	detail := runDetail{
+		ID:              safeText(runID),
+		Status:          "unknown",
+		ManifestState:   "manifest unavailable",
+		ArtifactNote:    unavailableRunError("manifest unavailable"),
+		SecuritySummary: "security diagnostics unavailable",
+	}
+
+	data, err := readRunFile(runDir, "manifest.json")
+	if err != nil {
+		detail.Error = "manifest unavailable"
+		detail.NextActions = append(detail.NextActions, "Run manifest is unavailable; start a new run to produce fresh guarded metadata.")
+		return detail
+	}
+	var manifest dashboardManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		detail.ManifestState = "manifest is malformed"
+		detail.Error = "manifest is malformed"
+		detail.ArtifactNote = unavailableRunError(detail.Error)
+		detail.NextActions = append(detail.NextActions, "Manifest JSON is malformed; artifact links are disabled for this run.")
+		return detail
+	}
+
+	trustedManifest := true
+	switch {
+	case strings.TrimSpace(manifest.RunID) == "":
+		trustedManifest = false
+		detail.ManifestState = "manifest is incomplete: missing run_id"
+	case manifest.RunID != runID:
+		trustedManifest = false
+		detail.ManifestState = "manifest is incomplete: run_id mismatch"
+	default:
+		detail.ManifestState = "manifest available"
+	}
+	if strings.TrimSpace(manifest.Status) == "" {
+		detail.Status = "unknown"
+		if detail.ManifestState == "manifest available" {
+			detail.ManifestState = "manifest is incomplete: missing status"
+		}
+	} else {
+		detail.Status = safeText(manifest.Status)
+	}
+	if manifest.Artifacts == nil {
+		trustedManifest = false
+		if detail.ManifestState == "manifest available" {
+			detail.ManifestState = "manifest is incomplete: missing artifacts"
+		}
+		detail.ArtifactNote = unavailableRunError("manifest is incomplete: missing artifacts")
+	} else {
+		detail.ArtifactNote = ""
+	}
+
+	detail.StartedAt = safeText(manifest.StartedAt)
+	detail.FinishedAt = safeText(firstNonEmpty(manifest.FinishedAt, manifest.EndedAt))
+	detail.Duration = formatDurationMS(manifest.DurationMS)
+	detail.DryRun = manifest.DryRun
+	detail.PlannerProvider = safeText(firstNonEmpty(manifest.PlannerProvider, manifest.Planner.Provider))
+	detail.PlannerModel = safeText(manifest.Planner.Model)
+	detail.TaskProposalMode = safeText(manifest.TaskProposalMode)
+	detail.ResolvedTaskProposalMode = safeText(manifest.ResolvedTaskProposalMode)
+	detail.SelectedTaskID = safeText(manifest.SelectedTaskID)
+	if manifest.Repository.Enabled {
+		repo := safeText(firstNonEmpty(manifest.Repository.SanitizedRepoURL, manifest.Repository.RepoURL))
+		base := safeText(manifest.Repository.BaseBranch)
+		work := safeText(manifest.Repository.WorkBranch)
+		push := safeText(manifest.Repository.PushStatus)
+		detail.RepositorySummary = strings.TrimSpace(fmt.Sprintf("%s base %s work %s push %s", repo, base, work, push))
+	}
+
+	if trustedManifest {
+		detail.Artifacts = s.runArtifactStatuses(manifest, runDir, runID, roots...)
+		detail.Docs = s.runDetailDocs(manifest, runDir, runID, roots...)
+		detail.Codex = s.runCodexDetail(manifest, runDir, runID, roots...)
+		detail.Commands = s.runCommandDetails(manifest, runDir, runID, roots...)
+	} else if detail.ArtifactNote == "" {
+		detail.ArtifactNote = unavailableRunError(detail.ManifestState)
+	}
+	detail.Validation = s.runValidationDetail(manifest, runDir, runID, trustedManifest, roots...)
+	detail.SecuritySummary, detail.SecurityDetails = runDetailSecurityDiagnostics(manifest.Security)
+	if detail.SecuritySummary == "" {
+		detail.SecuritySummary = "security diagnostics unavailable"
+		detail.SecurityDetails = []string{"diagnostics unknown"}
+	}
+	detail.NextActions = runDetailNextActions(detail, manifest, trustedManifest)
+	return detail
+}
+
+func (s *Server) runDetailDocs(manifest dashboardManifest, runDir, runID string, roots ...security.CommandPathRoot) []runDetailLink {
+	var docs []runDetailLink
+	addDoc := func(label, raw string) {
+		clean, err := cleanAllowedProjectPath(raw)
+		if err != nil || !isProjectDocPath(clean) {
+			return
+		}
+		display, ok := safeRunDetailPath(clean, roots...)
+		if !ok {
+			return
+		}
+		path, err := safeJoinProject(s.cwd, clean)
+		available := false
+		status := "missing"
+		if err == nil {
+			if info, statErr := os.Stat(path); statErr == nil && !info.IsDir() {
+				available = true
+				status = "available"
+			}
+		}
+		link := runDetailLink{Label: label, Path: display, Available: available, Status: status}
+		if available {
+			link.URL = docURL(clean)
+		}
+		docs = append(docs, link)
+	}
+	addArtifact := func(label, raw string) {
+		status := artifactStatusForPath(manifest, runDir, runID, raw, roots...)
+		if status.Path == "" {
+			return
+		}
+		docs = append(docs, runDetailLink{
+			Label:     label,
+			Path:      status.Path,
+			URL:       status.URL,
+			Available: status.Available,
+			Status:    status.Status,
+		})
+	}
+	addDoc("Workspace SPEC", firstNonEmpty(manifest.Workspace.SpecPath, runpkg.DefaultSpecStatePath))
+	addDoc("Workspace TASK", firstNonEmpty(manifest.Workspace.TaskPath, runpkg.DefaultTasksStatePath))
+	addArtifact("Planned SPEC snapshot", listedArtifactPath(manifest.Artifacts, "snapshot_spec_after"))
+	addArtifact("Planned TASK snapshot", listedArtifactPath(manifest.Artifacts, "snapshot_tasks_after"))
+	addArtifact("Legacy SPEC doc", artifactPathByValue(manifest.Artifacts, "docs/SPEC.md"))
+	addArtifact("Legacy TASK doc", artifactPathByValue(manifest.Artifacts, "docs/TASK.md"))
+	return docs
+}
+
+func (s *Server) runArtifactStatuses(manifest dashboardManifest, runDir, runID string, roots ...security.CommandPathRoot) []runArtifactStatus {
+	seen := map[string]bool{}
+	artifacts := make([]runArtifactStatus, 0, len(manifest.Artifacts))
+	for _, raw := range manifest.Artifacts {
+		clean, err := cleanAllowedArtifactPath(raw)
+		if err != nil || seen[clean] {
+			continue
+		}
+		seen[clean] = true
+		status := artifactStatusForPath(manifest, runDir, runID, clean, roots...)
+		if status.Path != "" {
+			artifacts = append(artifacts, status)
+		}
+	}
+	sort.SliceStable(artifacts, func(i, j int) bool {
+		return artifactRank(artifacts[i].Path) < artifactRank(artifacts[j].Path) ||
+			(artifactRank(artifacts[i].Path) == artifactRank(artifacts[j].Path) && artifacts[i].Path < artifacts[j].Path)
+	})
+	return artifacts
+}
+
+func (s *Server) runValidationDetail(manifest dashboardManifest, runDir, runID string, trustedManifest bool, roots ...security.CommandPathRoot) runValidationDetail {
+	safeText := func(value string) string {
+		return sanitizeRunDetailText(value, roots...)
+	}
+	detail := runValidationDetail{
+		Status:         safeText(firstNonEmpty(manifest.Validation.Status, "unknown")),
+		EvidenceStatus: safeText(firstNonEmpty(manifest.Validation.EvidenceStatus, "unknown")),
+		Reason:         safeText(manifest.Validation.Reason),
+		Summary:        safeText(manifest.Validation.Summary),
+		CommandCount:   manifest.Validation.CommandCount,
+		PassedCount:    manifest.Validation.PassedCount,
+		FailedCount:    manifest.Validation.FailedCount,
+	}
+	if detail.CommandCount == 0 {
+		detail.CommandCount = len(manifest.Validation.Commands)
+	}
+	if trustedManifest {
+		if status := artifactStatusForPath(manifest, runDir, runID, manifest.Validation.ResultsPath, roots...); status.Path != "" {
+			detail.ResultsPath = status.Path
+			detail.ResultsURL = status.URL
+		}
+		if status := artifactStatusForPath(manifest, runDir, runID, manifest.Validation.SummaryPath, roots...); status.Path != "" {
+			detail.SummaryPath = status.Path
+			detail.SummaryURL = status.URL
+		}
+	}
+	return detail
+}
+
+func (s *Server) runCodexDetail(manifest dashboardManifest, runDir, runID string, roots ...security.CommandPathRoot) runCodexDetail {
+	safeText := func(value string) string {
+		return sanitizeRunDetailText(value, roots...)
+	}
+	detail := runCodexDetail{
+		Ran:      manifest.Codex.Ran,
+		Skipped:  manifest.Codex.Skipped,
+		Status:   safeText(firstNonEmpty(manifest.Codex.Status, "unknown")),
+		Model:    safeText(manifest.Codex.Model),
+		ExitCode: manifest.Codex.ExitCode,
+		Duration: formatDurationMS(manifest.Codex.DurationMS),
+		Error:    safeText(manifest.Codex.Error),
+	}
+	if status := artifactStatusForPath(manifest, runDir, runID, manifest.Codex.EventsPath, roots...); status.Path != "" {
+		detail.EventsPath = status.Path
+		detail.EventsURL = status.URL
+	}
+	if status := artifactStatusForPath(manifest, runDir, runID, manifest.Codex.SummaryPath, roots...); status.Path != "" {
+		detail.SummaryPath = status.Path
+		detail.SummaryURL = status.URL
+	}
+	if status := artifactStatusForPath(manifest, runDir, runID, manifest.Codex.ExitPath, roots...); status.Path != "" {
+		detail.ExitPath = status.Path
+		detail.ExitURL = status.URL
+	}
+	return detail
+}
+
+func (s *Server) runCommandDetails(manifest dashboardManifest, runDir, runID string, roots ...security.CommandPathRoot) []runCommandDetail {
+	commands := make([]runCommandDetail, 0, len(manifest.Validation.Commands)+1)
+	for _, command := range manifest.Validation.Commands {
+		commands = append(commands, validationCommandDetail(manifest, runDir, runID, command, roots...))
+	}
+	if record, ok := loadCodexCommandRecord(manifest, runDir, runID, roots...); ok {
+		commands = append(commands, commandRecordDetail("Codex", record, roots...))
+	} else if strings.TrimSpace(manifest.Codex.ExitPath) != "" {
+		status := artifactStatusForPath(manifest, runDir, runID, manifest.Codex.ExitPath, roots...)
+		commands = append(commands, runCommandDetail{
+			Source: "Codex",
+			Label:  "codex",
+			Status: firstNonEmpty(status.Status, "unavailable"),
+			Note:   "codex command metadata unavailable",
+		})
+	}
+	return commands
+}
+
+func validationCommandDetail(manifest dashboardManifest, runDir, runID string, command runpkg.ManifestValidationCommand, roots ...security.CommandPathRoot) runCommandDetail {
+	safeText := func(value string) string {
+		return sanitizeRunDetailText(value, roots...)
+	}
+	detail := runCommandDetail{
+		Source:   "Validation",
+		Label:    safeText(command.Label),
+		Name:     safeText(command.Name),
+		Provider: safeText(command.Provider),
+		Model:    safeText(command.Model),
+		CWD:      safeText(command.CWD),
+		RunID:    safeText(command.RunID),
+		Argv:     sanitizeRunDetailList(command.Argv, roots...),
+		Status:   safeText(command.Status),
+		ExitCode: command.ExitCode,
+		Duration: formatDurationMS(command.DurationMS),
+		Error:    safeText(command.Error),
+	}
+	if strings.TrimSpace(command.Command) != "" {
+		detail.Note = "raw command text not shown"
+	}
+	if status := artifactStatusForPath(manifest, runDir, runID, command.StdoutPath, roots...); status.Path != "" {
+		detail.StdoutPath = status.Path
+		detail.StdoutURL = status.URL
+	}
+	if status := artifactStatusForPath(manifest, runDir, runID, command.StderrPath, roots...); status.Path != "" {
+		detail.StderrPath = status.Path
+		detail.StderrURL = status.URL
+	}
+	return detail
+}
+
+func loadCodexCommandRecord(manifest dashboardManifest, runDir, runID string, roots ...security.CommandPathRoot) (commandRecord, bool) {
+	rel := strings.TrimSpace(manifest.Codex.ExitPath)
+	if rel == "" {
+		rel = listedArtifactPath(manifest.Artifacts, "codex_exit")
+	}
+	status := artifactStatusForPath(manifest, runDir, runID, rel, roots...)
+	if !status.Available || status.URL == "" {
+		return commandRecord{}, false
+	}
+	clean, err := cleanAllowedArtifactPath(rel)
+	if err != nil {
+		return commandRecord{}, false
+	}
+	path, err := safeJoin(runDir, clean)
+	if err != nil {
+		return commandRecord{}, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return commandRecord{}, false
+	}
+	data = security.RedactContent(clean, data)
+	var record commandRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return commandRecord{}, false
+	}
+	return record, true
+}
+
+func commandRecordDetail(source string, record commandRecord, roots ...security.CommandPathRoot) runCommandDetail {
+	safeText := func(value string) string {
+		return sanitizeRunDetailText(value, roots...)
+	}
+	return runCommandDetail{
+		Source:   source,
+		Label:    safeText(firstNonEmpty(record.Name, source)),
+		Name:     safeText(record.Name),
+		Provider: safeText(record.Provider),
+		Model:    safeText(record.Model),
+		CWD:      safeText(record.CWD),
+		RunID:    safeText(record.RunID),
+		Argv:     sanitizeRunDetailList(record.Argv, roots...),
+		Status:   safeText(record.Status),
+		ExitCode: record.ExitCode,
+		Duration: formatDurationMS(record.DurationMS),
+		Error:    safeText(record.Error),
+	}
+}
+
+func runDetailSecurityDiagnostics(securityMeta runpkg.ManifestSecurity) (string, []string) {
+	summary, details := dashboardSecurityDiagnostics(securityMeta)
+	if summary == "" {
+		return "", nil
+	}
+	return sanitizeRunDetailText(summary), sanitizeRunDetailList(details)
+}
+
+func runDetailNextActions(detail runDetail, manifest dashboardManifest, trustedManifest bool) []string {
+	var actions []string
+	if !trustedManifest {
+		actions = append(actions, "Artifact links are disabled until a trusted manifest is available.")
+	}
+	if detail.Validation.SummaryURL != "" {
+		actions = append(actions, "Open validation summary for the recorded evaluation evidence.")
+	}
+	if len(manifest.Errors) > 0 || strings.EqualFold(detail.Status, "failed") || strings.Contains(strings.ToLower(detail.Status), "failed") {
+		actions = append(actions, "Review sanitized failures and validation metadata before starting another full run.")
+	}
+	if detail.SecuritySummary == "security diagnostics unavailable" {
+		actions = append(actions, "Security diagnostics are unavailable for this older or incomplete manifest.")
+	}
+	return appendUnique(nil, actions...)
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -1476,6 +1934,109 @@ func artifactPathByValue(artifacts map[string]string, target string) string {
 		}
 	}
 	return ""
+}
+
+func artifactStatusForPath(manifest dashboardManifest, runDir, runID, raw string, roots ...security.CommandPathRoot) runArtifactStatus {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return runArtifactStatus{}
+	}
+	clean, err := cleanAllowedArtifactPath(raw)
+	if err != nil {
+		return runArtifactStatus{Path: "guarded artifact", Status: "guarded"}
+	}
+	display, ok := safeRunDetailPath(clean, roots...)
+	if !ok {
+		return runArtifactStatus{Path: "guarded artifact", Status: "guarded"}
+	}
+	status := runArtifactStatus{Path: display, Status: "not listed"}
+	if !manifestHasArtifactPath(manifest.Artifacts, clean) {
+		return status
+	}
+	path, err := safeJoin(runDir, clean)
+	if err != nil {
+		status.Status = "guarded"
+		return status
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		status.Status = "missing"
+		return status
+	}
+	if err != nil {
+		status.Status = "unavailable"
+		return status
+	}
+	if info.IsDir() {
+		status.Status = "unavailable"
+		return status
+	}
+	status.Available = true
+	status.Status = "available"
+	status.URL = artifactURL(runID, clean)
+	return status
+}
+
+func manifestHasArtifactPath(artifacts map[string]string, clean string) bool {
+	if len(artifacts) == 0 {
+		return false
+	}
+	for _, raw := range artifacts {
+		if path, err := cleanAllowedArtifactPath(raw); err == nil && path == clean {
+			return true
+		}
+	}
+	return false
+}
+
+func artifactURL(runID, path string) string {
+	return "/artifact?run=" + template.URLQueryEscaper(runID) + "&path=" + template.URLQueryEscaper(path)
+}
+
+func docURL(path string) string {
+	return "/doc?path=" + template.URLQueryEscaper(path)
+}
+
+func formatDurationMS(ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	return (time.Duration(ms) * time.Millisecond).String()
+}
+
+func safeRunDetailPath(path string, roots ...security.CommandPathRoot) (string, bool) {
+	sanitized := sanitizeDashboardText(path, roots...)
+	if sanitized == "" || sanitized != path || strings.Contains(sanitized, security.RedactionMarker) {
+		return "", false
+	}
+	return sanitized, true
+}
+
+func sanitizeRunDetailList(items []string, roots ...security.CommandPathRoot) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(sanitizeRunDetailText(item, roots...))
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func sanitizeRunDetailText(text string, roots ...security.CommandPathRoot) string {
+	text = sanitizeDashboardText(text, roots...)
+	if strings.Contains(text, security.RedactionMarker) {
+		text = strings.ReplaceAll(text, security.RedactionMarker, "sensitive value removed")
+	}
+	text = strings.ReplaceAll(text, "[REDACTED]", "sensitive value removed")
+	text = strings.ReplaceAll(text, "[redacted]", "sensitive value removed")
+	text = strings.ReplaceAll(text, "[omitted]", "sensitive value removed")
+	text = strings.ReplaceAll(text, "{removed}", "sensitive value removed")
+	text = strings.ReplaceAll(text, "<hidden>", "sensitive value removed")
+	return text
 }
 
 func sanitizeDashboardList(items []string, roots ...security.CommandPathRoot) []string {
@@ -1928,7 +2489,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
     {{if .Error}}
       <p class="error">{{.Error}}</p>
       {{if .RunResult}}
-      <p><a href="/run?id={{q .RunResult.RunID}}">Open run {{.RunResult.RunID}}</a></p>
+      <p><a href="/runs/{{q .RunResult.RunID}}">Open run {{.RunResult.RunID}}</a></p>
       <div class="muted">{{.RunResult.RunDir}}</div>
       {{end}}
     {{else if .WebRun}}
@@ -2025,7 +2586,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
       </script>
     {{else if .RunResult}}
       <p>Run completed.</p>
-      <p><a href="/run?id={{q .RunResult.RunID}}">Open run {{.RunResult.RunID}}</a></p>
+      <p><a href="/runs/{{q .RunResult.RunID}}">Open run {{.RunResult.RunID}}</a></p>
       <div class="muted">{{.RunResult.RunDir}}</div>
       <p><a href="/">← dashboard</a></p>
     {{else if .RunForm}}
@@ -2092,6 +2653,80 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
         {{end}}
         <button class="button primary" type="submit">Start Run</button>
       </form>
+    {{else if .RunDetail}}
+      <p><a href="/">← dashboard</a> · <a href="/runs">all runs</a>{{if eq .RunDetail.ManifestState "manifest available"}} · <a href="/runs/{{q .RunDetail.ID}}/manifest">Raw manifest</a>{{end}}</p>
+      <section>
+        <h2>Overview</h2>
+        <p><strong>{{.RunDetail.ID}}</strong> <span class="muted">{{.RunDetail.Status}}</span></p>
+        <p class="muted">started {{if .RunDetail.StartedAt}}{{.RunDetail.StartedAt}}{{else}}unknown{{end}} · finished {{if .RunDetail.FinishedAt}}{{.RunDetail.FinishedAt}}{{else}}unknown{{end}}{{if .RunDetail.Duration}} · duration {{.RunDetail.Duration}}{{end}} · dry-run {{.RunDetail.DryRun}}</p>
+        <p class="muted">manifest {{.RunDetail.ManifestState}}</p>
+        {{if .RunDetail.Error}}<p class="error">{{.RunDetail.Error}}</p>{{end}}
+      </section>
+      <section>
+        <h2>Planner</h2>
+        <p class="muted">provider {{if .RunDetail.PlannerProvider}}{{.RunDetail.PlannerProvider}}{{else}}unknown{{end}}{{if .RunDetail.PlannerModel}} · model {{.RunDetail.PlannerModel}}{{end}}{{if .RunDetail.TaskProposalMode}} · mode {{.RunDetail.TaskProposalMode}}{{if .RunDetail.ResolvedTaskProposalMode}} → {{.RunDetail.ResolvedTaskProposalMode}}{{end}}{{end}}{{if .RunDetail.SelectedTaskID}} · selected task {{.RunDetail.SelectedTaskID}}{{end}}</p>
+        {{if .RunDetail.RepositorySummary}}<p class="muted">repository {{.RunDetail.RepositorySummary}}</p>{{end}}
+      </section>
+      <section>
+        <h2>Generated State And Docs</h2>
+        <ul>
+        {{range .RunDetail.Docs}}
+          <li>{{.Label}} · {{if .URL}}<a href="{{.URL}}">{{.Path}}</a>{{else}}{{.Path}}{{end}} <span class="muted">{{.Status}}</span></li>
+        {{else}}
+          <li class="muted">No generated state or doc links are available.</li>
+        {{end}}
+        </ul>
+      </section>
+      <section>
+        <h2>Evaluation</h2>
+        <p class="muted">status {{.RunDetail.Validation.Status}} · evidence {{.RunDetail.Validation.EvidenceStatus}} · commands {{.RunDetail.Validation.CommandCount}} · passed {{.RunDetail.Validation.PassedCount}} · failed {{.RunDetail.Validation.FailedCount}}</p>
+        {{if .RunDetail.Validation.Reason}}<p class="muted">{{.RunDetail.Validation.Reason}}</p>{{end}}
+        {{if .RunDetail.Validation.Summary}}<p>{{.RunDetail.Validation.Summary}}</p>{{end}}
+        <p>{{if .RunDetail.Validation.SummaryURL}}<a href="{{.RunDetail.Validation.SummaryURL}}">Validation summary</a>{{else if .RunDetail.Validation.SummaryPath}}<span class="muted">Validation summary {{.RunDetail.Validation.SummaryPath}}</span>{{end}}{{if .RunDetail.Validation.ResultsURL}} · <a href="{{.RunDetail.Validation.ResultsURL}}">Validation results</a>{{else if .RunDetail.Validation.ResultsPath}} · <span class="muted">Validation results {{.RunDetail.Validation.ResultsPath}}</span>{{end}}</p>
+      </section>
+      <section>
+        <h2>Codex</h2>
+        <p class="muted">ran {{.RunDetail.Codex.Ran}} · skipped {{.RunDetail.Codex.Skipped}} · status {{.RunDetail.Codex.Status}}{{if .RunDetail.Codex.Model}} · model {{.RunDetail.Codex.Model}}{{end}} · exit {{.RunDetail.Codex.ExitCode}}{{if .RunDetail.Codex.Duration}} · duration {{.RunDetail.Codex.Duration}}{{end}}</p>
+        {{if .RunDetail.Codex.Error}}<p class="error">{{.RunDetail.Codex.Error}}</p>{{end}}
+        <p>{{if .RunDetail.Codex.SummaryURL}}<a href="{{.RunDetail.Codex.SummaryURL}}">Codex summary</a>{{else if .RunDetail.Codex.SummaryPath}}<span class="muted">Codex summary {{.RunDetail.Codex.SummaryPath}}</span>{{end}}{{if .RunDetail.Codex.EventsURL}} · <a href="{{.RunDetail.Codex.EventsURL}}">Codex events</a>{{else if .RunDetail.Codex.EventsPath}} · <span class="muted">Codex events {{.RunDetail.Codex.EventsPath}}</span>{{end}}{{if .RunDetail.Codex.ExitURL}} · <a href="{{.RunDetail.Codex.ExitURL}}">Codex command metadata</a>{{else if .RunDetail.Codex.ExitPath}} · <span class="muted">Codex command metadata {{.RunDetail.Codex.ExitPath}}</span>{{end}}</p>
+      </section>
+      <section>
+        <h2>Command Metadata</h2>
+        <ul>
+        {{range .RunDetail.Commands}}
+          <li>
+            <strong>{{.Source}}</strong> {{if .Label}}{{.Label}}{{end}} <span class="muted">{{.Provider}} {{.Name}} {{.Status}} exit {{.ExitCode}}{{if .Duration}} · {{.Duration}}{{end}}{{if .CWD}} · cwd {{.CWD}}{{end}}</span>
+            {{if .Argv}}<div class="muted">argv {{range $i, $arg := .Argv}}{{if $i}} {{end}}<code>{{$arg}}</code>{{end}}</div>{{end}}
+            {{if .StdoutURL}}<a href="{{.StdoutURL}}">stdout</a>{{else if .StdoutPath}}<span class="muted">stdout {{.StdoutPath}}</span>{{end}}{{if .StderrURL}} · <a href="{{.StderrURL}}">stderr</a>{{else if .StderrPath}} · <span class="muted">stderr {{.StderrPath}}</span>{{end}}
+            {{if .Note}}<div class="muted">{{.Note}}</div>{{end}}
+            {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+          </li>
+        {{else}}
+          <li class="muted">No sanitized command metadata recorded.</li>
+        {{end}}
+        </ul>
+      </section>
+      <section>
+        <h2>Security Diagnostics</h2>
+        <p class="muted">{{.RunDetail.SecuritySummary}}{{range .RunDetail.SecurityDetails}} · {{.}}{{end}}</p>
+      </section>
+      <section>
+        <h2>Artifacts</h2>
+        {{if .RunDetail.ArtifactNote}}<p class="muted">{{.RunDetail.ArtifactNote}}</p>{{end}}
+        <ul>
+        {{range .RunDetail.Artifacts}}
+          <li>{{if .URL}}<a href="{{.URL}}">{{.Path}}</a>{{else}}{{.Path}}{{end}} <span class="muted">{{.Status}}</span></li>
+        {{else}}
+          <li class="muted">No manifest-listed artifacts available.</li>
+        {{end}}
+        </ul>
+      </section>
+      {{if .RunDetail.NextActions}}
+      <section>
+        <h2>Next Actions</h2>
+        <ul>{{range .RunDetail.NextActions}}<li>{{.}}</li>{{end}}</ul>
+      </section>
+      {{end}}
     {{else if .RunsOnly}}
       <p><a href="/">← dashboard</a></p>
       <h2>Runs</h2>
@@ -2103,7 +2738,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
       {{end}}
       </ul>
     {{else if or .Content .Rendered}}
-      <p><a href="/">← index</a>{{if .RunID}} · <a href="/run?id={{q .RunID}}">run {{.RunID}}</a>{{end}}</p>
+      <p><a href="/">← index</a>{{if .RunID}} · <a href="/runs/{{q .RunID}}">run {{.RunID}}</a>{{end}}</p>
       <div class="muted">{{.Path}}</div>
       {{if .Rendered}}
       <article>{{.Rendered}}</article>
@@ -2132,7 +2767,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	            <p><strong>{{.ID}}</strong> <span class="muted">{{.Status}} {{.StartedAt}}</span></p>
 	            <p class="error">{{.ErrorSummary}}</p>
 	          {{else}}
-	            <p><a href="/run?id={{q .ID}}">{{.ID}}</a> <span class="muted">{{.Status}} {{.StartedAt}}</span></p>
+	            <p><a href="/runs/{{q .ID}}">{{.ID}}</a> <span class="muted">{{.Status}} {{.StartedAt}}</span></p>
 	            <p class="muted">provider {{.PlannerProvider}} · dry-run {{.DryRun}}{{if .Validation}} · validation {{.Validation}}{{end}}</p>
 	            {{if .TaskProposalMode}}<p class="muted">Task Proposal Mode: {{.TaskProposalMode}}{{if .ResolvedTaskProposalMode}} · Resolved Mode: {{.ResolvedTaskProposalMode}}{{end}}{{if .SelectedTaskID}} · Recommended Next Task: {{.SelectedTaskID}}{{end}}</p>{{end}}
 	            {{if .RepositoryURL}}<p class="muted">Repository: {{.RepositoryURL}} · Base Branch: {{.BaseBranch}} · Work Branch: {{.WorkBranch}} · Push Enabled: {{.PushEnabled}} · Push Status: {{.PushStatus}}{{if .PushedRef}} · Last Pushed Ref: {{.PushedRef}}{{end}}</p>{{end}}
@@ -2201,7 +2836,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          <h2>Runs</h2>
 	          <ul>
 	          {{range .Runs}}
-	            <li>{{if .Invalid}}<strong>{{.ID}}</strong>{{else}}<a href="/run?id={{q .ID}}">{{.ID}}</a>{{end}} <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}}{{if .Validation}} · validation {{.Validation}}{{end}}{{if .TaskProposalMode}} · mode {{.TaskProposalMode}}{{if .ResolvedTaskProposalMode}} → {{.ResolvedTaskProposalMode}}{{end}}{{end}}{{if .SecuritySummary}} · {{.SecuritySummary}}{{end}}</span>{{if not .Invalid}} <a href="/runs/{{q .ID}}/manifest">manifest</a>{{end}}{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{else if .RiskSummary}} <span class="muted">{{.RiskSummary}}</span>{{end}}</li>
+	            <li>{{if .Invalid}}<strong>{{.ID}}</strong>{{else}}<a href="/runs/{{q .ID}}">{{.ID}}</a>{{end}} <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}}{{if .Validation}} · validation {{.Validation}}{{end}}{{if .TaskProposalMode}} · mode {{.TaskProposalMode}}{{if .ResolvedTaskProposalMode}} → {{.ResolvedTaskProposalMode}}{{end}}{{end}}{{if .SecuritySummary}} · {{.SecuritySummary}}{{end}}</span>{{if not .Invalid}} <a href="/runs/{{q .ID}}/manifest">manifest</a>{{end}}{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{else if .RiskSummary}} <span class="muted">{{.RiskSummary}}</span>{{end}}</li>
 	          {{else}}
 	            <li class="muted">No jj runs found. Try <code>jj run plan.md --dry-run</code>.</li>
 	          {{end}}

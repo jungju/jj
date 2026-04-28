@@ -1,0 +1,61 @@
+{
+  "acceptance_criteria": [
+    "No persisted artifact or served dashboard response contains raw API keys, common token patterns, private key blocks, [jj-omitted], configured secret values, or omission placeholders.",
+    "All docs, run artifact, manifest, log, planner, Codex event, diff, eval, and dashboard-visible writes are redacted before persistence.",
+    "Traversal attempts using relative, absolute, encoded, or symlinked paths cannot read or write outside the configured workspace or allowed run artifact roots.",
+    "jj serve can display intended docs and run artifacts through guarded paths only.",
+    "Command records include only sanitized argv/status/timing/result metadata and do not persist raw command text or raw environment dumps.",
+    "Manifest and dashboard security diagnostics expose only counts, booleans, root labels, relative-safe roots, sanitization status, dry-run parity status, and sanitized failure categories.",
+    "Denied path attempts are represented as sanitized categories and counts, not attacker-controlled path payloads.",
+    "Dry-run and non-dry-run apply identical redaction, path-boundary, and security diagnostic behavior.",
+    "jj serve dashboard links recent runs to guarded per-run detail pages.",
+    "A valid run detail page displays run status, timestamps, planner/provider metadata, dry-run mode, generated doc links, artifact availability, evaluation result, Codex result metadata, sanitized command metadata, disclosure-safe security diagnostics, and safe next-action hints when available.",
+    "Missing diagnostics render as unknown or unavailable states without errors or unsafe fallback fields.",
+    "Missing manifests, malformed manifests, missing artifacts, and older manifests without diagnostics render safe deterministic states without server errors.",
+    "Security behavior is covered by focused Go tests for redaction, path guards, artifact writing, manifest scrubbing, command metadata, dry-run and non-dry-run parity, diagnostics, serve access, and run detail access.",
+    "go test ./..., go vet ./..., and go build -o jj ./cmd/jj pass."
+  ],
+  "created_at": "2026-04-28",
+  "goals": [
+    "Generate concrete specs and tasks from a single plan file while preserving an auditable run history.",
+    "Keep all generated artifacts and workspace mutations inside the resolved target workspace and run artifact roots.",
+    "Prevent secrets, credentials, private key material, omission placeholders, and secret-looking environment values from being persisted or rendered.",
+    "Ensure jj serve provides a dashboard-first local experience without exposing arbitrary files or sensitive artifact content.",
+    "Preserve existing dry-run and non-dry-run workflows while applying redaction and boundary checks by default.",
+    "Expose useful disclosure-safe security diagnostics in manifests and dashboard views using counts, booleans, labels, relative-safe roots, and sanitized categories only.",
+    "Let users drill from the dashboard into guarded per-run detail pages that summarize run status, artifacts, evaluation, provider metadata, command metadata, Codex metadata, and safe health diagnostics."
+  ],
+  "non_goals": [
+    "Provide a hosted cloud service.",
+    "Provide a multi-user dashboard or authentication system.",
+    "Replace git review or guarantee AI output correctness.",
+    "Become a general-purpose workflow engine.",
+    "Add unrelated user-facing features while unresolved security risks remain.",
+    "Expose raw commands, environment dumps, secret values, sensitive absolute paths, private key material, token-like strings, omission placeholders, or attacker-controlled denied path payloads as diagnostics.",
+    "Add new security scanners or change redaction algorithms as part of the run detail feature."
+  ],
+  "open_questions": [
+    "Should explicitly provided plan files outside --cwd remain allowed as read-only inputs after canonicalization?",
+    "Should git diff artifacts be redacted in-place, supplemented with a redaction report, or both?"
+  ],
+  "requirements": [
+    "jj run must read a non-empty Markdown plan from the explicitly provided path using the documented path resolution behavior.",
+    "The resolved --cwd value, or process cwd when --cwd is absent, is the workspace boundary for generated docs, run artifacts, and workspace mutations.",
+    "Artifact writes, docs writes, manifest serialization, planner output, Codex output, command summaries, evaluation output, and dashboard render data must pass through shared redaction before persistence or display.",
+    "Path guards must canonicalize requested paths, evaluate symlinks where applicable, and reject traversal, absolute-path escape, encoded escape, and symlink escape outside allowed roots.",
+    "jj serve must only serve files from guarded workspace and .jj/runs roots and must reject traversal or symlink escape with deterministic 403 or 404 responses.",
+    "Command execution records must persist sanitized argv, cwd, status, duration, and result metadata only; raw environment values and raw or secret-bearing command text must not be stored.",
+    "Manifest security metadata may record secret presence booleans, redaction counts, denied path counts, guarded root labels or relative-safe roots, command sanitization status, dry-run parity status, and sanitized failure reasons, but never secret values.",
+    "Security diagnostics in manifests and dashboard-visible data must use counts, booleans, labels, relative-safe roots, and sanitized categories only, and must pass through shared redaction before persistence and before render.",
+    "Denied path attempts must be represented as sanitized categories and counts, not attacker-controlled path payloads.",
+    "Security failures must be actionable without exposing sensitive payloads.",
+    "OpenAI API planning, Codex CLI fallback planning, dry-run, non-dry-run, and dashboard flows must continue to work after redaction and boundary enforcement.",
+    "jj serve dashboard recent runs must link to guarded per-run detail pages.",
+    "jj serve run detail pages must resolve run IDs only under the guarded .jj/runs root, render sanitized manifest-derived metadata, and link to intended docs and artifacts only through guarded routes.",
+    "Run detail pages must display safe deterministic states for missing manifests, malformed manifests, missing artifacts, and older manifests without diagnostics, without raw path, command, env, secret, or payload disclosure."
+  ],
+  "summary": "jj is a CLI that turns a user planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains a core constraint, and jj serve now includes guarded per-run detail pages for inspecting recent run status, intended artifacts, evaluation status, command metadata, Codex metadata, and disclosure-safe security diagnostics without opening raw manifest files manually.",
+  "title": "jj Security Boundary and Dashboard Run Inspection",
+  "updated_at": "2026-04-28T14:42:20Z",
+  "version": 1
+}
