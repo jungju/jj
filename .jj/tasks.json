@@ -1212,6 +1212,34 @@
       "updated_at": "2026-04-28T20:40:43Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Dashboard root shows a compact latest-run summary when at least one valid guarded run exists, including only sanitized run ID label, status, provider or result label, evaluation state, timestamp label, and guarded links to existing run views.",
+        "Dashboard root renders deterministic none, unavailable, or unknown states when no runs exist or latest metadata is missing, denied, malformed, partial, stale, or internally inconsistent.",
+        "Latest-run selection is deterministic when timestamps are missing, malformed, duplicated, or tied.",
+        "Dashboard latest-run data is obtained through shared sanitized DTO/helper paths and performs no handler-local raw manifest, artifact, command, environment, diff, validation output, or filesystem reads after route input parsing.",
+        "No dashboard response contains raw manifests, raw artifact bodies, raw command text, raw environment values, validation payloads, diff bodies, unsafe absolute paths, denied payloads, token-like values, configured secrets, private key blocks, or omission placeholders.",
+        "Existing TASK.md dashboard summary behavior remains unchanged for valid, all-done, missing, malformed, unreadable, and denied states.",
+        "Focused serve regression tests and scripts/validate.sh pass with sanitized release-gate metadata."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t22",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T20:44:07Z",
+      "created_by_run": "autopilot-20260428-160202-t22",
+      "created_by_turn": null,
+      "id": "TASK-0043",
+      "mode": "feature",
+      "priority": "high",
+      "reason": "All 42 current tasks are done, there are no runnable blockers, and there is no concrete release-gate, CI, validation, test, disclosure, or boundary evidence for security or bugfix work. The next smallest useful user-facing capability is to enrich the existing dashboard root with a compact latest-run and evaluation summary using existing guarded metadata paths, without adding new pages, CLI flags, raw exports, scanners, artifact uploads, or reopening completed security guardrails.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Show sanitized latest run and evaluation summary on the dashboard",
+      "updated_at": "2026-04-28T20:56:14Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

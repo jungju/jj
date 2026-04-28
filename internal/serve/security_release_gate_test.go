@@ -235,6 +235,7 @@ func TestSecurityReleaseGateGuardedArtifactsAndRunInspectionSurfaces(t *testing.
 func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T) {
 	funcs := parseServeFunctions(t)
 	for fn, requiredCall := range map[string]string{
+		"handleIndex":             "discoverRuns",
 		"handleRunsIndex":         "discoverRuns",
 		"discoverRuns":            "loadRunInspection",
 		"handleRunCompare":        "loadRunCompare",
@@ -249,9 +250,15 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 			t.Fatalf("%s must route through shared guarded helper %s; calls=%v", fn, requiredCall, sortedCallNames(calls))
 		}
 	}
+	indexCalls := serveFunctionCalls(t, funcs, "handleIndex")
+	if !indexCalls["latestRunSummaryFromRuns"] {
+		t.Fatalf("handleIndex must build latest-run data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
+	}
 
 	for _, fn := range []string{
+		"handleIndex",
 		"handleRunsIndex",
+		"latestRunSummaryFromRuns",
 		"handleRunCompare",
 		"loadRunCompareSide",
 		"handleRunAudit",

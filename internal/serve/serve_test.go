@@ -41,9 +41,15 @@ func TestIndexShowsDocsAndRuns(t *testing.T) {
 			t.Fatalf("index advertised non-allowlisted doc %q:\n%s", blocked, body)
 		}
 	}
-	for _, want := range []string{"Workspace Readiness", "Risks And Failures", "Plan Ready", "README Ready", "SPEC Ready", "TASK Ready", `href="/runs"`, "Raw manifest", "Task Proposal Mode: auto", "Resolved Mode: security", "Repository: https://github.com/acme/app.git", "Work Branch: jj/run-20260425-120000-bbbbbb", "Push Status: pushed"} {
+	for _, want := range []string{"Workspace Readiness", "Risks And Failures", "Plan Ready", "README Ready", "SPEC Ready", "TASK Ready", "Latest Run", `href="/runs"`, `href="/runs/20260425-120000-bbbbbb"`, `href="/runs/audit?run=20260425-120000-bbbbbb"`, "provider/result result failed", "evaluation failed", "mode auto"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index missing %q:\n%s", want, body)
+		}
+	}
+	latest := htmlSection(body, "Latest Run", "Risks And Failures")
+	for _, blocked := range []string{"Raw manifest", "Repository:", "Task Proposal Mode:", "Validation artifact", "ghp_dashboardsecret1234567890"} {
+		if strings.Contains(latest, blocked) {
+			t.Fatalf("latest-run summary leaked extra field %q:\n%s", blocked, latest)
 		}
 	}
 	if strings.Contains(body, "ghp_dashboardsecret1234567890") {
@@ -72,6 +78,139 @@ func TestIndexShowsMissingReadiness(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index missing %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestDashboardLatestRunSummaryIsCompactSanitizedAndTimestampSelected(t *testing.T) {
+	dir := newTestWorkspace(t)
+	secret := "sk-proj-latestrun1234567890"
+	writeFile(t, dir, ".jj/runs/20260425-090000-clock-late/manifest.json", fmt.Sprintf(`{
+		"run_id": "20260425-090000-clock-late",
+		"status": "complete",
+		"started_at": "2026-04-25T13:00:00Z",
+		"planner_provider": "openai",
+		"repository": {"enabled": true, "repo_url": "https://user:%s@example.invalid/repo.git"},
+		"artifacts": {"manifest": "manifest.json", "validation_summary": "validation/summary.md"},
+		"validation": {"status": "passed", "evidence_status": "recorded", "summary_path": "validation/summary.md"}
+	}`, secret))
+	writeFile(t, dir, ".jj/runs/20260425-235959-id-late/manifest.json", `{
+		"run_id": "20260425-235959-id-late",
+		"status": "failed",
+		"started_at": "2026-04-25T10:00:00Z",
+		"planner_provider": "codex",
+		"artifacts": {"manifest": "manifest.json"},
+		"validation": {"status": "failed"}
+	}`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	latest := htmlSection(body, "Latest Run", "Risks And Failures")
+	for _, want := range []string{
+		"20260425-090000-clock-late",
+		"complete",
+		"provider/result openai",
+		"evaluation passed (recorded)",
+		"2026-04-25T13:00:00Z",
+		`href="/runs/20260425-090000-clock-late"`,
+		`href="/runs"`,
+		`href="/runs/audit?run=20260425-090000-clock-late"`,
+	} {
+		if !strings.Contains(latest, want) {
+			t.Fatalf("latest-run summary missing %q:\n%s", want, latest)
+		}
+	}
+	for _, leaked := range []string{
+		"20260425-235959-id-late",
+		secret,
+		"repo_url",
+		"Repository:",
+		"Raw manifest",
+		"Validation artifact",
+		"Task Proposal Mode",
+		security.RedactionMarker,
+	} {
+		if strings.Contains(latest, leaked) {
+			t.Fatalf("latest-run summary leaked %q:\n%s", leaked, latest)
+		}
+	}
+}
+
+func TestDashboardLatestRunSummaryUnavailableAndNoneStatesAreSafe(t *testing.T) {
+	t.Run("none", func(t *testing.T) {
+		dir := t.TempDir()
+		server := newTestServer(t, dir, "")
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		server.Handler().ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, body)
+		}
+		latest := htmlSection(body, "Latest Run", "Risks And Failures")
+		for _, want := range []string{"No jj runs found.", `href="/runs"`} {
+			if !strings.Contains(latest, want) {
+				t.Fatalf("latest none state missing %q:\n%s", want, latest)
+			}
+		}
+	})
+
+	t.Run("malformed", func(t *testing.T) {
+		dir := t.TempDir()
+		secret := "sk-proj-latestbad1234567890"
+		writeFile(t, dir, ".jj/runs/20260429-120000-badjson/manifest.json", `{"run_id":"20260429-120000-badjson","status":"`+secret+`",`)
+		server := newTestServer(t, dir, "")
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		server.Handler().ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, body)
+		}
+		latest := htmlSection(body, "Latest Run", "Risks And Failures")
+		for _, want := range []string{"20260429-120000-badjson", "unavailable", "manifest is malformed", "Run history", "Run detail"} {
+			if !strings.Contains(latest, want) {
+				t.Fatalf("latest unavailable state missing %q:\n%s", want, latest)
+			}
+		}
+		for _, leaked := range []string{secret, security.RedactionMarker, "Raw manifest", "Validation artifact"} {
+			if strings.Contains(latest, leaked) {
+				t.Fatalf("latest unavailable state leaked %q:\n%s", leaked, latest)
+			}
+		}
+	})
+}
+
+func TestLatestRunSelectionIsDeterministicForTimestampFallbacksAndTies(t *testing.T) {
+	summary := latestRunSummaryFromRuns([]runLink{
+		{ID: "20260425-235959-id-late", Status: "complete", StartedAt: "2026-04-25T10:00:00Z"},
+		{ID: "20260425-090000-clock-late", Status: "complete", StartedAt: "2026-04-25T13:00:00Z"},
+	})
+	if summary.RunID != "20260425-090000-clock-late" || summary.TimestampLabel != "2026-04-25T13:00:00Z" {
+		t.Fatalf("expected manifest timestamp to select latest run, got %#v", summary)
+	}
+
+	summary = latestRunSummaryFromRuns([]runLink{
+		{ID: "20260425-110000-fallback", Status: "complete", StartedAt: "not-a-time"},
+		{ID: "20260425-120000-fallback", Status: "complete"},
+	})
+	if summary.RunID != "20260425-120000-fallback" || summary.TimestampLabel != "unknown" {
+		t.Fatalf("expected run-id timestamp fallback with unknown display label, got %#v", summary)
+	}
+
+	summary = latestRunSummaryFromRuns([]runLink{
+		{ID: "tie-a", Status: "complete", StartedAt: "2026-04-25T12:00:00Z"},
+		{ID: "tie-b", Status: "complete", StartedAt: "2026-04-25T12:00:00Z"},
+	})
+	if summary.RunID != "tie-b" {
+		t.Fatalf("expected deterministic ID tie-break, got %#v", summary)
 	}
 }
 
@@ -614,8 +753,8 @@ func TestIndexShowsPlanningValidationFailureRun(t *testing.T) {
 			t.Fatalf("dashboard missing planning failure %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, secret) || !strings.Contains(body, "[jj-omitted]") {
-		t.Fatalf("dashboard did not redact planning failure secret:\n%s", body)
+	if strings.Contains(body, secret) || strings.Contains(body, security.RedactionMarker) || !strings.Contains(body, "sensitive value removed") {
+		t.Fatalf("dashboard did not sanitize planning failure secret:\n%s", body)
 	}
 
 	rec = httptest.NewRecorder()
@@ -998,8 +1137,8 @@ func TestRunDashboardAndArtifactRedactSecrets(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, body)
 	}
-	if strings.Contains(body, secret) || !strings.Contains(body, "[jj-omitted]") {
-		t.Fatalf("dashboard did not redact secret:\n%s", body)
+	if strings.Contains(body, secret) || strings.Contains(body, security.RedactionMarker) || !strings.Contains(body, "unsafe value removed") {
+		t.Fatalf("dashboard did not sanitize secret:\n%s", body)
 	}
 
 	rec = httptest.NewRecorder()
@@ -1087,10 +1226,10 @@ func TestValidationArtifactsAreManifestKnownAndRedacted(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, body)
 	}
-	if !strings.Contains(body, "validation passed (recorded)") || !strings.Contains(body, "Validation artifact") {
-		t.Fatalf("dashboard missing validation state/link:\n%s", body)
+	if !strings.Contains(body, "evaluation passed (recorded)") || !strings.Contains(body, "Run detail") {
+		t.Fatalf("dashboard missing latest validation state/link:\n%s", body)
 	}
-	if strings.Contains(body, secret) {
+	if strings.Contains(body, secret) || strings.Contains(body, security.RedactionMarker) {
 		t.Fatalf("dashboard leaked validation secret:\n%s", body)
 	}
 
@@ -2900,6 +3039,21 @@ func containsLine(lines []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func htmlSection(body, heading, nextHeading string) string {
+	start := strings.Index(body, "<h2>"+heading+"</h2>")
+	if start < 0 {
+		return body
+	}
+	section := body[start:]
+	if nextHeading == "" {
+		return section
+	}
+	if end := strings.Index(section, "<h2>"+nextHeading+"</h2>"); end >= 0 {
+		return section[:end]
+	}
+	return section
 }
 
 type loopFakeExecutor struct {

@@ -128,6 +128,20 @@ type runHistoryFilterOption struct {
 	Label string
 }
 
+type latestRunSummary struct {
+	State            string
+	Message          string
+	Available        bool
+	RunID            string
+	Status           string
+	ProviderOrResult string
+	EvaluationState  string
+	TimestampLabel   string
+	DetailURL        string
+	HistoryURL       string
+	AuditURL         string
+}
+
 type dashboardManifest struct {
 	RunID                    string `json:"run_id"`
 	Status                   string `json:"status"`
@@ -484,6 +498,7 @@ type pageData struct {
 	CWD              string
 	SelectedRun      string
 	TaskQueue        taskQueueSummary
+	LatestRun        latestRunSummary
 	Docs             []docLink
 	Runs             []runLink
 	Readiness        []readinessItem
@@ -670,6 +685,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusInternalServerError, err)
 		return
 	}
+	runs = s.sanitizeRunHistoryLinks(runs)
+	latestRun := latestRunSummaryFromRuns(runs)
 	readiness := s.workspaceReadiness()
 	taskQueue := s.taskQueueSummary()
 	s.render(w, pageData{
@@ -677,6 +694,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		CWD:         displayWorkspace,
 		SelectedRun: s.runID,
 		TaskQueue:   taskQueue,
+		LatestRun:   latestRun,
 		Docs:        docs,
 		Runs:        runs,
 		Readiness:   readiness,
@@ -2782,6 +2800,165 @@ func dashboardCategory(value, fallback string) string {
 	return out
 }
 
+func latestRunSummaryFromRuns(runs []runLink) latestRunSummary {
+	if len(runs) == 0 {
+		return latestRunNoneSummary()
+	}
+	selected, ok := selectLatestRun(runs)
+	if !ok {
+		return latestRunNoneSummary()
+	}
+	summary := latestRunSummary{
+		State:           "available",
+		Available:       true,
+		RunID:           latestRunIDLabel(selected.ID),
+		Status:          latestRunDisplayText(selected.Status, "unknown"),
+		EvaluationState: latestRunDisplayText(selected.Validation, "unknown"),
+		TimestampLabel:  latestRunTimestampLabel(selected),
+		HistoryURL:      "/runs",
+	}
+	if summary.RunID == "" {
+		return latestRunNoneSummary()
+	}
+	if selected.Invalid {
+		summary.State = "unavailable"
+		summary.Available = false
+		summary.Status = "unavailable"
+		summary.ProviderOrResult = "unavailable"
+		if summary.EvaluationState == "unknown" {
+			summary.EvaluationState = "unavailable"
+		}
+		summary.Message = latestRunDisplayText(firstNonEmpty(selected.ErrorSummary, "Latest run metadata unavailable."), "Latest run metadata unavailable.")
+		summary.DetailURL = guardedRunDetailURL(summary.RunID)
+		return summary
+	}
+	summary.ProviderOrResult = latestProviderOrResult(selected)
+	summary.DetailURL = guardedRunDetailURL(summary.RunID)
+	summary.AuditURL = guardedRunAuditURL(summary.RunID)
+	return summary
+}
+
+func latestRunNoneSummary() latestRunSummary {
+	return latestRunSummary{
+		State:            "none",
+		Message:          "No jj runs found.",
+		Status:           "none",
+		ProviderOrResult: "none",
+		EvaluationState:  "none",
+		TimestampLabel:   "none",
+		HistoryURL:       "/runs",
+	}
+}
+
+func selectLatestRun(runs []runLink) (runLink, bool) {
+	candidates := make([]runLink, 0, len(runs))
+	for _, run := range runs {
+		if latestRunIDLabel(run.ID) == "" {
+			continue
+		}
+		candidates = append(candidates, run)
+	}
+	if len(candidates) == 0 {
+		return runLink{}, false
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		leftTime, leftOK := latestRunSortTime(candidates[i])
+		rightTime, rightOK := latestRunSortTime(candidates[j])
+		if leftOK && rightOK && !leftTime.Equal(rightTime) {
+			return leftTime.After(rightTime)
+		}
+		if leftOK != rightOK {
+			return leftOK
+		}
+		return candidates[i].ID > candidates[j].ID
+	})
+	return candidates[0], true
+}
+
+func latestRunSortTime(run runLink) (time.Time, bool) {
+	for _, raw := range []string{run.StartedAt, run.FinishedAt} {
+		if parsed, ok := parseLatestRunTimestamp(raw); ok {
+			return parsed, true
+		}
+	}
+	return latestRunIDTimestamp(run.ID)
+}
+
+func latestRunTimestampLabel(run runLink) string {
+	for _, raw := range []string{run.StartedAt, run.FinishedAt} {
+		if parsed, ok := parseLatestRunTimestamp(raw); ok {
+			return parsed.UTC().Format(time.RFC3339)
+		}
+	}
+	return "unknown"
+}
+
+func parseLatestRunTimestamp(raw string) (time.Time, bool) {
+	raw = latestRunDisplayText(raw, "")
+	if raw == "" || raw == "unknown" || raw == "unsafe value removed" || raw == "sensitive value removed" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
+}
+
+func latestRunIDTimestamp(runID string) (time.Time, bool) {
+	if len(runID) < len("20060102-150405") {
+		return time.Time{}, false
+	}
+	parsed, err := time.ParseInLocation("20060102-150405", runID[:len("20060102-150405")], time.UTC)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
+}
+
+func latestProviderOrResult(run runLink) string {
+	if provider := latestRunDisplayText(run.PlannerProvider, ""); provider != "" && provider != "unknown" {
+		return provider
+	}
+	return "result " + latestRunDisplayText(run.Status, "unknown")
+}
+
+func latestRunIDLabel(runID string) string {
+	runID = strings.TrimSpace(runID)
+	if err := artifact.ValidateRunID(runID); err != nil || !safeDisplayRunID(runID) {
+		return ""
+	}
+	return runID
+}
+
+func latestRunDisplayText(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	text := strings.TrimSpace(sanitizeRunDetailText(value))
+	if text == "" || strings.Contains(text, security.RedactionMarker) {
+		return fallback
+	}
+	if unsafeRunDetailText(text) {
+		return fallback
+	}
+	return text
+}
+
+func guardedRunDetailURL(runID string) string {
+	if latestRunIDLabel(runID) == "" {
+		return ""
+	}
+	return "/runs/" + template.URLQueryEscaper(runID)
+}
+
+func guardedRunAuditURL(runID string) string {
+	if latestRunIDLabel(runID) == "" {
+		return ""
+	}
+	return "/runs/audit?run=" + template.URLQueryEscaper(runID)
+}
+
 func loadDashboardManifest(runID, runDir string) dashboardManifestLoad {
 	data, err := readRunFile(runDir, "manifest.json")
 	if err != nil {
@@ -4456,22 +4633,17 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	      </section>
 	      <section>
 	        <h2>Latest Run</h2>
-	        {{if .Runs}}{{with index .Runs 0}}
-	          {{if .Invalid}}
-	            <p><strong>{{.ID}}</strong> <span class="muted">{{.Status}} {{.StartedAt}}</span></p>
-	            <p class="error">{{.ErrorSummary}}</p>
-	          {{else}}
-	            <p><a href="/runs/{{q .ID}}">{{.ID}}</a> <span class="muted">{{.Status}} {{.StartedAt}}</span></p>
-	            <p class="muted">provider {{.PlannerProvider}} · dry-run {{.DryRun}}{{if .Validation}} · validation {{.Validation}}{{end}}</p>
-	            {{if .TaskProposalMode}}<p class="muted">Task Proposal Mode: {{.TaskProposalMode}}{{if .ResolvedTaskProposalMode}} · Resolved Mode: {{.ResolvedTaskProposalMode}}{{end}}{{if .SelectedTaskID}} · Recommended Next Task: {{.SelectedTaskID}}{{end}}</p>{{end}}
-	            {{if .RepositoryURL}}<p class="muted">Repository: {{.RepositoryURL}} · Base Branch: {{.BaseBranch}} · Work Branch: {{.WorkBranch}} · Push Enabled: {{.PushEnabled}} · Push Status: {{.PushStatus}}{{if .PushedRef}} · Last Pushed Ref: {{.PushedRef}}{{end}}</p>{{end}}
-	            {{if .SecuritySummary}}<p class="muted">{{.SecuritySummary}}{{range .SecurityDetails}} · {{.}}{{end}}</p>{{end}}
-	            <p><a href="/runs/{{q .ID}}/manifest">Raw manifest</a>{{if .ValidationArtifact}} · <a href="/artifact?run={{q .ID}}&path={{q .ValidationArtifact}}">Validation artifact</a>{{end}}</p>
-	          {{end}}
-	          {{if and .ErrorSummary (not .Invalid)}}<p class="error">{{.ErrorSummary}}</p>{{end}}
-	          {{if .RiskSummary}}<p class="muted">{{.RiskSummary}}</p>{{end}}
-	        {{end}}{{else}}
-	          <p class="muted">No jj runs found. First suggested command: <code>jj run plan.md --dry-run</code></p>
+	        {{if eq .LatestRun.State "available"}}
+	          <p><a href="{{.LatestRun.DetailURL}}">{{.LatestRun.RunID}}</a> <span class="muted">{{.LatestRun.Status}} · {{.LatestRun.TimestampLabel}}</span></p>
+	          <p class="muted">provider/result {{.LatestRun.ProviderOrResult}} · evaluation {{.LatestRun.EvaluationState}}</p>
+	          <p><a href="{{.LatestRun.DetailURL}}">Run detail</a> · <a href="{{.LatestRun.HistoryURL}}">Run history</a>{{if .LatestRun.AuditURL}} · <a href="{{.LatestRun.AuditURL}}">Audit export</a>{{end}}</p>
+	        {{else if eq .LatestRun.State "none"}}
+	          <p class="muted">{{.LatestRun.Message}}</p>
+	          <p><a href="{{.LatestRun.HistoryURL}}">Run history</a></p>
+	        {{else}}
+	          <p><strong>{{.LatestRun.RunID}}</strong> <span class="muted">{{.LatestRun.State}} · {{.LatestRun.TimestampLabel}}</span></p>
+	          <p class="error">{{.LatestRun.Message}}</p>
+	          <p><a href="{{.LatestRun.HistoryURL}}">Run history</a>{{if .LatestRun.DetailURL}} · <a href="{{.LatestRun.DetailURL}}">Run detail</a>{{end}}</p>
 	        {{end}}
 	      </section>
 	      <section>
@@ -4530,7 +4702,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          <h2>Runs</h2>
 	          <ul>
 	          {{range .Runs}}
-	            <li>{{if .Invalid}}<strong>{{.ID}}</strong>{{else}}<a href="/runs/{{q .ID}}">{{.ID}}</a>{{end}} <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}}{{if .Validation}} · validation {{.Validation}}{{end}}{{if .TaskProposalMode}} · mode {{.TaskProposalMode}}{{if .ResolvedTaskProposalMode}} → {{.ResolvedTaskProposalMode}}{{end}}{{end}}{{if .SecuritySummary}} · {{.SecuritySummary}}{{end}}</span>{{if not .Invalid}} <a href="/runs/{{q .ID}}/manifest">manifest</a>{{end}}{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{else if .RiskSummary}} <span class="muted">{{.RiskSummary}}</span>{{end}}</li>
+	            <li>{{if .Invalid}}<strong>{{.ID}}</strong>{{else}}<a href="/runs/{{q .ID}}">{{.ID}}</a>{{end}} <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}}{{if .Validation}} · validation {{.Validation}}{{end}}{{if .TaskProposalMode}} · mode {{.TaskProposalMode}}{{if .ResolvedTaskProposalMode}} → {{.ResolvedTaskProposalMode}}{{end}}{{end}}{{if .SecuritySummary}} · {{.SecuritySummary}}{{range .SecurityDetails}} · {{.}}{{end}}{{end}}</span>{{if not .Invalid}} <a href="/runs/{{q .ID}}/manifest">manifest</a>{{end}}{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{else if .RiskSummary}} <span class="muted">{{.RiskSummary}}</span>{{end}}</li>
 	          {{else}}
 	            <li class="muted">No jj runs found. Try <code>jj run plan.md --dry-run</code>.</li>
 	          {{end}}
