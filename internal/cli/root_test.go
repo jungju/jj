@@ -3,6 +3,10 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,9 +31,15 @@ func TestRunCommandParsesFlags(t *testing.T) {
 		"--openai-model", "model-a",
 		"--codex-model", "model-b",
 		"--codex-binary", "/tmp/codex",
-		"--spec-path", "docs/PRODUCT_SPEC.md",
-		"--task-path", "docs/IMPLEMENTATION_TASK.md",
-		"--eval-path", "docs/REVIEW.md",
+		"--task-proposal-mode", "security",
+		"--repo", "https://github.com/acme/app.git",
+		"--repo-dir", "/tmp/repo-clone",
+		"--base-branch", "main",
+		"--work-branch", "jj/test",
+		"--push",
+		"--push-mode", "branch",
+		"--github-token-env", "MY_GITHUB_TOKEN",
+		"--allow-dirty",
 		"--allow-no-git",
 	})
 
@@ -42,35 +52,40 @@ func TestRunCommandParsesFlags(t *testing.T) {
 	if got.PlanningAgents != 2 || got.OpenAIModel != "model-a" || got.CodexModel != "model-b" || got.CodexBin != "/tmp/codex" || !got.AllowNoGit {
 		t.Fatalf("unexpected parsed flags: %#v", got)
 	}
-	if got.SpecDoc != "docs/PRODUCT_SPEC.md" || got.TaskDoc != "docs/IMPLEMENTATION_TASK.md" || got.EvalDoc != "docs/REVIEW.md" {
-		t.Fatalf("unexpected document flags: %#v", got)
+	if got.TaskProposalMode != run.TaskProposalModeSecurity || !got.TaskProposalModeExplicit {
+		t.Fatalf("unexpected task proposal mode: %#v", got)
 	}
-	if !got.SpecDocPathMode || !got.TaskDocPathMode || !got.EvalDocPathMode {
-		t.Fatalf("expected --*-path flags to use path mode: %#v", got)
+	if got.RepoURL != "https://github.com/acme/app.git" || got.RepoDir != "/tmp/repo-clone" || got.BaseBranch != "main" || got.WorkBranch != "jj/test" {
+		t.Fatalf("unexpected repository flags: %#v", got)
+	}
+	if !got.Push || got.PushMode != "branch" || got.GitHubTokenEnv != "MY_GITHUB_TOKEN" || !got.RepoAllowDirty {
+		t.Fatalf("unexpected repository push/auth flags: %#v", got)
+	}
+	if !got.RepoURLExplicit || !got.RepoDirExplicit || !got.BaseBranchExplicit || !got.WorkBranchExplicit || !got.PushExplicit || !got.PushModeExplicit || !got.GitHubTokenEnvExplicit || !got.RepoAllowDirtyExplicit {
+		t.Fatalf("expected repository explicit markers: %#v", got)
 	}
 	if !got.PlanningAgentsExplicit || !got.OpenAIModelExplicit || !got.CodexModelExplicit || !got.CodexBinExplicit {
 		t.Fatalf("expected explicit flag markers: %#v", got)
 	}
-	if !got.SpecDocExplicit || !got.TaskDocExplicit || !got.EvalDocExplicit || !got.DryRunExplicit || !got.AllowNoGitExplicit {
-		t.Fatalf("expected explicit document/boolean flag markers: %#v", got)
+	if !got.DryRunExplicit || !got.AllowNoGitExplicit {
+		t.Fatalf("expected explicit boolean flag markers: %#v", got)
 	}
 	if got.ConfigSearchDir == "" {
 		t.Fatal("expected config search directory to be set")
 	}
 }
 
-func TestRunCommandRejectsMixedPathAndLegacyDocFlags(t *testing.T) {
+func TestRunCommandRejectsRemovedDocumentFlags(t *testing.T) {
 	cmd := newRootCommand(func(_ context.Context, cfg run.Config) (*run.Result, error) {
 		t.Fatal("executor should not be called")
-		return nil, nil
+		return &run.Result{}, nil
 	})
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "plan.md", "--spec-path", "SPEC.md", "--spec-doc", "PRODUCT.md"})
+	cmd.SetArgs([]string{"run", "plan.md", "--spec-path", "SPEC.md"})
 
-	err := cmd.ExecuteContext(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "--spec-path") {
-		t.Fatalf("expected mixed flag error, got %v", err)
+	if err := cmd.ExecuteContext(context.Background()); err == nil || !strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("expected removed flag error, got %v", err)
 	}
 }
 
@@ -86,6 +101,203 @@ func TestRunCommandRequiresPlan(t *testing.T) {
 	err := cmd.ExecuteContext(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "accepts 1 arg") {
 		t.Fatalf("expected argument error, got %v", err)
+	}
+}
+
+func TestRunCommandRejectsInvalidTaskProposalMode(t *testing.T) {
+	cmd := newRootCommand(func(_ context.Context, cfg run.Config) (*run.Result, error) {
+		t.Fatal("executor should not be called")
+		return nil, nil
+	})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "plan.md", "--task-proposal-mode", "fast"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), `invalid task proposal mode: "fast"`) || !strings.Contains(err.Error(), run.ValidTaskProposalModesString()) {
+		t.Fatalf("expected invalid task proposal mode error, got %v", err)
+	}
+}
+
+func TestRunCommandParsesTaskProposalModeAlias(t *testing.T) {
+	var got run.Config
+	cmd := newRootCommand(func(_ context.Context, cfg run.Config) (*run.Result, error) {
+		got = cfg
+		return &run.Result{}, nil
+	})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "plan.md", "--proposal-mode", "docs"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("execute command: %v", err)
+	}
+	if got.TaskProposalMode != run.TaskProposalModeDocs || !got.TaskProposalModeExplicit {
+		t.Fatalf("unexpected task proposal mode alias config: %#v", got)
+	}
+}
+
+func TestRunCommandAutoContinueContinuesAfterPassUntilMaxTurns(t *testing.T) {
+	dir := t.TempDir()
+	executor := &cliLoopFakeExecutor{
+		statuses:    []string{run.StatusSuccess, run.StatusSuccess, run.StatusSuccess},
+		validations: []string{"passed", "passed", "passed"},
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := newRootCommandWithServeAndIO(executor.Run, serve.Execute, &stdout, &stderr)
+	cmd.SetArgs([]string{"run", "plan.md", "--cwd", dir, "--run-id", "loop-pass", "--auto-continue", "--max-turns", "3", "--allow-no-git"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("execute auto-continue: %v", err)
+	}
+	if len(executor.calls) != 3 {
+		t.Fatalf("expected three turns, got %d", len(executor.calls))
+	}
+	if executor.calls[0].RunID != "loop-pass" {
+		t.Fatalf("unexpected turn run IDs: %#v", executor.calls)
+	}
+	if !executor.calls[0].LoopEnabled || executor.calls[0].LoopBaseRunID != "loop-pass" || executor.calls[0].LoopTurn != 1 || executor.calls[0].LoopMaxTurns != 3 {
+		t.Fatalf("first turn missing loop metadata: %#v", executor.calls[0])
+	}
+	if executor.calls[1].RunID != "loop-pass-t02" || executor.calls[2].RunID != "loop-pass-t03" {
+		t.Fatalf("unexpected turn run IDs: %#v", executor.calls)
+	}
+	if !strings.Contains(executor.calls[1].AdditionalPlanContext, "Previous Manifest") {
+		t.Fatalf("second turn missing continuation context: %#v", executor.calls[1])
+	}
+	if !strings.Contains(stdout.String(), "jj loop: stopped: max turns reached") {
+		t.Fatalf("loop progress output missing expected text:\n%s", stdout.String())
+	}
+}
+
+func TestRunCommandAutoContinueValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "max turns without auto continue", args: []string{"run", "plan.md", "--max-turns", "3"}, want: "--max-turns requires --auto-continue"},
+		{name: "dry run", args: []string{"run", "plan.md", "--auto-continue", "--dry-run"}, want: "auto continue requires full-run"},
+		{name: "too low", args: []string{"run", "plan.md", "--auto-continue", "--max-turns", "0"}, want: "max turns must be between 1 and 50"},
+		{name: "too high", args: []string{"run", "plan.md", "--auto-continue", "--max-turns", "51"}, want: "max turns must be between 1 and 50"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newRootCommand(func(_ context.Context, _ run.Config) (*run.Result, error) {
+				t.Fatal("executor should not be called")
+				return nil, nil
+			})
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetArgs(tt.args)
+
+			err := cmd.ExecuteContext(context.Background())
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected %q error, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestRunCommandAutoContinueStopsAtMaxTurns(t *testing.T) {
+	dir := t.TempDir()
+	executor := &cliLoopFakeExecutor{
+		statuses:    []string{"needs_work", "needs_work", "needs_work"},
+		validations: []string{"skipped", "skipped", "skipped"},
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := newRootCommandWithServeAndIO(executor.Run, serve.Execute, &stdout, &stderr)
+	cmd.SetArgs([]string{"run", "plan.md", "--cwd", dir, "--run-id", "loop-max", "--auto-continue", "--max-turns", "2", "--allow-no-git"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("execute auto-continue max turns: %v", err)
+	}
+	if len(executor.calls) != 2 {
+		t.Fatalf("expected two turns, got %d", len(executor.calls))
+	}
+	if !strings.Contains(stdout.String(), "jj loop: stopped: max turns reached") {
+		t.Fatalf("loop output missing max turns stop:\n%s", stdout.String())
+	}
+}
+
+func TestRunCommandAutoContinueStopsOnExecutorError(t *testing.T) {
+	dir := t.TempDir()
+	executor := &cliLoopFakeExecutor{
+		statuses:    []string{"needs_work"},
+		validations: []string{"skipped"},
+		errAt:       2,
+	}
+	cmd := newRootCommandWithServeAndIO(executor.Run, serve.Execute, &bytes.Buffer{}, &bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "plan.md", "--cwd", dir, "--run-id", "loop-error", "--auto-continue", "--max-turns", "3", "--allow-no-git"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected executor error, got %v", err)
+	}
+	if len(executor.calls) != 2 {
+		t.Fatalf("expected two executor calls, got %d", len(executor.calls))
+	}
+}
+
+func TestRunCommandAutoContinueRejectsReportedRunDirOutsideWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "unsafe-secret-token-1234567890")
+	cmd := newRootCommandWithServeAndIO(
+		func(_ context.Context, cfg run.Config) (*run.Result, error) {
+			return &run.Result{RunID: cfg.RunID, RunDir: outside}, nil
+		},
+		serve.Execute,
+		&bytes.Buffer{},
+		&bytes.Buffer{},
+	)
+	cmd.SetArgs([]string{"run", "plan.md", "--cwd", dir, "--run-id", "unsafe-loop", "--auto-continue", "--max-turns", "2", "--allow-no-git"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "reported run directory is outside the expected run root") {
+		t.Fatalf("expected reported run dir rejection, got %v", err)
+	}
+	if strings.Contains(err.Error(), outside) || strings.Contains(err.Error(), "unsafe-secret-token-1234567890") {
+		t.Fatalf("reported run dir rejection leaked unsafe path: %v", err)
+	}
+}
+
+func TestRunCommandAutoContinueReusesRepositoryWorkBranch(t *testing.T) {
+	dir := t.TempDir()
+	executor := &cliLoopFakeExecutor{
+		statuses:    []string{"needs_work", run.StatusSuccess},
+		validations: []string{"skipped", "passed"},
+	}
+	cmd := newRootCommandWithServeAndIO(executor.Run, serve.Execute, &bytes.Buffer{}, &bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "plan.md", "--cwd", dir, "--run-id", "gh-loop", "--repo", "https://github.com/acme/app.git", "--auto-continue", "--max-turns", "2", "--allow-no-git"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("execute repository loop: %v", err)
+	}
+	if len(executor.calls) != 2 {
+		t.Fatalf("expected two turns, got %d", len(executor.calls))
+	}
+	for _, call := range executor.calls {
+		if call.WorkBranch != "jj/run-gh-loop" || !call.WorkBranchExplicit {
+			t.Fatalf("repository loop did not reuse generated work branch: %#v", call)
+		}
+	}
+
+	executor = &cliLoopFakeExecutor{
+		statuses:    []string{"needs_work", run.StatusSuccess},
+		validations: []string{"skipped", "passed"},
+	}
+	cmd = newRootCommandWithServeAndIO(executor.Run, serve.Execute, &bytes.Buffer{}, &bytes.Buffer{})
+	cmd.SetArgs([]string{"run", "plan.md", "--cwd", dir, "--run-id", "gh-loop-explicit", "--repo", "https://github.com/acme/app.git", "--work-branch", "jj/custom", "--auto-continue", "--max-turns", "2", "--allow-no-git"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("execute explicit repository loop: %v", err)
+	}
+	for _, call := range executor.calls {
+		if call.WorkBranch != "jj/custom" || !call.WorkBranchExplicit {
+			t.Fatalf("repository loop did not reuse explicit work branch: %#v", call)
+		}
 	}
 }
 
@@ -105,9 +317,57 @@ func TestRunCommandHelp(t *testing.T) {
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("help failed: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "--dry-run") || !strings.Contains(stdout.String(), "--cwd") || !strings.Contains(stdout.String(), "--spec-path") || !strings.Contains(stdout.String(), "--planner-agents") {
+	if !strings.Contains(stdout.String(), "--dry-run") || !strings.Contains(stdout.String(), "--cwd") || strings.Contains(stdout.String(), "--spec-path") || strings.Contains(stdout.String(), "--task-path") || strings.Contains(stdout.String(), "--eval-path") || !strings.Contains(stdout.String(), "--planner-agents") || !strings.Contains(stdout.String(), "--task-proposal-mode") || !strings.Contains(stdout.String(), "--repo") || !strings.Contains(stdout.String(), "--push") || !strings.Contains(stdout.String(), "--auto-continue") || !strings.Contains(stdout.String(), "--max-turns") {
 		t.Fatalf("help output missing expected flags:\n%s", stdout.String())
 	}
+}
+
+type cliLoopFakeExecutor struct {
+	calls       []run.Config
+	statuses    []string
+	validations []string
+	errAt       int
+}
+
+func (f *cliLoopFakeExecutor) Run(_ context.Context, cfg run.Config) (*run.Result, error) {
+	f.calls = append(f.calls, cfg)
+	call := len(f.calls)
+	if f.errAt == call {
+		return nil, errors.New("boom")
+	}
+	status := run.StatusSuccess
+	if call-1 < len(f.statuses) && f.statuses[call-1] != "" {
+		status = f.statuses[call-1]
+	}
+	validation := "passed"
+	if call-1 < len(f.validations) && f.validations[call-1] != "" {
+		validation = f.validations[call-1]
+	}
+	runDir := filepath.Join(cfg.CWD, ".jj", "runs", cfg.RunID)
+	if err := writeCLILoopFile(filepath.Join(cfg.CWD, ".jj", "spec.json"), "{}\n"); err != nil {
+		return nil, err
+	}
+	if err := writeCLILoopFile(filepath.Join(cfg.CWD, ".jj", "tasks.json"), "{}\n"); err != nil {
+		return nil, err
+	}
+	if err := writeCLILoopFile(filepath.Join(runDir, "git", "diff-summary.txt"), "fake diff\n"); err != nil {
+		return nil, err
+	}
+	if err := writeCLILoopFile(filepath.Join(runDir, "codex", "summary.md"), "fake codex summary\n"); err != nil {
+		return nil, err
+	}
+	manifest := fmt.Sprintf(`{"run_id":%q,"status":%q,"validation":{"status":%q},"commit":{"status":"skipped"}}`, cfg.RunID, status, validation)
+	if err := writeCLILoopFile(filepath.Join(runDir, "manifest.json"), manifest); err != nil {
+		return nil, err
+	}
+	return &run.Result{RunID: cfg.RunID, RunDir: runDir}, nil
+}
+
+func writeCLILoopFile(path, data string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(data), 0o644)
 }
 
 func TestServeCommandParsesFlags(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	runpkg "github.com/jungju/jj/internal/run"
 )
@@ -31,13 +32,21 @@ func TestIndexShowsDocsAndRuns(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, body)
 	}
-	if !strings.Contains(body, "README.md") || !strings.Contains(body, "plan.md") || !strings.Contains(body, "playground/plan.md") {
+	if !strings.Contains(body, "README.md") || !strings.Contains(body, "plan.md") || !strings.Contains(body, "docs/SPEC.md") || !strings.Contains(body, "docs/TASK.md") || !strings.Contains(body, ".jj/spec.json") || !strings.Contains(body, ".jj/tasks.json") || strings.Contains(body, ".jj/eval.json") {
 		t.Fatalf("index missing docs:\n%s", body)
 	}
-	for _, want := range []string{"Workspace Readiness", "Risks And Failures", "Plan Ready", "README Ready", "SPEC Ready", "TASK Ready", `href="/runs"`, "Raw manifest"} {
+	for _, blocked := range []string{"docs/guide.md", "playground/plan.md"} {
+		if strings.Contains(body, blocked) {
+			t.Fatalf("index advertised non-allowlisted doc %q:\n%s", blocked, body)
+		}
+	}
+	for _, want := range []string{"Workspace Readiness", "Risks And Failures", "Plan Ready", "README Ready", "SPEC Ready", "TASK Ready", `href="/runs"`, "Raw manifest", "Task Proposal Mode: auto", "Resolved Mode: security", "Repository: https://github.com/acme/app.git", "Work Branch: jj/run-20260425-120000-bbbbbb", "Push Status: pushed"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index missing %q:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "ghp_dashboardsecret1234567890") {
+		t.Fatalf("dashboard leaked repository token:\n%s", body)
 	}
 	first := strings.Index(body, "20260425-120000-bbbbbb")
 	second := strings.Index(body, "20260425-110000-aaaaaa")
@@ -62,6 +71,78 @@ func TestIndexShowsMissingReadiness(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index missing %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestDashboardUsesSafeWorkspaceDisplayPath(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServer(t, dir, "")
+
+	for _, target := range []string{"/", "/run/new"} {
+		t.Run(target, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, target, nil)
+			server.Handler().ServeHTTP(rec, req)
+			body := rec.Body.String()
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d body=%s", rec.Code, body)
+			}
+			if strings.Contains(body, dir) || strings.Contains(body, filepath.ToSlash(dir)) {
+				t.Fatalf("dashboard leaked workspace absolute path:\n%s", body)
+			}
+			if !strings.Contains(body, "[workspace]") {
+				t.Fatalf("dashboard should show safe workspace label:\n%s", body)
+			}
+		})
+	}
+}
+
+func TestDashboardResponsesUseNoStoreCacheControl(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServer(t, dir, "")
+
+	for _, target := range []string{
+		"/",
+		"/doc?path=docs/SPEC.md",
+		"/artifact?run=20260425-120000-bbbbbb&path=snapshots/tasks.after.json",
+		"/runs/20260425-120000-bbbbbb/manifest",
+	} {
+		t.Run(target, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, target, nil)
+			server.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q, want no-store", got)
+			}
+			if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+				t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+			}
+			if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+				t.Fatalf("X-Frame-Options = %q, want DENY", got)
+			}
+			if got := rec.Header().Get("Content-Security-Policy"); !strings.Contains(got, "default-src 'self'") || !strings.Contains(got, "object-src 'none'") {
+				t.Fatalf("Content-Security-Policy missing safe defaults: %q", got)
+			}
+		})
+	}
+}
+
+func TestTruncateDisplayPreservesUTF8(t *testing.T) {
+	text := strings.Repeat("a", 10) + "한글 continuation context"
+	got := truncateDisplay(text, 11)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncated text is not valid UTF-8: %q", got)
+	}
+	if strings.Contains(got, "한") || !strings.Contains(got, "[truncated]") {
+		t.Fatalf("expected truncation before partial multibyte rune, got %q", got)
+	}
+
+	got = truncateDisplay("ok\x80한글", 100)
+	if !utf8.ValidString(got) || !strings.Contains(got, "\uFFFD") {
+		t.Fatalf("invalid input bytes should be replaced with valid UTF-8, got %q", got)
 	}
 }
 
@@ -114,6 +195,121 @@ func TestIndexShowsMalformedIncompleteAndLegacyRuns(t *testing.T) {
 	}
 }
 
+func TestIndexShowsPlanningValidationFailureRun(t *testing.T) {
+	dir := newTestWorkspace(t)
+	runID := "20260425-170000-emptytask"
+	secret := "sk-proj-emptytask1234567890"
+	writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", fmt.Sprintf(`{
+		"run_id":%q,
+		"status":"failed",
+		"started_at":"2026-04-25T17:00:00Z",
+		"failed_stage":"planning",
+		"failure_phase":"planning",
+		"error_summary":"merge planning outputs: merged TASK content is empty %s",
+		"errors":["merge planning outputs: merged TASK content is empty %s"],
+		"artifacts":{
+			"manifest":"manifest.json",
+			"planning_merge":"planning/merge.json",
+			"planning_merged":"planning/merged.json",
+			"planning_merge_raw_response":"planning/raw_response_merge.txt"
+		},
+			"codex":{"skipped":true,"status":"skipped"}
+	}`, runID, secret, secret))
+	writeFile(t, dir, ".jj/runs/"+runID+"/planning/merge.json", `{"spec":"# SPEC\n\nValid","task":"","notes":[]}`)
+	writeFile(t, dir, ".jj/runs/"+runID+"/planning/merged.json", `{"spec":"# SPEC\n\nValid","task":"","notes":[]}`)
+	writeFile(t, dir, ".jj/runs/"+runID+"/planning/raw_response_merge.txt", "token="+secret+"\n")
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{runID, "failed", "merged TASK content is empty"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard missing planning failure %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, secret) || !strings.Contains(body, "[jj-omitted]") {
+		t.Fatalf("dashboard did not redact planning failure secret:\n%s", body)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/run?id="+runID, nil)
+	server.Handler().ServeHTTP(rec, req)
+	body = rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("run status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{"planning/merge.json", "planning/merged.json", "planning/raw_response_merge.txt"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("run artifact list missing %q:\n%s", want, body)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/artifact?run="+runID+"&path=planning/raw_response_merge.txt", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body = rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("artifact status = %d body=%s", rec.Code, body)
+	}
+	if strings.Contains(body, secret) || !strings.Contains(body, "[jj-omitted]") {
+		t.Fatalf("planning artifact did not redact secret:\n%s", body)
+	}
+}
+
+func TestRunArtifactsExposeUntrackedEvidence(t *testing.T) {
+	dir := newTestWorkspace(t)
+	runID := "20260425-180000-untracked"
+	secret := "sk-proj-serveuntracked1234567890"
+	writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", fmt.Sprintf(`{
+		"run_id":%q,
+		"status":"complete",
+		"started_at":"2026-04-25T18:00:00Z",
+		"artifacts":{
+			"manifest":"manifest.json",
+			"git_untracked_files":"git/untracked-files.txt",
+			"git_untracked_patch":"git/untracked.patch",
+			"git_untracked_summary":"git/untracked-summary.txt"
+		}
+	}`, runID))
+	writeFile(t, dir, ".jj/runs/"+runID+"/git/untracked-files.txt", "new-script.sh\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/git/untracked.patch", "diff --git a/new-script.sh b/new-script.sh\n+api_key="+secret+"\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/git/untracked-summary.txt", "Captured text files: 1\n")
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/run?id="+runID, nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("run status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{"git/untracked-files.txt", "git/untracked.patch", "git/untracked-summary.txt"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("run artifact list missing %q:\n%s", want, body)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/artifact?run="+runID+"&path=git/untracked.patch", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body = rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("artifact status = %d body=%s", rec.Code, body)
+	}
+	if !strings.Contains(body, "new-script.sh") || strings.Contains(body, secret) {
+		t.Fatalf("untracked artifact was not served with redaction:\n%s", body)
+	}
+	if !strings.Contains(body, "[jj-omitted]") {
+		t.Fatalf("untracked artifact missing redaction marker:\n%s", body)
+	}
+}
+
 func TestMalformedManifestArtifactFailsClosedWithoutPathLeak(t *testing.T) {
 	dir := newTestWorkspace(t)
 	writeFile(t, dir, ".jj/runs/20260425-130000-badjson/manifest.json", `{"run_id":"20260425-130000-badjson","status":"sk-proj-abcdef1234567890",`)
@@ -156,6 +352,28 @@ func TestRunManifestMalformedResponseIsSanitized(t *testing.T) {
 	}
 }
 
+func TestRunManifestResponseRedactsSecretsAndHostPaths(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs/20260425-120000-bbbbbb/manifest", nil)
+	server.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	for _, leaked := range []string{dir, filepath.ToSlash(dir), "/tmp/acme-app", "ghp_dashboardsecret1234567890"} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("manifest response leaked %q:\n%s", leaked, body)
+		}
+	}
+	if !strings.Contains(body, `"repo_dir": "[path]"`) || !strings.Contains(body, "https://github.com/acme/app.git") {
+		t.Fatalf("manifest response missing sanitized path or repository URL:\n%s", body)
+	}
+}
+
 func TestResolveConfigUsesServeJJRC(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, ".jjrc", `{"serve_host":"localhost","serve_port":0}`)
@@ -180,6 +398,49 @@ func TestResolveConfigEnvOverridesServeJJRC(t *testing.T) {
 	}
 	if cfg.Addr != "127.0.0.1:0" {
 		t.Fatalf("env should override .jjrc addr: %#v", cfg)
+	}
+}
+
+func TestNewWithConfigRequiresExplicitExternalBind(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := NewWithConfig(Config{CWD: dir, Addr: "0.0.0.0:0"}); err == nil || !strings.Contains(err.Error(), "external dashboard binding requires explicit") {
+		t.Fatalf("expected implicit external bind rejection, got %v", err)
+	}
+	if _, err := NewWithConfig(Config{CWD: dir, Addr: "0.0.0.0:0", AddrExplicit: true}); err != nil {
+		t.Fatalf("explicit external addr should be allowed: %v", err)
+	}
+	if _, err := NewWithConfig(Config{CWD: dir, Host: "0.0.0.0", Port: 0, HostExplicit: true, PortExplicit: true}); err != nil {
+		t.Fatalf("explicit external host should be allowed: %v", err)
+	}
+}
+
+func TestExecuteWarnsOnExplicitExternalBind(t *testing.T) {
+	dir := newTestWorkspace(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var out strings.Builder
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Execute(ctx, Config{CWD: dir, Addr: "0.0.0.0:0", AddrExplicit: true, Stdout: &out})
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for !strings.Contains(out.String(), "jj: serving dashboard at http://") {
+		select {
+		case err := <-errCh:
+			t.Fatalf("server exited early: %v", err)
+		case <-deadline:
+			t.Fatal("server did not start")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("execute should stop cleanly on context cancel: %v", err)
+	}
+	if !strings.Contains(out.String(), "warning: serving on non-local address") {
+		t.Fatalf("expected external bind warning, got:\n%s", out.String())
 	}
 }
 
@@ -209,10 +470,33 @@ func TestServeExposesRunMutationRoutes(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected /run/new to render, got %d body=%s", rec.Code, body)
 	}
-	for _, want := range []string{`action="/run/start"`, "auto continue turns", "max turns"} {
+	for _, want := range []string{`action="/run/start"`, `name="plan_prompt"`, `name="task_proposal_mode"`, `name="repo"`, `name="base_branch"`, `name="work_branch"`, `name="push"`, "auto continue turns", "max turns"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("/run/new missing %q:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, `name="plan_path" value="plan.md" required`) {
+		t.Fatalf("/run/new should not require plan_path when prompt input is available:\n%s", body)
+	}
+}
+
+func TestIndexShowsWebRunWhenPlanMissing(t *testing.T) {
+	dir := t.TempDir()
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	if !strings.Contains(body, `href="/run/new">Start Web Run</a>`) {
+		t.Fatalf("dashboard should expose Web Run without plan.md:\n%s", body)
+	}
+	if strings.Contains(body, "Open Plan") {
+		t.Fatalf("dashboard should not show Open Plan when plan.md is missing:\n%s", body)
 	}
 }
 
@@ -231,8 +515,90 @@ func TestDocShowsRedactedMarkdown(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, body)
 	}
-	if strings.Contains(body, "sk-proj") || !strings.Contains(body, "[redacted-openai-key]") {
+	if strings.Contains(body, "sk-proj") || !strings.Contains(body, "[jj-omitted]") {
 		t.Fatalf("doc was not redacted:\n%s", body)
+	}
+}
+
+func TestProjectDocAllowlistServesOnlyDocumentedDocs(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServer(t, dir, "")
+
+	allowed := []struct {
+		target string
+		want   string
+	}{
+		{"/doc?path=README.md", "<h1>Root</h1>"},
+		{"/doc?path=plan.md", "<h1>Product Plan</h1>"},
+		{"/doc?path=docs/SPEC.md", "<h1>Spec Doc</h1>"},
+		{"/doc?path=docs/TASK.md", "<h1>Task Doc</h1>"},
+		{"/doc?path=.jj/spec.json", "SPEC"},
+		{"/doc?path=.jj/tasks.json", "T-SEC-001"},
+	}
+	for _, tc := range allowed {
+		t.Run(tc.target, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, tc.target, nil)
+			server.Handler().ServeHTTP(rec, req)
+			body := rec.Body.String()
+			if rec.Code != http.StatusOK || !strings.Contains(body, tc.want) {
+				t.Fatalf("expected allowed doc, got status=%d body=%s", rec.Code, body)
+			}
+		})
+	}
+}
+
+func TestProjectDocRejectsUnlistedAndUnsafePathsWithoutLeaks(t *testing.T) {
+	dir := newTestWorkspace(t)
+	secret := "serve-doc-secret-1234567890"
+	writeFile(t, dir, "docs/PRIVATE.md", "# Private\n"+secret+"\n")
+	writeFile(t, dir, "playground/secret.md", "# Playground\n"+secret+"\n")
+	writeFile(t, dir, "cmd/app/main.go", "package main\n// "+secret+"\n")
+	writeFile(t, dir, ".hidden.md", "# Hidden\n"+secret+"\n")
+	writeFile(t, dir, ".env", "API_KEY="+secret+"\n")
+	writeFile(t, dir, "SPEC.md", "# Root SPEC\n"+secret+"\n")
+	outside := t.TempDir()
+	outsideDoc := filepath.Join(outside, "outside.md")
+	if err := os.WriteFile(outsideDoc, []byte("# Outside\n"+secret+"\n"), 0o644); err != nil {
+		t.Fatalf("write outside doc: %v", err)
+	}
+	server := newTestServer(t, dir, "")
+
+	probes := []struct {
+		name   string
+		target string
+	}{
+		{name: "private doc", target: "/doc?path=docs/PRIVATE.md"},
+		{name: "arbitrary docs markdown", target: "/doc?path=docs/guide.md"},
+		{name: "playground plan", target: "/doc?path=playground/plan.md"},
+		{name: "playground markdown", target: "/doc?path=playground/secret.md"},
+		{name: "source file", target: "/doc?path=cmd/app/main.go"},
+		{name: "hidden markdown", target: "/doc?path=.hidden.md"},
+		{name: "env file", target: "/doc?path=.env"},
+		{name: "git internals", target: "/doc?path=.git/ignored.md"},
+		{name: "root spec", target: "/doc?path=SPEC.md"},
+		{name: "traversal", target: "/doc?path=../README.md"},
+		{name: "nested traversal", target: "/doc?path=docs/../README.md"},
+		{name: "encoded traversal", target: "/doc?path=docs%2f..%2fREADME.md"},
+		{name: "absolute escape", target: "/doc?path=" + url.QueryEscape(outsideDoc)},
+		{name: "docs route private", target: "/docs/PRIVATE.md"},
+		{name: "docs route traversal", target: "/docs/../README.md"},
+	}
+	for _, probe := range probes {
+		t.Run(probe.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, probe.target, nil)
+			server.Handler().ServeHTTP(rec, req)
+			body := rec.Body.String()
+			if rec.Code < 400 {
+				t.Fatalf("expected rejection, got %d body=%s", rec.Code, body)
+			}
+			for _, leaked := range []string{secret, dir, filepath.ToSlash(dir), outsideDoc, filepath.ToSlash(outsideDoc)} {
+				if strings.Contains(body, leaked) {
+					t.Fatalf("rejection leaked %q:\n%s", leaked, body)
+				}
+			}
+		})
 	}
 }
 
@@ -240,8 +606,8 @@ func TestRunDashboardAndArtifactRedactSecrets(t *testing.T) {
 	dir := newTestWorkspace(t)
 	secret := "serve-secret-token-1234567890"
 	t.Setenv("JJ_SERVE_TEST_TOKEN", secret)
-	writeFile(t, dir, ".jj/runs/20260425-160000-redacted/manifest.json", fmt.Sprintf(`{"run_id":"20260425-160000-redacted","status":"failed","started_at":"2026-04-25T16:00:00Z","artifacts":{"manifest":"manifest.json","eval":"docs/EVAL.md"},"errors":["token=%s"],"risks":["Bearer %s"],"evaluation":{"result":"FAIL","recommended_next_action":"remove %s"}}`, secret, secret, secret))
-	writeFile(t, dir, ".jj/runs/20260425-160000-redacted/docs/EVAL.md", "Authorization: Bearer "+secret+"\n")
+	writeFile(t, dir, ".jj/runs/20260425-160000-redacted/manifest.json", fmt.Sprintf(`{"run_id":"20260425-160000-redacted","status":"failed","started_at":"2026-04-25T16:00:00Z","artifacts":{"manifest":"manifest.json","validation_summary":"validation/summary.md"},"errors":["token=%s"],"risks":["Bearer %s"],"validation":{"status":"failed","summary_path":"validation/summary.md"}}`, secret, secret))
+	writeFile(t, dir, ".jj/runs/20260425-160000-redacted/validation/summary.md", "Authorization: Bearer "+secret+"\n")
 	server := newTestServer(t, dir, "")
 
 	rec := httptest.NewRecorder()
@@ -251,19 +617,111 @@ func TestRunDashboardAndArtifactRedactSecrets(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, body)
 	}
-	if strings.Contains(body, secret) || !strings.Contains(body, "[redacted]") {
+	if strings.Contains(body, secret) || !strings.Contains(body, "[jj-omitted]") {
 		t.Fatalf("dashboard did not redact secret:\n%s", body)
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/artifact?run=20260425-160000-redacted&path=docs/EVAL.md", nil)
+	req = httptest.NewRequest(http.MethodGet, "/artifact?run=20260425-160000-redacted&path=validation/summary.md", nil)
 	server.Handler().ServeHTTP(rec, req)
 	body = rec.Body.String()
 	if rec.Code != http.StatusOK {
 		t.Fatalf("artifact status = %d body=%s", rec.Code, body)
 	}
-	if strings.Contains(body, secret) || !strings.Contains(body, "Authorization: [redacted]") {
+	if strings.Contains(body, secret) || !strings.Contains(body, "Authorization: [jj-omitted]") {
 		t.Fatalf("artifact did not redact secret:\n%s", body)
+	}
+}
+
+func TestJSONArtifactAndManifestRedactSecretKeysWithSpaces(t *testing.T) {
+	dir := newTestWorkspace(t)
+	runID := "20260425-161000-jsonsecret"
+	secret := "secret value with spaces"
+	writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", fmt.Sprintf(`{
+		"run_id": %q,
+		"status": "complete",
+		"started_at": "2026-04-25T16:10:00Z",
+		"artifacts": {
+			"manifest": "manifest.json",
+			"json": "planning/secret.json"
+		},
+		"clientSecret": %q
+	}`, runID, secret))
+	writeFile(t, dir, ".jj/runs/"+runID+"/planning/secret.json", fmt.Sprintf(`{"token":%q,"visible":"ok"}`, secret))
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID+"/manifest", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manifest status = %d body=%s", rec.Code, body)
+	}
+	if strings.Contains(body, secret) || !strings.Contains(body, "[jj-omitted]") {
+		t.Fatalf("manifest response did not redact secret key:\n%s", body)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/artifact?run="+runID+"&path=planning/secret.json", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body = rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("artifact status = %d body=%s", rec.Code, body)
+	}
+	if strings.Contains(body, secret) || !strings.Contains(body, "[jj-omitted]") || !strings.Contains(body, "visible") || !strings.Contains(body, "ok") {
+		t.Fatalf("json artifact response did not redact secret key:\n%s", body)
+	}
+}
+
+func TestValidationArtifactsAreManifestKnownAndRedacted(t *testing.T) {
+	dir := newTestWorkspace(t)
+	runID := "20260426-160000-validation"
+	secret := "sk-proj-servevalidation1234567890"
+	writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", fmt.Sprintf(`{
+		"run_id": %q,
+		"status": "complete",
+		"started_at": "2026-04-26T16:00:00Z",
+		"artifacts": {
+			"manifest": "manifest.json",
+			"validation_summary": "validation/summary.md",
+			"validation_results": "validation/results.json",
+			"validation_001_stdout": "validation/001-validate.stdout.txt"
+		},
+		"validation": {
+			"status": "passed",
+			"evidence_status": "recorded",
+			"summary_path": "validation/summary.md",
+			"results_path": "validation/results.json"
+			}
+	}`, runID))
+	writeFile(t, dir, ".jj/runs/"+runID+"/validation/summary.md", "# Validation Evidence\n\n- Authorization: Bearer "+secret+"\n")
+	writeFile(t, dir, ".jj/runs/"+runID+"/validation/results.json", `{"status":"passed"}`)
+	writeFile(t, dir, ".jj/runs/"+runID+"/validation/001-validate.stdout.txt", "OPENAI_API_KEY="+secret+"\n")
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	if !strings.Contains(body, "validation passed (recorded)") || !strings.Contains(body, "Validation artifact") {
+		t.Fatalf("dashboard missing validation state/link:\n%s", body)
+	}
+	if strings.Contains(body, secret) {
+		t.Fatalf("dashboard leaked validation secret:\n%s", body)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/artifact?run="+runID+"&path=validation/001-validate.stdout.txt", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body = rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("artifact status = %d body=%s", rec.Code, body)
+	}
+	if strings.Contains(body, secret) || !strings.Contains(body, "[jj-omitted]") {
+		t.Fatalf("validation artifact was not redacted:\n%s", body)
 	}
 }
 
@@ -295,7 +753,7 @@ func TestArtifactShowsRunFile(t *testing.T) {
 	server := newTestServer(t, dir, "")
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/artifact?run=20260425-120000-bbbbbb&path=docs/TASK.md", nil)
+	req := httptest.NewRequest(http.MethodGet, "/artifact?run=20260425-120000-bbbbbb&path=snapshots/tasks.after.json", nil)
 	server.Handler().ServeHTTP(rec, req)
 
 	body := rec.Body.String()
@@ -320,7 +778,7 @@ func TestArtifactRejectsUnlistedRunFile(t *testing.T) {
 	}
 }
 
-func TestRunShowsDocsArtifactsFirst(t *testing.T) {
+func TestRunShowsStateArtifactsFirst(t *testing.T) {
 	dir := newTestWorkspace(t)
 	server := newTestServer(t, dir, "")
 
@@ -332,11 +790,11 @@ func TestRunShowsDocsArtifactsFirst(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, body)
 	}
-	spec := strings.Index(body, "docs/SPEC.md")
-	task := strings.Index(body, "docs/TASK.md")
-	eval := strings.Index(body, "docs/EVAL.md")
-	if spec < 0 || task < 0 || eval < 0 || !(spec < task && task < eval) {
-		t.Fatalf("docs artifacts missing or not first in expected order:\n%s", body)
+	spec := strings.Index(body, "snapshots/spec.after.json")
+	task := strings.Index(body, "snapshots/tasks.after.json")
+	manifest := strings.Index(body, "manifest.json")
+	if spec < 0 || task < 0 || manifest < 0 || !(spec < task && task < manifest) || strings.Contains(body, "snapshots/eval.json") {
+		t.Fatalf("state artifacts missing or not first in expected order:\n%s", body)
 	}
 }
 
@@ -354,7 +812,7 @@ func TestPathTraversalRejected(t *testing.T) {
 		"/artifact?run=20260425-120000-bbbbbb&path=/etc/passwd",
 		"/artifact?run=20260425-120000-bbbbbb&path=C:/secret.txt",
 		"/artifact?run=20260425-120000-bbbbbb&path=docs%5c..%5cmanifest.json",
-		"/artifact?run=20260425-120000-bbbbbb&path=docs/TASK.md%00",
+		"/artifact?run=20260425-120000-bbbbbb&path=snapshots/tasks.after.json%00",
 		"/artifact?run=20260425-120000-bbbbbb&path=docs/.secret",
 		"/artifact?run=20260425-120000-bbbbbb&path=.secret/file.md",
 		"/artifact?run=20260425-120000-bbbbbb&path=",
@@ -390,7 +848,7 @@ func TestArtifactHTTPStackRejectsUnsafePathsWithoutLeaks(t *testing.T) {
 		{name: "windows drive", query: "run=20260425-120000-bbbbbb&path=C:/" + secret + ".md"},
 		{name: "unc path", query: "run=20260425-120000-bbbbbb&path=//server/share/" + secret + ".md"},
 		{name: "backslash traversal", query: "run=20260425-120000-bbbbbb&path=docs%5c..%5cmanifest.json"},
-		{name: "nul byte", query: "run=20260425-120000-bbbbbb&path=docs/TASK.md%00"},
+		{name: "nul byte", query: "run=20260425-120000-bbbbbb&path=snapshots/tasks.after.json%00"},
 		{name: "hidden segment", query: "run=20260425-120000-bbbbbb&path=docs/.secret"},
 		{name: "hidden artifact", query: "run=20260425-120000-bbbbbb&path=codex/.env"},
 		{name: "secret unlisted path", query: "run=20260425-120000-bbbbbb&path=docs/" + secret + ".md"},
@@ -418,7 +876,7 @@ func TestArtifactHTTPStackRejectsUnsafePathsWithoutLeaks(t *testing.T) {
 		})
 	}
 
-	resp, err := http.Get(httpServer.URL + "/artifact?run=20260425-120000-bbbbbb&path=docs/TASK.md")
+	resp, err := http.Get(httpServer.URL + "/artifact?run=20260425-120000-bbbbbb&path=snapshots/tasks.after.json")
 	if err != nil {
 		t.Fatalf("get valid artifact: %v", err)
 	}
@@ -432,7 +890,7 @@ func TestArtifactHTTPStackRejectsUnsafePathsWithoutLeaks(t *testing.T) {
 		t.Fatalf("valid artifact did not serve: status=%d body=%s", resp.StatusCode, body)
 	}
 
-	resp, err = http.Get(httpServer.URL + "/doc?path=docs/TASK.md")
+	resp, err = http.Get(httpServer.URL + "/doc?path=.jj/tasks.json")
 	if err != nil {
 		t.Fatalf("get public doc: %v", err)
 	}
@@ -442,7 +900,7 @@ func TestArtifactHTTPStackRejectsUnsafePathsWithoutLeaks(t *testing.T) {
 		t.Fatalf("read public doc: %v", err)
 	}
 	body = string(bodyBytes)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "<h1>TASK</h1>") {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "T-SEC-001") {
 		t.Fatalf("public doc did not serve: status=%d body=%s", resp.StatusCode, body)
 	}
 }
@@ -468,6 +926,64 @@ func TestSymlinkTraversalRejected(t *testing.T) {
 	}
 }
 
+func TestArtifactSymlinkTraversalRejected(t *testing.T) {
+	dir := newTestWorkspace(t)
+	outside := t.TempDir()
+	outsideTask := filepath.Join(outside, "tasks.after.json")
+	if err := os.WriteFile(outsideTask, []byte(`{"secret":"Outside Task"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write outside task: %v", err)
+	}
+	linkPath := filepath.Join(dir, ".jj", "runs", "20260425-120000-bbbbbb", "snapshots", "tasks.after.json")
+	if err := os.Remove(linkPath); err != nil {
+		t.Fatalf("remove task artifact: %v", err)
+	}
+	if err := os.Symlink(outsideTask, linkPath); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/artifact?run=20260425-120000-bbbbbb&path=snapshots/tasks.after.json", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code < 400 {
+		t.Fatalf("expected symlink artifact rejection, got %d body=%s", rec.Code, body)
+	}
+	if strings.Contains(body, "Outside Task") || strings.Contains(body, outside) {
+		t.Fatalf("symlink rejection leaked outside data:\n%s", body)
+	}
+}
+
+func TestArtifactInternalRunRootSymlinkRejected(t *testing.T) {
+	dir := newTestWorkspace(t)
+	target := filepath.Join(dir, "run-target")
+	runID := "20260425-190000-link"
+	if err := os.MkdirAll(filepath.Join(target, "validation"), 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "manifest.json"), []byte(fmt.Sprintf(`{"run_id":%q,"status":"complete","started_at":"2026-04-25T19:00:00Z","artifacts":{"manifest":"manifest.json","validation_summary":"validation/summary.md"}}`, runID)), 0o644); err != nil {
+		t.Fatalf("write target manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "validation", "summary.md"), []byte("should not serve\n"), 0o644); err != nil {
+		t.Fatalf("write target summary: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, ".jj", "runs", runID)); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/artifact?run="+runID+"&path=validation/summary.md", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code < 400 {
+		t.Fatalf("expected symlinked run root rejection, got %d body=%s", rec.Code, body)
+	}
+	if strings.Contains(body, "should not serve") || strings.Contains(body, target) {
+		t.Fatalf("symlinked run root rejection leaked target data:\n%s", body)
+	}
+}
+
 func TestExecuteStartsAndStopsWithContext(t *testing.T) {
 	dir := newTestWorkspace(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -479,7 +995,7 @@ func TestExecuteStartsAndStopsWithContext(t *testing.T) {
 	}()
 
 	deadline := time.After(2 * time.Second)
-	for !strings.Contains(out.String(), "jj: serving docs at http://") {
+	for !strings.Contains(out.String(), "jj: serving dashboard at http://") {
 		select {
 		case err := <-errCh:
 			t.Fatalf("server exited early: %v", err)
@@ -495,11 +1011,269 @@ func TestExecuteStartsAndStopsWithContext(t *testing.T) {
 	}
 }
 
-func TestWebRunAutoContinuesUntilPass(t *testing.T) {
+func TestWebRunPromptStartsWithoutPlanPath(t *testing.T) {
+	dir := newTestWorkspace(t)
+	executor := &loopFakeExecutor{
+		results:     []string{runpkg.StatusComplete},
+		validations: []string{"passed"},
+	}
+	server := newTestServerWithExecutor(t, Config{
+		CWD:         dir,
+		Addr:        "127.0.0.1:7331",
+		RunExecutor: executor.Run,
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/run/start", strings.NewReader(runStartPromptForm("prompt-run", "Build from the browser prompt.\n", true, false, false, 0)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("start status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	waitForRunStatus(t, server, "prompt-run", runpkg.StatusComplete)
+	call := executor.callFor("prompt-run")
+	if call.PlanText != "Build from the browser prompt.\n" || call.PlanPath != "" || call.PlanInputName != runpkg.DefaultWebPromptInput {
+		t.Fatalf("expected prompt-backed run config, got %#v", call)
+	}
+	if call.TaskProposalMode != runpkg.TaskProposalModeAuto {
+		t.Fatalf("expected default task proposal mode auto, got %#v", call)
+	}
+}
+
+func TestWebRunStatusUsesSafeDisplayPaths(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServerWithExecutor(t, Config{
+		CWD:  dir,
+		Addr: "127.0.0.1:7331",
+		RunExecutor: func(_ context.Context, cfg runpkg.Config) (*runpkg.Result, error) {
+			runDir := filepath.Join(cfg.CWD, ".jj", "runs", cfg.RunID)
+			fmt.Fprintf(cfg.Stdout, "jj: creating run directory %s\nrun_dir=%s\nreview=jj serve --cwd %s\n", runDir, runDir, cfg.CWD)
+			manifest := fmt.Sprintf(`{"run_id":%q,"status":"complete","started_at":"2026-04-25T00:00:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"passed"},"commit":{"ran":false,"status":"skipped"}}`, cfg.RunID)
+			if err := writeFakeRunFile(runDir, "manifest.json", manifest); err != nil {
+				return nil, err
+			}
+			return &runpkg.Result{RunID: cfg.RunID, RunDir: runDir}, nil
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/run/start", strings.NewReader(runStartPromptForm("path-safe-run", "Build from prompt.\n", true, false, false, 0)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("start status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	status := waitForRunStatus(t, server, "path-safe-run", runpkg.StatusSuccess)
+	if status.CurrentTurn.RunDir != ".jj/runs/path-safe-run" || status.RunDir != ".jj/runs/path-safe-run" {
+		t.Fatalf("expected relative display run dir, got %#v", status)
+	}
+	body := getRunStatusBody(t, server, "path-safe-run")
+	for _, leaked := range []string{dir, filepath.ToSlash(dir), filepath.Join(dir, ".jj", "runs", "path-safe-run"), filepath.ToSlash(filepath.Join(dir, ".jj", "runs", "path-safe-run"))} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("web run status leaked %q:\n%s", leaked, body)
+		}
+	}
+	if !strings.Contains(body, "[path]") {
+		t.Fatalf("web run logs should retain path redaction evidence:\n%s", body)
+	}
+}
+
+func TestWebRunStartPassesTaskProposalMode(t *testing.T) {
+	dir := newTestWorkspace(t)
+	executor := &loopFakeExecutor{
+		results:     []string{runpkg.StatusComplete},
+		validations: []string{"passed"},
+	}
+	server := newTestServerWithExecutor(t, Config{
+		CWD:         dir,
+		Addr:        "127.0.0.1:7331",
+		RunExecutor: executor.Run,
+	})
+
+	values := url.Values{}
+	values.Set("plan_prompt", "Harden the dashboard.\n")
+	values.Set("run_id", "mode-run")
+	values.Set("planning_agents", "1")
+	values.Set("task_proposal_mode", "security")
+	values.Set("dry_run", "true")
+	values.Set("allow_no_git", "true")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/run/start", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("start status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	waitForRunStatus(t, server, "mode-run", runpkg.StatusComplete)
+	call := executor.callFor("mode-run")
+	if call.TaskProposalMode != runpkg.TaskProposalModeSecurity || !call.TaskProposalModeExplicit {
+		t.Fatalf("expected security proposal mode config, got %#v", call)
+	}
+}
+
+func TestWebRunStartPassesRepositoryOptions(t *testing.T) {
+	dir := newTestWorkspace(t)
+	executor := &loopFakeExecutor{
+		results:     []string{runpkg.StatusComplete},
+		validations: []string{"passed"},
+	}
+	server := newTestServerWithExecutor(t, Config{
+		CWD:         dir,
+		Addr:        "127.0.0.1:7331",
+		RunExecutor: executor.Run,
+	})
+
+	values := url.Values{}
+	values.Set("plan_prompt", "Build in a GitHub workspace.\n")
+	values.Set("run_id", "repo-web-run")
+	values.Set("planning_agents", "1")
+	values.Set("task_proposal_mode", "feature")
+	values.Set("repo", "https://github.com/acme/app.git")
+	values.Set("repo_dir", "/tmp/acme-app")
+	values.Set("base_branch", "main")
+	values.Set("work_branch", "jj/web-run")
+	values.Set("push", "true")
+	values.Set("push_mode", "branch")
+	values.Set("github_token_env", "MY_GITHUB_TOKEN")
+	values.Set("allow_dirty", "true")
+	values.Set("dry_run", "true")
+	values.Set("allow_no_git", "true")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/run/start", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("start status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	waitForRunStatus(t, server, "repo-web-run", runpkg.StatusComplete)
+	call := executor.callFor("repo-web-run")
+	if call.RepoURL != "https://github.com/acme/app.git" || call.RepoDir != "/tmp/acme-app" || call.BaseBranch != "main" || call.WorkBranch != "jj/web-run" {
+		t.Fatalf("expected repository options, got %#v", call)
+	}
+	if !call.RepoURLExplicit || !call.RepoDirExplicit || !call.BaseBranchExplicit || !call.WorkBranchExplicit {
+		t.Fatalf("expected repository explicit markers, got %#v", call)
+	}
+	if !call.Push || call.PushMode != "branch" || call.GitHubTokenEnv != "MY_GITHUB_TOKEN" || !call.RepoAllowDirty {
+		t.Fatalf("expected push/token/dirty options, got %#v", call)
+	}
+	if !call.PushExplicit || !call.PushModeExplicit || !call.GitHubTokenEnvExplicit || !call.RepoAllowDirtyExplicit {
+		t.Fatalf("expected repository option explicit markers, got %#v", call)
+	}
+}
+
+func TestWebRunStartRejectsInvalidTaskProposalMode(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServerWithExecutor(t, Config{
+		CWD:         dir,
+		Addr:        "127.0.0.1:7331",
+		RunExecutor: (&loopFakeExecutor{}).Run,
+	})
+
+	values := url.Values{}
+	values.Set("plan_prompt", "Build from prompt.\n")
+	values.Set("run_id", "bad-mode")
+	values.Set("planning_agents", "1")
+	values.Set("task_proposal_mode", "fast")
+	values.Set("dry_run", "true")
+	values.Set("allow_no_git", "true")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/run/start", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid task proposal mode") {
+		t.Fatalf("expected invalid mode rejection, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWebRunStartRejectsEmptyPromptAndPlanPath(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServerWithExecutor(t, Config{
+		CWD:         dir,
+		Addr:        "127.0.0.1:7331",
+		RunExecutor: (&loopFakeExecutor{}).Run,
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/run/start", strings.NewReader(runStartPromptForm("empty-input", " \n", true, false, false, 0)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "plan path or prompt is required") {
+		t.Fatalf("expected empty prompt and plan path rejection, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWebRunStartRejectsUnsafePlanPathWithoutLeaks(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServerWithExecutor(t, Config{
+		CWD:         dir,
+		Addr:        "127.0.0.1:7331",
+		RunExecutor: (&loopFakeExecutor{}).Run,
+	})
+	secretPath := `docs\unsafe-secret-token-1234567890.md`
+	values := url.Values{}
+	values.Set("plan_path", secretPath)
+	values.Set("run_id", "bad-plan-path")
+	values.Set("dry_run", "true")
+	values.Set("allow_no_git", "true")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/run/start", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusBadRequest || !strings.Contains(body, "plan path is not allowed") {
+		t.Fatalf("expected unsafe plan path rejection, got %d body=%s", rec.Code, body)
+	}
+	if strings.Contains(body, secretPath) || strings.Contains(body, "unsafe-secret-token-1234567890") {
+		t.Fatalf("unsafe plan path rejection leaked path value:\n%s", body)
+	}
+}
+
+func TestWebRunPromptAutoContinuesWithOriginalPrompt(t *testing.T) {
 	dir := newCleanGitWorkspace(t)
 	executor := &loopFakeExecutor{
-		results: []string{runpkg.StatusPartial, runpkg.StatusSuccess},
-		evals:   []string{"PARTIAL", "PASS"},
+		results:     []string{"needs_work", runpkg.StatusSuccess, runpkg.StatusSuccess},
+		validations: []string{"skipped", "passed", "passed"},
+	}
+	server := newTestServerWithExecutor(t, Config{
+		CWD:         dir,
+		Addr:        "127.0.0.1:7331",
+		RunExecutor: executor.Run,
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/run/start", strings.NewReader(runStartPromptForm("prompt-loop", "Keep improving from this browser prompt.\n", false, true, true, 3)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("start status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	status := waitForRunStatus(t, server, "prompt-loop", runpkg.StatusSuccess)
+	if len(status.Turns) != 3 || status.CurrentTurn.RunID != "prompt-loop-t03" || status.Phase != "max_turns" {
+		t.Fatalf("expected three turns and max-turn stop at t03, got %#v", status)
+	}
+	second := executor.callFor("prompt-loop-t02")
+	if second.PlanText != "Keep improving from this browser prompt.\n" {
+		t.Fatalf("second turn should reuse original prompt, got %#v", second)
+	}
+	if !strings.Contains(second.AdditionalPlanContext, "Previous Manifest") {
+		t.Fatalf("second turn did not receive continuation context: %q", second.AdditionalPlanContext)
+	}
+}
+
+func TestWebRunAutoContinuesAfterPassUntilMaxTurns(t *testing.T) {
+	dir := newCleanGitWorkspace(t)
+	executor := &loopFakeExecutor{
+		results:     []string{"needs_work", runpkg.StatusSuccess, runpkg.StatusSuccess},
+		validations: []string{"skipped", "passed", "passed"},
 	}
 	server := newTestServerWithExecutor(t, Config{
 		CWD:         dir,
@@ -515,9 +1289,9 @@ func TestWebRunAutoContinuesUntilPass(t *testing.T) {
 		t.Fatalf("start status = %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	status := waitForRunStatus(t, server, "loop-pass", "success")
-	if len(status.Turns) != 2 || status.CurrentTurn.RunID != "loop-pass-t02" {
-		t.Fatalf("expected two turns and current t02, got %#v", status)
+	status := waitForRunStatus(t, server, "loop-pass", runpkg.StatusSuccess)
+	if len(status.Turns) != 3 || status.CurrentTurn.RunID != "loop-pass-t03" || status.Phase != "max_turns" {
+		t.Fatalf("expected three turns and max-turn stop at t03, got %#v", status)
 	}
 	if !strings.Contains(executor.contextFor("loop-pass-t02"), "Previous Manifest") {
 		t.Fatalf("second turn did not receive continuation context: %q", executor.contextFor("loop-pass-t02"))
@@ -528,9 +1302,9 @@ func TestWebRunFinishStopsAfterCurrentTurn(t *testing.T) {
 	dir := newCleanGitWorkspace(t)
 	release := make(chan struct{})
 	executor := &loopFakeExecutor{
-		results: []string{runpkg.StatusPartial, runpkg.StatusSuccess},
-		evals:   []string{"PARTIAL", "PASS"},
-		block:   release,
+		results:     []string{"needs_work", runpkg.StatusSuccess},
+		validations: []string{"skipped", "passed"},
+		block:       release,
 	}
 	server := newTestServerWithExecutor(t, Config{
 		CWD:         dir,
@@ -556,7 +1330,7 @@ func TestWebRunFinishStopsAfterCurrentTurn(t *testing.T) {
 	}
 	close(release)
 
-	status := waitForRunStatus(t, server, "loop-finish", runpkg.StatusPartial)
+	status := waitForRunStatus(t, server, "loop-finish", "needs_work")
 	if len(status.Turns) != 1 || !status.FinishRequested || status.StopReason != "finish requested" {
 		t.Fatalf("expected finish after one turn, got %#v", status)
 	}
@@ -590,8 +1364,8 @@ func TestWebRunAutoContinueValidation(t *testing.T) {
 func TestWebRunSingleFullRunDoesNotEnableCommit(t *testing.T) {
 	dir := newCleanGitWorkspace(t)
 	executor := &loopFakeExecutor{
-		results: []string{runpkg.StatusSuccess},
-		evals:   []string{"PASS"},
+		results:     []string{runpkg.StatusSuccess},
+		validations: []string{"passed"},
 	}
 	server := newTestServerWithExecutor(t, Config{
 		CWD:         dir,
@@ -616,12 +1390,49 @@ func TestWebRunSingleFullRunDoesNotEnableCommit(t *testing.T) {
 	}
 }
 
+func TestWebRunIgnoresReportedRunDirOutsideWorkspace(t *testing.T) {
+	dir := newTestWorkspace(t)
+	outside := t.TempDir()
+	server := newTestServerWithExecutor(t, Config{
+		CWD:  dir,
+		Addr: "127.0.0.1:7331",
+		RunExecutor: func(_ context.Context, cfg runpkg.Config) (*runpkg.Result, error) {
+			runDir := filepath.Join(cfg.CWD, ".jj", "runs", cfg.RunID)
+			manifest := fmt.Sprintf(`{"run_id":%q,"status":"complete","started_at":"2026-04-25T00:00:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"passed"},"commit":{"ran":false,"status":"skipped"}}`, cfg.RunID)
+			if err := writeFakeRunFile(runDir, "manifest.json", manifest); err != nil {
+				return nil, err
+			}
+			return &runpkg.Result{RunID: cfg.RunID, RunDir: outside}, nil
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/run/start", strings.NewReader(runStartPromptForm("unsafe-run-dir", "Build from prompt.\n", true, false, false, 0)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("start status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	status := waitForRunStatus(t, server, "unsafe-run-dir", runpkg.StatusComplete)
+	if filepath.Clean(status.CurrentTurn.RunDir) == filepath.Clean(outside) {
+		t.Fatalf("outside run dir was trusted in web status: %#v", status)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "web-run.log")); !os.IsNotExist(err) {
+		t.Fatalf("outside run dir should not receive web-run.log, err=%v", err)
+	}
+	body := getRunStatusBody(t, server, "unsafe-run-dir")
+	if strings.Contains(body, outside) || strings.Contains(body, filepath.ToSlash(outside)) {
+		t.Fatalf("status response leaked outside run dir:\n%s", body)
+	}
+}
+
 func TestWebRunAutoContinueAllowsDirtyWorkspace(t *testing.T) {
 	dir := newCleanGitWorkspace(t)
 	writeFile(t, dir, "dirty.txt", "dirty\n")
 	executor := &loopFakeExecutor{
-		results: []string{runpkg.StatusSuccess},
-		evals:   []string{"PASS"},
+		results:     []string{runpkg.StatusSuccess},
+		validations: []string{"passed"},
 	}
 	server := newTestServerWithExecutor(t, Config{
 		CWD:         dir,
@@ -636,9 +1447,9 @@ func TestWebRunAutoContinueAllowsDirtyWorkspace(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("expected dirty workspace to start, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	status := waitForRunStatus(t, server, "dirty-loop", "success")
-	if len(status.Turns) != 1 {
-		t.Fatalf("expected one successful turn, got %#v", status)
+	status := waitForRunStatus(t, server, "dirty-loop", runpkg.StatusSuccess)
+	if len(status.Turns) != 3 || status.Phase != "max_turns" {
+		t.Fatalf("expected dirty workspace loop to continue until max turns, got %#v", status)
 	}
 }
 
@@ -706,12 +1517,12 @@ func containsLine(lines []string, needle string) bool {
 }
 
 type loopFakeExecutor struct {
-	mu      sync.Mutex
-	calls   []runpkg.Config
-	results []string
-	evals   []string
-	block   <-chan struct{}
-	blocked bool
+	mu          sync.Mutex
+	calls       []runpkg.Config
+	results     []string
+	validations []string
+	block       <-chan struct{}
+	blocked     bool
 }
 
 func (f *loopFakeExecutor) Run(ctx context.Context, cfg runpkg.Config) (*runpkg.Result, error) {
@@ -736,18 +1547,20 @@ func (f *loopFakeExecutor) Run(ctx context.Context, cfg runpkg.Config) (*runpkg.
 	if callIndex < len(f.results) && f.results[callIndex] != "" {
 		status = f.results[callIndex]
 	}
-	eval := "PASS"
-	if callIndex < len(f.evals) && f.evals[callIndex] != "" {
-		eval = f.evals[callIndex]
+	validation := "passed"
+	if callIndex < len(f.validations) && f.validations[callIndex] != "" {
+		validation = f.validations[callIndex]
 	}
 	runDir := filepath.Join(cfg.CWD, ".jj", "runs", cfg.RunID)
-	if err := writeFakeRunFile(runDir, "docs/SPEC.md", "# SPEC\n"); err != nil {
+	if err := writeFakeRunFile(runDir, "snapshots/spec.after.json", `{"version":1,"title":"SPEC","summary":"summary"}`); err != nil {
 		return nil, err
 	}
-	if err := writeFakeRunFile(runDir, "docs/TASK.md", "# TASK\n"); err != nil {
+	if err := writeFakeRunFile(runDir, "snapshots/tasks.after.json", `{"version":1,"tasks":[{"id":"T-FEATURE-001","title":"Task","mode":"feature","status":"done"}]}`); err != nil {
 		return nil, err
 	}
-	if err := writeFakeRunFile(runDir, "docs/EVAL.md", "# EVAL\n\n## Result\n\n"+eval+"\n"); err != nil {
+	_ = writeFakeRunFile(filepath.Join(cfg.CWD, ".jj"), "spec.json", `{"version":1,"title":"SPEC","summary":"summary"}`)
+	_ = writeFakeRunFile(filepath.Join(cfg.CWD, ".jj"), "tasks.json", `{"version":1,"tasks":[{"id":"T-FEATURE-001","title":"Task","mode":"feature","status":"done"}]}`)
+	if err := writeFakeRunFile(runDir, "validation/summary.md", "validation "+validation+"\n"); err != nil {
 		return nil, err
 	}
 	if err := writeFakeRunFile(runDir, "git/diff-summary.txt", "## git diff --stat\nfake.go\n"); err != nil {
@@ -756,7 +1569,7 @@ func (f *loopFakeExecutor) Run(ctx context.Context, cfg runpkg.Config) (*runpkg.
 	if err := writeFakeRunFile(runDir, "codex/summary.md", "Changed files: fake.go\n"); err != nil {
 		return nil, err
 	}
-	manifest := fmt.Sprintf(`{"run_id":%q,"status":%q,"started_at":"2026-04-25T00:00:00Z","finished_at":"2026-04-25T00:00:01Z","artifacts":{"manifest":"manifest.json","spec":"docs/SPEC.md","task":"docs/TASK.md","eval":"docs/EVAL.md","git_diff_summary":"git/diff-summary.txt","codex_summary":"codex/summary.md"},"evaluation":{"ran":true,"result":%q,"score":80},"commit":{"ran":false,"status":"skipped"}}`, cfg.RunID, status, eval)
+	manifest := fmt.Sprintf(`{"run_id":%q,"status":%q,"started_at":"2026-04-25T00:00:00Z","finished_at":"2026-04-25T00:00:01Z","artifacts":{"manifest":"manifest.json","snapshot_spec_after":"snapshots/spec.after.json","snapshot_tasks_after":"snapshots/tasks.after.json","git_diff_summary":"git/diff-summary.txt","codex_summary":"codex/summary.md","validation_summary":"validation/summary.md"},"validation":{"status":%q,"summary_path":"validation/summary.md"},"commit":{"ran":false,"status":"skipped"}}`, cfg.RunID, status, validation)
 	if err := writeFakeRunFile(runDir, "manifest.json", manifest); err != nil {
 		return nil, err
 	}
@@ -794,7 +1607,7 @@ func writeFakeRunFile(runDir, rel, data string) error {
 }
 
 func runStartForm(runID string, dryRun, confirm, autoContinue bool, maxTurns int) string {
-	values := "plan_path=plan.md&cwd=&run_id=" + runID + "&planning_agents=1&spec_doc=docs%2FSPEC.md&task_doc=docs%2FTASK.md&eval_doc=docs%2FEVAL.md"
+	values := "plan_path=plan.md&cwd=&run_id=" + runID + "&planning_agents=1"
 	if dryRun {
 		values += "&dry_run=true"
 	}
@@ -808,6 +1621,28 @@ func runStartForm(runID string, dryRun, confirm, autoContinue bool, maxTurns int
 		values += fmt.Sprintf("&max_turns=%d", maxTurns)
 	}
 	return values
+}
+
+func runStartPromptForm(runID, prompt string, dryRun, confirm, autoContinue bool, maxTurns int) string {
+	values := url.Values{}
+	values.Set("plan_prompt", prompt)
+	values.Set("cwd", "")
+	values.Set("run_id", runID)
+	values.Set("planning_agents", "1")
+	values.Set("allow_no_git", "true")
+	if dryRun {
+		values.Set("dry_run", "true")
+	}
+	if confirm {
+		values.Set("confirm_full_run", "true")
+	}
+	if autoContinue {
+		values.Set("auto_continue", "true")
+	}
+	if maxTurns > 0 {
+		values.Set("max_turns", fmt.Sprintf("%d", maxTurns))
+	}
+	return values.Encode()
 }
 
 func newCleanGitWorkspace(t *testing.T) string {
@@ -838,16 +1673,18 @@ func newTestWorkspace(t *testing.T) string {
 	dir := t.TempDir()
 	writeFile(t, dir, "README.md", "# Root\n")
 	writeFile(t, dir, "plan.md", "# Product Plan\n")
-	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n")
-	writeFile(t, dir, "docs/TASK.md", "# TASK\n")
+	writeFile(t, dir, "docs/SPEC.md", "# Spec Doc\n")
+	writeFile(t, dir, "docs/TASK.md", "# Task Doc\n")
+	writeFile(t, dir, ".jj/spec.json", `{"version":1,"title":"SPEC","summary":"Do the spec."}`)
+	writeFile(t, dir, ".jj/tasks.json", `{"version":1,"active_task_id":null,"tasks":[{"id":"T-SEC-001","title":"Secure artifacts","mode":"security","status":"queued"}]}`)
 	writeFile(t, dir, "docs/guide.md", "# Guide\n")
 	writeFile(t, dir, "playground/plan.md", "# Plan\n")
 	writeFile(t, dir, ".git/ignored.md", "# ignored\n")
 	writeFile(t, dir, ".jj/runs/20260425-110000-aaaaaa/manifest.json", `{"run_id":"20260425-110000-aaaaaa","status":"success","started_at":"2026-04-25T11:00:00Z","artifacts":{"manifest":"manifest.json"}}`)
-	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/manifest.json", `{"run_id":"20260425-120000-bbbbbb","status":"failed","started_at":"2026-04-25T12:00:00Z","artifacts":{"manifest":"manifest.json","spec":"docs/SPEC.md","task":"docs/TASK.md","eval":"docs/EVAL.md"},"risks":["review required"]}`)
-	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/docs/SPEC.md", "# SPEC\n\nDo the spec.\n")
-	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/docs/TASK.md", "# TASK\n\nDo the task.\n")
-	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/docs/EVAL.md", "# EVAL\n\nPASS.\n")
+	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/manifest.json", `{"run_id":"20260425-120000-bbbbbb","status":"failed","started_at":"2026-04-25T12:00:00Z","task_proposal_mode":"auto","resolved_task_proposal_mode":"security","selected_task_id":"T-SEC-001","repository":{"enabled":true,"provider":"github","repo_url":"https://user:ghp_dashboardsecret1234567890@github.com/acme/app.git","sanitized_repo_url":"https://github.com/acme/app.git","repo_dir":"/tmp/acme-app","base_branch":"main","work_branch":"jj/run-20260425-120000-bbbbbb","push_enabled":true,"push_mode":"branch","pushed":true,"push_status":"pushed","pushed_ref":"origin/jj/run-20260425-120000-bbbbbb"},"artifacts":{"manifest":"manifest.json","snapshot_spec_after":"snapshots/spec.after.json","snapshot_tasks_after":"snapshots/tasks.after.json","validation_summary":"validation/summary.md"},"validation":{"status":"failed","summary_path":"validation/summary.md"},"risks":["review required"]}`)
+	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/snapshots/spec.after.json", `{"version":1,"title":"SPEC","summary":"Do the spec."}`)
+	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/snapshots/tasks.after.json", `{"version":1,"tasks":[{"id":"T-SEC-001","title":"Do the task.","mode":"security","status":"queued"}]}`)
+	writeFile(t, dir, ".jj/runs/20260425-120000-bbbbbb/validation/summary.md", "failed\n")
 	return dir
 }
 

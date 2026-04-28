@@ -52,6 +52,39 @@ func TestCaptureGitDiff(t *testing.T) {
 	}
 }
 
+func TestCaptureUntrackedEvidenceSkipsDeletedOutsideAndInternalPaths(t *testing.T) {
+	dir := t.TempDir()
+	evidence, err := CaptureUntrackedEvidence(context.Background(), dir, true, fakeGitRunner{
+		outputs: map[string]string{
+			"ls-files --others --exclude-standard -z": "gone.txt\x00../outside.txt\x00.jj/runs/current/input.md\x00",
+		},
+	})
+	if err != nil {
+		t.Fatalf("capture untracked evidence: %v", err)
+	}
+	if len(evidence.Files) != 1 || len(evidence.Captured) != 0 || len(evidence.Skipped) != 3 {
+		t.Fatalf("unexpected evidence: %#v", evidence)
+	}
+	for _, want := range []string{"deleted during capture", "outside workspace", "jj internal artifact path"} {
+		if !strings.Contains(evidence.Summary, want) {
+			t.Fatalf("summary missing %q:\n%s", want, evidence.Summary)
+		}
+	}
+	if strings.TrimSpace(evidence.Patch) != "" {
+		t.Fatalf("unsafe files should not be inlined:\n%s", evidence.Patch)
+	}
+}
+
+func TestCaptureUntrackedEvidenceUnavailableWithoutGit(t *testing.T) {
+	evidence, err := CaptureUntrackedEvidence(context.Background(), t.TempDir(), false)
+	if err != nil {
+		t.Fatalf("capture untracked evidence: %v", err)
+	}
+	if evidence.Available || !strings.Contains(evidence.Summary, "unavailable") {
+		t.Fatalf("expected unavailable evidence, got %#v", evidence)
+	}
+}
+
 func initGit(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -59,6 +92,13 @@ func initGit(t *testing.T) string {
 	}
 	dir := t.TempDir()
 	runGit(t, dir, "init")
+	path := filepath.Join(dir, "scripts", "validate.sh")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir validation script: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nset -eu\nprintf 'ok\\n'\n"), 0o755); err != nil {
+		t.Fatalf("write validation script: %v", err)
+	}
 	return dir
 }
 

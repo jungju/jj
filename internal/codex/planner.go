@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/jungju/jj/internal/artifact"
 	ai "github.com/jungju/jj/internal/openai"
 	"github.com/jungju/jj/internal/secrets"
+	"github.com/jungju/jj/internal/security"
 )
 
 type Executor interface {
@@ -56,13 +58,12 @@ func (p Planner) Merge(ctx context.Context, req ai.MergeRequest) (ai.MergeResult
 	return out, mustPrettyJSON(out), nil
 }
 
-func (p Planner) Evaluate(ctx context.Context, req ai.EvaluationRequest) (ai.EvaluationResult, []byte, error) {
-	var out ai.EvaluationResult
-	raw, err := p.runJSON(ctx, "eval", evaluationPrompt(req), &out)
+func (p Planner) ReconcileSpec(ctx context.Context, req ai.ReconcileSpecRequest) (ai.ReconcileSpecResult, []byte, error) {
+	var out ai.ReconcileSpecResult
+	raw, err := p.runJSON(ctx, "spec-reconcile", reconcileSpecPrompt(req), &out)
 	if err != nil {
-		return out, raw, fmt.Errorf("codex eval: %w", err)
+		return out, raw, fmt.Errorf("codex spec reconcile: %w", err)
 	}
-	ai.NormalizeEvaluation(&out)
 	return out, mustPrettyJSON(out), nil
 }
 
@@ -87,6 +88,22 @@ func (p Planner) runJSON(ctx context.Context, stage, prompt string, target any) 
 		EventsPath:        eventsPath,
 		OutputLastMessage: lastMessagePath,
 		AllowNoGit:        p.AllowNoGit,
+	})
+	_, _ = p.Store.WriteJSON(fmt.Sprintf("planning/%s.command.json", stage), map[string]any{
+		"provider": "codex",
+		"name":     commandName(firstNonEmpty(p.Bin, "codex")),
+		"model":    secrets.Redact(p.Model),
+		"cwd":      "[workspace]",
+		"run_id":   secrets.Redact(p.Store.RunID),
+		"stage":    secrets.Redact(stage),
+		"argv": security.SanitizeCommandArgv(
+			append([]string{firstNonEmpty(p.Bin, "codex")}, BuildArgs(Request{Bin: p.Bin, CWD: p.CWD, Model: p.Model, EventsPath: eventsPath, OutputLastMessage: lastMessagePath, AllowNoGit: p.AllowNoGit})...),
+			security.CommandPathRoot{Path: p.Store.RunDir, Label: "[run]"},
+			security.CommandPathRoot{Path: p.CWD, Label: "[workspace]"},
+		),
+		"status":      commandStatus(runErr),
+		"exit_code":   result.ExitCode,
+		"duration_ms": result.DurationMS,
 	})
 	if p.Record != nil {
 		p.Record("planning_"+stage+"_events", eventsPath)
@@ -117,11 +134,11 @@ func redactArtifact(path string) error {
 	if err != nil {
 		return err
 	}
-	redacted := []byte(secrets.Redact(string(data)))
+	redacted := security.RedactContent(path, data)
 	if string(redacted) == string(data) {
 		return nil
 	}
-	return artifact.AtomicWriteFile(path, redacted, 0o644)
+	return artifact.AtomicWriteFile(path, redacted, artifact.PrivateFileMode)
 }
 
 func mustPrettyJSON(value any) []byte {
@@ -141,8 +158,8 @@ Required JSON shape:
 {
   "agent": "%s",
   "summary": "...",
-  "spec_markdown": "...",
-  "task_markdown": "...",
+  "spec_markdown": "compact spec JSON draft or concise spec text",
+  "task_markdown": "compact task JSON draft or concise task text",
   "risks": ["..."],
   "assumptions": ["..."],
   "acceptance_criteria": ["..."],
@@ -151,10 +168,14 @@ Required JSON shape:
 
 Agent focus: %s
 
-Original plan:
 %s
 
-Produce an implementation-ready planning draft.`, req.Agent.Name, req.Agent.Focus, req.Plan)
+Planning context:
+%s
+
+When a current .jj/spec.json state is present, treat it as the source of truth. Treat plan.md as product vision/background only. Do not propose tasks already completed unless fixing a regression.
+
+Produce an implementation-ready planning draft.`, req.Agent.Name, req.Agent.Focus, taskProposalPromptBlock(req.TaskProposalMode, req.ResolvedTaskProposalMode, req.TaskProposalInstruction), req.Plan)
 }
 
 func mergePrompt(req ai.MergeRequest) string {
@@ -165,41 +186,25 @@ Return only one JSON object. Do not use Markdown fences.
 
 Required JSON shape:
 {
-  "spec": "# SPEC\n...",
-  "task": "# TASK\n...",
+  "spec": "{\"version\":1,\"title\":\"...\",\"summary\":\"...\",\"goals\":[],\"non_goals\":[],\"requirements\":[],\"acceptance_criteria\":[],\"open_questions\":[]}",
+  "task": "{\"version\":1,\"active_task_id\":null,\"tasks\":[{\"id\":\"T-FEATURE-001\",\"title\":\"...\",\"mode\":\"feature\",\"priority\":\"high\",\"status\":\"queued\",\"reason\":\"...\",\"acceptance_criteria\":[],\"validation_command\":\"./scripts/validate.sh\"}]}",
   "notes": ["..."]
 }
 
-Merge the original plan and drafts into final SPEC.md and TASK.md contents.
+Merge the planning context and drafts into final compact JSON state for .jj/spec.json and a proposed task batch for .jj/tasks.json.
 
-SPEC.md must include:
-# SPEC
-## Overview
-## Goals
-## Non-Goals
-## User Stories
-## Functional Requirements
-## CLI Behavior
-## Pipeline Behavior
-## Artifact Layout
-## Configuration
-## Error Handling
-## Security and Privacy
-## Observability
-## Acceptance Criteria
+Task proposal context:
+`)
+	b.WriteString(taskProposalPromptBlock(req.TaskProposalMode, req.ResolvedTaskProposalMode, req.TaskProposalInstruction))
+	b.WriteString(`
 
-TASK.md must include:
-# TASK
-## Objective
-## Constraints
-## Implementation Steps
-## Files and Packages to Inspect
-## Required Changes
-## Testing Requirements
-## Manual Verification
-## Done Criteria
+The spec JSON must include version, title, summary, goals, non_goals, requirements, acceptance_criteria, open_questions, created_at, and updated_at.
 
-Original plan:
+When a current .jj/spec.json state is present in the planning context, it is the source of truth. plan.md is product vision/background only. Do not propose tasks already completed unless fixing a regression.
+
+The task JSON must include version, active_task_id, and tasks. Treat this as append-only proposal input, not a full replacement for .jj/tasks.json or existing history. Do not include existing tasks from context. jj will assign fresh task IDs, append every proposed task, and select the first proposed task for the current full run. Each task must include id, title, mode, priority, status, reason, acceptance_criteria, and validation_command. Supported statuses are queued, active, in_progress, done, blocked, failed, skipped, and superseded. Do not reset done, failed, skipped, or superseded tasks from continuation context back to queued/in_progress, and do not reuse their task IDs. Propose the next subplan/task after completed work. Auto or balanced task proposal mode must resolve to a concrete task category such as feature, security, hardening, quality, bugfix, or docs.
+
+Planning context:
 `)
 	b.WriteString(req.Plan)
 	b.WriteString("\n\nDrafts:\n")
@@ -211,49 +216,88 @@ Original plan:
 	return b.String()
 }
 
-func evaluationPrompt(req ai.EvaluationRequest) string {
-	return fmt.Sprintf(`You are jj's Codex fallback evaluator.
+func reconcileSpecPrompt(req ai.ReconcileSpecRequest) string {
+	return fmt.Sprintf(`You are jj's Codex fallback SPEC reconciler.
 
 Return only one JSON object. Do not use Markdown fences.
 
 Required JSON shape:
 {
-  "result": "PASS|PARTIAL|FAIL",
-  "score": 0,
-  "summary": "...",
-  "what_changed": ["..."],
-  "requirements_coverage": ["..."],
-  "test_coverage": ["..."],
-  "risks": ["..."],
-  "regressions": ["..."],
-  "recommended_followups": ["..."]
+  "spec": "{\"version\":1,\"title\":\"...\",\"summary\":\"...\",\"goals\":[],\"non_goals\":[],\"requirements\":[],\"acceptance_criteria\":[],\"open_questions\":[],\"created_at\":\"\",\"updated_at\":\"\"}",
+  "notes": ["..."]
 }
 
-Be strict. If evidence is incomplete, use PARTIAL rather than PASS.
+Reconcile jj's current SPEC state with one validated implementation turn.
 
-Original plan:
+Rules:
+- Preserve the existing .jj/spec.json schema; do not add top-level fields.
+- The previous SPEC is the source of truth.
+- Incorporate only behavior supported by the selected task, Codex summary, git diff summary, and passed validation evidence.
+- Do not include secrets, raw logs, or environment values.
+
+Previous SPEC:
 %s
 
-SPEC.md:
+Planned SPEC:
 %s
 
-TASK.md:
+Selected task:
 %s
 
 Codex summary:
 %s
 
-Codex JSONL events:
+Git diff summary:
 %s
 
-Git diff/status summary:
-%s
-`, req.Plan, req.Spec, req.Task, req.CodexSummary, truncate(req.CodexEvents, 60000), req.GitDiff)
+Validation summary:
+%s`, req.PreviousSpec, req.PlannedSpec, req.SelectedTask, req.CodexSummary, req.GitDiffSummary, req.ValidationSummary)
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
+func taskProposalPromptBlock(selected, resolved, instruction string) string {
+	selected = strings.TrimSpace(selected)
+	resolved = strings.TrimSpace(resolved)
+	instruction = strings.TrimSpace(instruction)
+	if selected == "" && resolved == "" && instruction == "" {
+		return "Task Proposal Mode: auto\nResolved Mode: feature\nInstruction: Choose a small next task from current evidence."
 	}
-	return s[:max] + "\n...[truncated]..."
+	var b strings.Builder
+	if selected != "" {
+		b.WriteString("Task Proposal Mode: ")
+		b.WriteString(selected)
+		b.WriteByte('\n')
+	}
+	if resolved != "" {
+		b.WriteString("Resolved Mode: ")
+		b.WriteString(resolved)
+		b.WriteByte('\n')
+	}
+	if instruction != "" {
+		b.WriteString(instruction)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func commandStatus(err error) string {
+	if err != nil {
+		return "failed"
+	}
+	return "success"
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func commandName(command string) string {
+	name := filepath.Base(strings.TrimSpace(command))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return "command"
+	}
+	return name
 }

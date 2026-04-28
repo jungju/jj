@@ -44,3 +44,26 @@ func TestRedactRemovesSecretKeyValuePairs(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactRemovesGitHubTokenCandidates(t *testing.T) {
+	input := "clone failed with ghp_abcdefghijklmnop and github_pat_1234567890abcdef"
+	got := Redact(input)
+	for _, secret := range []string{"ghp_abcdefghijklmnop", "github_pat_1234567890abcdef"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("GitHub token %q was not redacted: %q", secret, got)
+		}
+	}
+	if !strings.Contains(got, "[jj-omitted]") {
+		t.Fatalf("expected GitHub redaction marker, got %q", got)
+	}
+}
+
+func TestRedactRemovesURLCredentials(t *testing.T) {
+	got := Redact("remote https://user:ghp_abcdefghijklmnop@github.com/org/repo.git failed")
+	if strings.Contains(got, "user:") || strings.Contains(got, "ghp_abcdefghijklmnop") {
+		t.Fatalf("URL credentials were not redacted: %q", got)
+	}
+	if !strings.Contains(got, "https://github.com/org/repo.git") {
+		t.Fatalf("sanitized URL missing from redacted text: %q", got)
+	}
+}

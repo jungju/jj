@@ -3,7 +3,7 @@ package serve
 import (
 	"io"
 	"os"
-	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +17,8 @@ const (
 	maxWebRunLogLines = 400
 	maxWebRunLogBytes = 64 * 1024
 )
+
+var dashboardAbsolutePathPattern = regexp.MustCompile(`(^|[\s="'(])(/[^\s"'<>),}]+)`)
 
 type webRunRegistry struct {
 	mu   sync.Mutex
@@ -189,7 +191,7 @@ func (r *webRunState) setCurrentTurnStatus(status, phase, errText string) {
 			turn.Phase = phase
 		}
 		if errText != "" {
-			turn.Error = secrets.Redact(errText)
+			turn.Error = redactDashboardLogPaths(secrets.Redact(errText))
 		}
 		if webRunDone(status) {
 			turn.FinishedAt = now
@@ -202,7 +204,7 @@ func (r *webRunState) setCurrentTurnStatus(status, phase, errText string) {
 		r.phase = phase
 	}
 	if errText != "" {
-		r.err = secrets.Redact(errText)
+		r.err = redactDashboardLogPaths(secrets.Redact(errText))
 	}
 	r.mu.Unlock()
 	r.persistLog()
@@ -219,10 +221,10 @@ func (r *webRunState) setLoopStatus(status, phase, errText, stopReason string) {
 		r.phase = phase
 	}
 	if errText != "" {
-		r.err = secrets.Redact(errText)
+		r.err = redactDashboardLogPaths(secrets.Redact(errText))
 	}
 	if stopReason != "" {
-		r.stopReason = secrets.Redact(stopReason)
+		r.stopReason = redactDashboardLogPaths(secrets.Redact(stopReason))
 	}
 	if webRunDone(status) {
 		r.finishedAt = now
@@ -249,6 +251,7 @@ func (r *webRunState) finishWasRequested() bool {
 
 func (r *webRunState) appendLog(text string) {
 	text = secrets.Redact(text)
+	text = redactDashboardLogPaths(text)
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
 	lines := strings.Split(text, "\n")
@@ -300,7 +303,7 @@ func (r *webRunState) view() webRunView {
 		Phase:           r.phase,
 		StartedAt:       r.startedAt,
 		FinishedAt:      r.finishedAt,
-		RunDir:          runDir,
+		RunDir:          displayRunDir(runDir, current.RunID),
 		Logs:            logs,
 		Error:           r.err,
 		ArtifactURL:     artifactURL,
@@ -322,7 +325,7 @@ func (t webRunTurnState) view() webRunTurnView {
 		Phase:       t.Phase,
 		StartedAt:   t.StartedAt,
 		FinishedAt:  t.FinishedAt,
-		RunDir:      t.RunDir,
+		RunDir:      displayRunDir(t.RunDir, t.RunID),
 		Error:       t.Error,
 		ArtifactURL: "/run?id=" + t.RunID,
 		Done:        webRunDone(t.Status),
@@ -330,21 +333,45 @@ func (t webRunTurnState) view() webRunTurnView {
 }
 
 func (r *webRunState) persistLog() {
-	view := r.view()
-	if strings.TrimSpace(view.RunDir) == "" || len(view.Logs) == 0 {
+	r.mu.Lock()
+	logs := append([]string(nil), r.logs...)
+	runDir := ""
+	if r.currentTurn >= 0 && r.currentTurn < len(r.turns) {
+		runDir = r.turns[r.currentTurn].RunDir
+	}
+	r.mu.Unlock()
+	if strings.TrimSpace(runDir) == "" || len(logs) == 0 {
 		return
 	}
-	info, err := os.Stat(view.RunDir)
+	info, err := os.Stat(runDir)
 	if err != nil || !info.IsDir() {
 		return
 	}
-	data := strings.Join(view.Logs, "\n") + "\n"
-	_ = artifact.AtomicWriteFile(filepath.Join(view.RunDir, "web-run.log"), []byte(data), 0o644)
+	data := strings.Join(logs, "\n") + "\n"
+	path, err := safeJoin(runDir, "web-run.log")
+	if err != nil {
+		return
+	}
+	_ = artifact.AtomicWriteFile(path, []byte(secrets.Redact(data)), artifact.PrivateFileMode)
+}
+
+func displayRunDir(runDir, runID string) string {
+	if strings.TrimSpace(runID) != "" {
+		return ".jj/runs/" + runID
+	}
+	if strings.TrimSpace(runDir) == "" {
+		return ""
+	}
+	return "[run]"
+}
+
+func redactDashboardLogPaths(text string) string {
+	return dashboardAbsolutePathPattern.ReplaceAllString(text, "${1}[path]")
 }
 
 func webRunDone(status string) bool {
 	switch status {
-	case "dry_run_complete", "complete", "partial_failed", "planned", "completed", "succeeded", "planning_failed", "implementation_failed", "evaluation_failed", "partial", "success", "failed", "cancelled":
+	case "dry_run_complete", "complete", "partial_failed", "planned", "completed", "succeeded", "planning_failed", "implementation_failed", "partial", "success", "failed", "cancelled":
 		return true
 	default:
 		return false
@@ -366,14 +393,14 @@ func phaseFromLog(line string) string {
 		return "merge"
 	case strings.Contains(lower, "dry run complete"):
 		return "dry_run_complete"
-	case strings.Contains(lower, "wrote docs/"):
+	case strings.Contains(lower, "wrote .jj/spec.json") || strings.Contains(lower, "wrote .jj/tasks.json"):
 		return "write_outputs"
 	case strings.Contains(lower, "running codex exec"):
 		return "codex"
 	case strings.Contains(lower, "capturing git diff"):
 		return "git_capture"
-	case strings.Contains(lower, "evaluating result"):
-		return "evaluation"
+	case strings.Contains(lower, "running validation"):
+		return "validation"
 	case strings.Contains(lower, "jj: done"):
 		return "completed"
 	case strings.Contains(lower, "jj: failed") || strings.Contains(lower, "jj web: run failed"):

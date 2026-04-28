@@ -21,25 +21,11 @@ func mergeSchema() map[string]any {
 	}, []string{"spec", "task", "notes"})
 }
 
-func evaluationSchema() map[string]any {
+func specReconcileSchema() map[string]any {
 	return objectSchema(map[string]any{
-		"result": map[string]any{
-			"type": "string",
-			"enum": []string{"PASS", "PARTIAL", "FAIL"},
-		},
-		"score": map[string]any{
-			"type":    "integer",
-			"minimum": 0,
-			"maximum": 100,
-		},
-		"summary":               stringSchema(),
-		"what_changed":          stringArraySchema(),
-		"requirements_coverage": stringArraySchema(),
-		"test_coverage":         stringArraySchema(),
-		"risks":                 stringArraySchema(),
-		"regressions":           stringArraySchema(),
-		"recommended_followups": stringArraySchema(),
-	}, []string{"result", "score", "summary", "what_changed", "requirements_coverage", "test_coverage", "risks", "regressions", "recommended_followups"})
+		"spec":  stringSchema(),
+		"notes": stringArraySchema(),
+	}, []string{"spec", "notes"})
 }
 
 func objectSchema(properties map[string]any, required []string) map[string]any {

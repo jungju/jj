@@ -3,6 +3,7 @@ package run
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -13,10 +14,16 @@ func TestResolveConfigUsesJJRCValues(t *testing.T) {
 		"openai_model": "file-openai",
 		"codex_model": "file-codex",
 		"codex_bin": "/tmp/file-codex",
+		"task_proposal_mode": "security",
+		"repo": "https://github.com/acme/app.git",
+		"repo_dir": "/tmp/acme-app",
+		"base_branch": "main",
+		"work_branch": "jj/file-work",
+		"push": true,
+		"push_mode": "branch",
+		"github_token_env": "MY_GITHUB_TOKEN",
+		"allow_dirty": true,
 		"planning_agents": 2,
-		"spec_doc": "PRODUCT.md",
-		"task_doc": "WORK.md",
-		"eval_doc": "REVIEW.md",
 		"dry_run": true,
 		"allow_no_git": true
 	}`)
@@ -36,7 +43,19 @@ func TestResolveConfigUsesJJRCValues(t *testing.T) {
 	if cfg.PlanningAgents != 2 || cfg.OpenAIModel != "file-openai" || cfg.CodexModel != "file-codex" || cfg.CodexBin != "/tmp/file-codex" {
 		t.Fatalf("unexpected resolved config: %#v", cfg)
 	}
-	if cfg.SpecDoc != "PRODUCT.md" || cfg.TaskDoc != "WORK.md" || cfg.EvalDoc != "REVIEW.md" || !cfg.DryRun || !cfg.AllowNoGit {
+	if cfg.TaskProposalMode != TaskProposalModeSecurity {
+		t.Fatalf("unexpected task proposal mode: %#v", cfg)
+	}
+	if cfg.RepoURL != "https://github.com/acme/app.git" || cfg.RepoDir != "/tmp/acme-app" || cfg.BaseBranch != "main" || cfg.WorkBranch != "jj/file-work" {
+		t.Fatalf("unexpected repository config: %#v", cfg)
+	}
+	if !cfg.Push || cfg.PushMode != PushModeBranch || cfg.GitHubTokenEnv != "MY_GITHUB_TOKEN" || !cfg.RepoAllowDirty {
+		t.Fatalf("unexpected repository policy config: %#v", cfg)
+	}
+	if !cfg.GitHubTokenEnvExplicit {
+		t.Fatalf("configured github_token_env should lock token env selection: %#v", cfg)
+	}
+	if !cfg.DryRun || !cfg.AllowNoGit {
 		t.Fatalf("unexpected file defaults: %#v", cfg)
 	}
 	if cfg.OpenAIAPIKeyEnv != "JJ_TEST_OPENAI_KEY" || cfg.OpenAIAPIKey != "sk-test-value" {
@@ -87,12 +106,9 @@ func TestResolveConfigUsesEnvTargetCWDJJRC(t *testing.T) {
 	}
 }
 
-func TestResolveConfigExplicitFlagsOverrideJJRCBooleansAndDocs(t *testing.T) {
+func TestResolveConfigExplicitFlagsOverrideJJRCBooleans(t *testing.T) {
 	dir := t.TempDir()
 	writeJJRC(t, dir, `{
-		"spec_path": "docs/PRODUCT.md",
-		"task_path": "docs/WORK.md",
-		"eval_path": "docs/REVIEW.md",
 		"dry_run": true,
 		"allow_no_git": true
 	}`)
@@ -101,12 +117,6 @@ func TestResolveConfigExplicitFlagsOverrideJJRCBooleansAndDocs(t *testing.T) {
 		ConfigSearchDir:    dir,
 		PlanningAgents:     DefaultPlanningAgents,
 		OpenAIModel:        defaultOpenAIModel,
-		SpecDoc:            "custom/SPEC.md",
-		TaskDoc:            "custom/TASK.md",
-		EvalDoc:            "custom/EVAL.md",
-		SpecDocExplicit:    true,
-		TaskDocExplicit:    true,
-		EvalDocExplicit:    true,
 		DryRun:             false,
 		AllowNoGit:         false,
 		DryRunExplicit:     true,
@@ -115,32 +125,8 @@ func TestResolveConfigExplicitFlagsOverrideJJRCBooleansAndDocs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve config: %v", err)
 	}
-	if cfg.SpecDoc != "custom/SPEC.md" || cfg.TaskDoc != "custom/TASK.md" || cfg.EvalDoc != "custom/EVAL.md" || cfg.DryRun || cfg.AllowNoGit {
+	if cfg.DryRun || cfg.AllowNoGit {
 		t.Fatalf("explicit flags should override .jjrc defaults: %#v", cfg)
-	}
-}
-
-func TestResolveConfigSpecPathUsesPathMode(t *testing.T) {
-	dir := t.TempDir()
-	writeJJRC(t, dir, `{
-		"spec_path": "SPEC.md",
-		"task_path": "TASK.md",
-		"eval_path": "EVAL.md"
-	}`)
-
-	cfg, err := ResolveConfig(Config{
-		ConfigSearchDir: dir,
-		PlanningAgents:  DefaultPlanningAgents,
-		OpenAIModel:     defaultOpenAIModel,
-	})
-	if err != nil {
-		t.Fatalf("resolve config: %v", err)
-	}
-	if !cfg.SpecDocPathMode || !cfg.TaskDocPathMode || !cfg.EvalDocPathMode {
-		t.Fatalf("spec/task/eval path settings should use path mode: %#v", cfg)
-	}
-	if got := docRelPath(cfg.SpecDoc, cfg.SpecDocPathMode); got != "SPEC.md" {
-		t.Fatalf("expected root spec path, got %q", got)
 	}
 }
 
@@ -174,19 +160,31 @@ func TestResolveConfigEnvOverridesJJRCForWorkflowFields(t *testing.T) {
 	writeJJRC(t, dir, `{
 		"cwd": "/file/workspace",
 		"run_id": "file-run",
+		"task_proposal_mode": "docs",
+		"repo": "https://github.com/file/app.git",
+		"repo_dir": "/file/repo",
+		"base_branch": "file-main",
+		"work_branch": "jj/file-work",
+		"push": false,
+		"push_mode": "none",
+		"github_token_env": "FILE_GITHUB_TOKEN",
+		"allow_dirty": false,
 		"planning_agents": 2,
-		"spec_path": "docs/FILE_SPEC.md",
-		"task_path": "docs/FILE_TASK.md",
-		"eval_path": "docs/FILE_EVAL.md",
 		"dry_run": false,
 		"allow_no_git": false
 	}`)
 	t.Setenv("JJ_CWD", "/env/workspace")
 	t.Setenv("JJ_RUN_ID", "env-run")
+	t.Setenv("JJ_TASK_PROPOSAL_MODE", "quality")
+	t.Setenv("JJ_REPO", "https://github.com/env/app.git")
+	t.Setenv("JJ_REPO_DIR", "/env/repo")
+	t.Setenv("JJ_BASE_BRANCH", "env-main")
+	t.Setenv("JJ_WORK_BRANCH", "jj/env-work")
+	t.Setenv("JJ_PUSH", "true")
+	t.Setenv("JJ_PUSH_MODE", "branch")
+	t.Setenv("JJ_GITHUB_TOKEN_ENV", "ENV_GITHUB_TOKEN")
+	t.Setenv("JJ_REPO_ALLOW_DIRTY", "true")
 	t.Setenv("JJ_PLANNING_AGENTS", "5")
-	t.Setenv("JJ_SPEC_PATH", "docs/ENV_SPEC.md")
-	t.Setenv("JJ_TASK_PATH", "docs/ENV_TASK.md")
-	t.Setenv("JJ_EVAL_PATH", "docs/ENV_EVAL.md")
 	t.Setenv("JJ_DRY_RUN", "true")
 	t.Setenv("JJ_ALLOW_NO_GIT", "true")
 
@@ -201,11 +199,20 @@ func TestResolveConfigEnvOverridesJJRCForWorkflowFields(t *testing.T) {
 	if cfg.CWD != "/env/workspace" || cfg.RunID != "env-run" || cfg.PlanningAgents != 5 {
 		t.Fatalf("env should override workflow fields: %#v", cfg)
 	}
-	if cfg.SpecDoc != "docs/ENV_SPEC.md" || cfg.TaskDoc != "docs/ENV_TASK.md" || cfg.EvalDoc != "docs/ENV_EVAL.md" {
-		t.Fatalf("env should override document fields: %#v", cfg)
+	if cfg.TaskProposalMode != TaskProposalModeQuality {
+		t.Fatalf("env should override task proposal mode: %#v", cfg)
 	}
-	if !cfg.SpecDocPathMode || !cfg.TaskDocPathMode || !cfg.EvalDocPathMode || !cfg.DryRun || !cfg.AllowNoGit {
-		t.Fatalf("env should set path mode and booleans: %#v", cfg)
+	if cfg.RepoURL != "https://github.com/env/app.git" || cfg.RepoDir != "/env/repo" || cfg.BaseBranch != "env-main" || cfg.WorkBranch != "jj/env-work" {
+		t.Fatalf("env should override repository fields: %#v", cfg)
+	}
+	if !cfg.Push || cfg.PushMode != PushModeBranch || cfg.GitHubTokenEnv != "ENV_GITHUB_TOKEN" || !cfg.RepoAllowDirty {
+		t.Fatalf("env should override repository policy fields: %#v", cfg)
+	}
+	if !cfg.GitHubTokenEnvExplicit {
+		t.Fatalf("JJ_GITHUB_TOKEN_ENV should lock token env selection: %#v", cfg)
+	}
+	if !cfg.DryRun || !cfg.AllowNoGit {
+		t.Fatalf("env should set booleans: %#v", cfg)
 	}
 }
 
@@ -214,19 +221,23 @@ func TestResolveConfigExplicitFlagsOverrideEnvAndJJRC(t *testing.T) {
 	writeJJRC(t, dir, `{
 		"openai_model": "file-openai",
 		"codex_model": "file-codex",
+		"task_proposal_mode": "security",
 		"planning_agents": 2
 	}`)
 	t.Setenv("JJ_OPENAI_MODEL", "env-openai")
 	t.Setenv("JJ_CODEX_MODEL", "env-codex")
+	t.Setenv("JJ_TASK_PROPOSAL_MODE", "docs")
 
 	cfg, err := ResolveConfig(Config{
-		ConfigSearchDir:        dir,
-		PlanningAgents:         4,
-		OpenAIModel:            "flag-openai",
-		CodexModel:             "flag-codex",
-		PlanningAgentsExplicit: true,
-		OpenAIModelExplicit:    true,
-		CodexModelExplicit:     true,
+		ConfigSearchDir:          dir,
+		PlanningAgents:           4,
+		OpenAIModel:              "flag-openai",
+		CodexModel:               "flag-codex",
+		TaskProposalMode:         TaskProposalModeHardening,
+		PlanningAgentsExplicit:   true,
+		OpenAIModelExplicit:      true,
+		CodexModelExplicit:       true,
+		TaskProposalModeExplicit: true,
 	})
 	if err != nil {
 		t.Fatalf("resolve config: %v", err)
@@ -234,9 +245,12 @@ func TestResolveConfigExplicitFlagsOverrideEnvAndJJRC(t *testing.T) {
 	if cfg.PlanningAgents != 4 || cfg.OpenAIModel != "flag-openai" || cfg.CodexModel != "flag-codex" {
 		t.Fatalf("explicit flags should override env and .jjrc: %#v", cfg)
 	}
+	if cfg.TaskProposalMode != TaskProposalModeHardening {
+		t.Fatalf("explicit task proposal mode should override env and .jjrc: %#v", cfg)
+	}
 }
 
-func TestResolveConfigAppliesDefaultDocumentNames(t *testing.T) {
+func TestResolveConfigAppliesDefaults(t *testing.T) {
 	cfg, err := ResolveConfig(Config{
 		PlanningAgents: DefaultPlanningAgents,
 		OpenAIModel:    defaultOpenAIModel,
@@ -244,57 +258,29 @@ func TestResolveConfigAppliesDefaultDocumentNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve config: %v", err)
 	}
-	if cfg.SpecDoc != DefaultSpecDoc || cfg.TaskDoc != DefaultTaskDoc || cfg.EvalDoc != DefaultEvalDoc {
-		t.Fatalf("unexpected document defaults: %#v", cfg)
-	}
 	if cfg.CodexBin != DefaultCodexBinary {
 		t.Fatalf("unexpected codex binary default: %#v", cfg)
 	}
-}
-
-func TestValidateResolvedConfigAcceptsWorkspaceRelativeDocumentPaths(t *testing.T) {
-	base := Config{
-		PlanningAgents: DefaultPlanningAgents,
-		OpenAIModel:    defaultOpenAIModel,
-		SpecDoc:        DefaultSpecDoc,
-		TaskDoc:        DefaultTaskDoc,
-		EvalDoc:        DefaultEvalDoc,
-	}
-	for _, docPath := range []string{"SPEC.md", "docs/SPEC.md", "foo/SPEC.md"} {
-		cfg := base
-		cfg.SpecDoc = docPath
-		if err := validateResolvedConfig(cfg); err != nil {
-			t.Fatalf("expected valid spec path %q, got %v", docPath, err)
-		}
+	if cfg.TaskProposalMode != TaskProposalModeAuto {
+		t.Fatalf("unexpected task proposal mode default: %#v", cfg)
 	}
 }
 
-func TestValidateResolvedConfigRejectsUnsafeDocumentPaths(t *testing.T) {
-	base := Config{
-		PlanningAgents: DefaultPlanningAgents,
-		OpenAIModel:    defaultOpenAIModel,
-		SpecDoc:        DefaultSpecDoc,
-		TaskDoc:        DefaultTaskDoc,
-		EvalDoc:        DefaultEvalDoc,
-	}
-	for _, docName := range []string{"../SPEC.md", "/tmp/SPEC.md", "docs/../SPEC.md", "SPEC.txt", `foo\SPEC.md`} {
-		cfg := base
-		cfg.SpecDoc = docName
-		if err := validateResolvedConfig(cfg); err == nil {
-			t.Fatalf("expected invalid spec doc %q to fail", docName)
-		}
-	}
-}
+func TestResolveConfigRejectsSecretLikeEnvNameMetadata(t *testing.T) {
+	dir := t.TempDir()
+	secret := "literal-jjrc-secret"
+	writeJJRC(t, dir, `{"openai_api_key_env":"`+secret+`"}`)
 
-func TestDocRelPathDistinguishesPathAndLegacyDocModes(t *testing.T) {
-	if got := docRelPath("SPEC.md", true); got != "SPEC.md" {
-		t.Fatalf("path mode should preserve root-relative path, got %q", got)
+	_, err := ResolveConfig(Config{
+		ConfigSearchDir: dir,
+		PlanningAgents:  DefaultPlanningAgents,
+		OpenAIModel:     defaultOpenAIModel,
+	})
+	if err == nil || !strings.Contains(err.Error(), "OpenAI API key env must be an environment variable name") {
+		t.Fatalf("expected safe env-name validation error, got %v", err)
 	}
-	if got := docRelPath("SPEC.md", false); got != "docs/SPEC.md" {
-		t.Fatalf("legacy doc mode should place bare names under docs, got %q", got)
-	}
-	if got := docRelPath("docs/SPEC.md", false); got != "docs/SPEC.md" {
-		t.Fatalf("legacy doc mode should preserve explicit docs path, got %q", got)
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("env-name validation leaked configured value: %v", err)
 	}
 }
 

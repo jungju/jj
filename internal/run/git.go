@@ -5,9 +5,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
+
+	"github.com/jungju/jj/internal/security"
 )
+
+const defaultGitCommandTimeout = 2 * time.Minute
 
 type GitRunner interface {
 	Output(ctx context.Context, cwd string, args ...string) (string, error)
@@ -19,18 +25,38 @@ func (ExecGitRunner) Output(ctx context.Context, cwd string, args ...string) (st
 	if _, err := exec.LookPath("git"); err != nil {
 		return "", err
 	}
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = cwd
+	commandCWD, err := security.ResolveCommandCWD(cwd)
+	if err != nil {
+		return "", err
+	}
+	cmdCtx, cancel := context.WithTimeout(commandContext(ctx), defaultGitCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cmdCtx, "git", args...)
+	cmd.Dir = commandCWD
+	cmd.Env = security.FilterEnv(os.Environ())
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		if strings.TrimSpace(stderr.String()) != "" {
-			return "", errors.New(strings.TrimSpace(stderr.String()))
+		if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
+			return "", errors.New("git command timed out")
 		}
-		return "", err
+		if errors.Is(cmdCtx.Err(), context.Canceled) {
+			return "", context.Canceled
+		}
+		if strings.TrimSpace(stderr.String()) != "" {
+			return "", errors.New(redactSecrets(strings.TrimSpace(stderr.String())))
+		}
+		return "", errors.New(redactSecrets(err.Error()))
 	}
 	return stdout.String(), nil
+}
+
+func commandContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
 type GitState struct {

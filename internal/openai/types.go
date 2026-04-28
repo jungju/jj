@@ -8,25 +8,31 @@ type Agent struct {
 }
 
 type DraftRequest struct {
-	Model string
-	Plan  string
-	Agent Agent
+	Model                    string
+	Plan                     string
+	Agent                    Agent
+	TaskProposalMode         string
+	ResolvedTaskProposalMode string
+	TaskProposalInstruction  string
 }
 
 type MergeRequest struct {
-	Model  string
-	Plan   string
-	Drafts []PlanningDraft
+	Model                    string
+	Plan                     string
+	Drafts                   []PlanningDraft
+	TaskProposalMode         string
+	ResolvedTaskProposalMode string
+	TaskProposalInstruction  string
 }
 
-type EvaluationRequest struct {
-	Model        string
-	Plan         string
-	Spec         string
-	Task         string
-	CodexSummary string
-	CodexEvents  string
-	GitDiff      string
+type ReconcileSpecRequest struct {
+	Model             string
+	PreviousSpec      string
+	PlannedSpec       string
+	SelectedTask      string
+	CodexSummary      string
+	GitDiffSummary    string
+	ValidationSummary string
 }
 
 type PlanningDraft struct {
@@ -49,23 +55,13 @@ type MergeResult struct {
 	Notes []string `json:"notes"`
 }
 
-type EvaluationResult struct {
-	Result               string   `json:"result"`
-	Score                int      `json:"score"`
-	Summary              string   `json:"summary"`
-	WhatChanged          []string `json:"what_changed"`
-	RequirementsCoverage []string `json:"requirements_coverage"`
-	TestCoverage         []string `json:"test_coverage"`
-	Risks                []string `json:"risks"`
-	Regressions          []string `json:"regressions"`
-	RecommendedFollowups []string `json:"recommended_followups"`
-	Verdict              string   `json:"verdict,omitempty"`
-	Reasons              []string `json:"reasons,omitempty"`
-	TestResults          []string `json:"test_results,omitempty"`
+type ReconcileSpecResult struct {
+	Spec  string   `json:"spec"`
+	Notes []string `json:"notes"`
 }
 
 type Planner interface {
 	Draft(context.Context, DraftRequest) (PlanningDraft, []byte, error)
 	Merge(context.Context, MergeRequest) (MergeResult, []byte, error)
-	Evaluate(context.Context, EvaluationRequest) (EvaluationResult, []byte, error)
+	ReconcileSpec(context.Context, ReconcileSpecRequest) (ReconcileSpecResult, []byte, error)
 }

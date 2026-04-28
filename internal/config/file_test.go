@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jungju/jj/internal/security"
 )
 
 func TestLoadFromFindsConfigInParent(t *testing.T) {
@@ -20,9 +22,6 @@ func TestLoadFromFindsConfigInParent(t *testing.T) {
 		"codex_model": "codex-from-file",
 		"codex_bin": "/tmp/codex",
 		"planning_agents": 2,
-		"spec_doc": "PRODUCT.md",
-		"task_doc": "WORK.md",
-		"eval_doc": "REVIEW.md",
 		"dry_run": true,
 		"allow_no_git": true
 	}`), 0o644); err != nil {
@@ -41,9 +40,6 @@ func TestLoadFromFindsConfigInParent(t *testing.T) {
 	}
 	if cfg.PlanningAgents == nil || *cfg.PlanningAgents != 2 {
 		t.Fatalf("unexpected planning agents: %#v", cfg.PlanningAgents)
-	}
-	if cfg.SpecDoc != "PRODUCT.md" || cfg.TaskDoc != "WORK.md" || cfg.EvalDoc != "REVIEW.md" {
-		t.Fatalf("unexpected doc config: %#v", cfg)
 	}
 	if cfg.DryRun == nil || !*cfg.DryRun || cfg.AllowNoGit == nil || !*cfg.AllowNoGit {
 		t.Fatalf("unexpected boolean config: %#v", cfg)
@@ -74,7 +70,8 @@ func TestLoadRejectsInvalidJSON(t *testing.T) {
 
 func TestLoadIgnoresUnknownFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
-	if err := os.WriteFile(path, []byte(`{"openai_api_key": "sk-secret", "codex_binary": "/tmp/codex"}`), 0o644); err != nil {
+	secret := "jjrc-secret-token-1234567890"
+	if err := os.WriteFile(path, []byte(`{"openai_api_key": "`+secret+`", "codex_binary": "/tmp/codex"}`), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -84,6 +81,10 @@ func TestLoadIgnoresUnknownFields(t *testing.T) {
 	}
 	if cfg.CodexBinary != "/tmp/codex" {
 		t.Fatalf("expected codex_binary to load, got %#v", cfg)
+	}
+	got := security.RedactString("configured " + secret)
+	if strings.Contains(got, secret) || !strings.Contains(got, security.RedactionMarker) {
+		t.Fatalf("configured sensitive .jjrc value was not registered for redaction: %q", got)
 	}
 }
 

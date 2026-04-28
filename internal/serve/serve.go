@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"io/fs"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,9 +19,21 @@ import (
 	"github.com/jungju/jj/internal/artifact"
 	runpkg "github.com/jungju/jj/internal/run"
 	"github.com/jungju/jj/internal/secrets"
+	"github.com/jungju/jj/internal/security"
 )
 
 const DefaultAddr = DefaultHost + ":7331"
+
+const displayWorkspace = "[workspace]"
+
+var allowedProjectDocPaths = []string{
+	"README.md",
+	"plan.md",
+	"docs/SPEC.md",
+	"docs/TASK.md",
+	runpkg.DefaultSpecStatePath,
+	runpkg.DefaultTasksStatePath,
+}
 
 type RunExecutor func(context.Context, runpkg.Config) (*runpkg.Result, error)
 
@@ -67,46 +77,73 @@ type readinessItem struct {
 }
 
 type runLink struct {
-	ID              string
-	Status          string
-	StartedAt       string
-	FinishedAt      string
-	PlannerProvider string
-	Evaluation      string
-	DryRun          bool
-	ErrorSummary    string
-	RiskSummary     string
-	Risks           []string
-	Failures        []string
-	NextActions     []string
-	Invalid         bool
-	EvalArtifact    string
+	ID                       string
+	Status                   string
+	StartedAt                string
+	FinishedAt               string
+	PlannerProvider          string
+	Validation               string
+	TaskProposalMode         string
+	ResolvedTaskProposalMode string
+	SelectedTaskID           string
+	RepositoryURL            string
+	BaseBranch               string
+	WorkBranch               string
+	PushEnabled              bool
+	PushStatus               string
+	PushedRef                string
+	DryRun                   bool
+	ErrorSummary             string
+	RiskSummary              string
+	Risks                    []string
+	Failures                 []string
+	NextActions              []string
+	SecuritySummary          string
+	SecurityDetails          []string
+	Invalid                  bool
+	ValidationArtifact       string
 }
 
 type dashboardManifest struct {
-	RunID           string `json:"run_id"`
-	Status          string `json:"status"`
-	StartedAt       string `json:"started_at"`
-	FinishedAt      string `json:"finished_at"`
-	EndedAt         string `json:"ended_at"`
-	PlannerProvider string `json:"planner_provider"`
-	Planner         struct {
+	RunID                    string `json:"run_id"`
+	Status                   string `json:"status"`
+	StartedAt                string `json:"started_at"`
+	FinishedAt               string `json:"finished_at"`
+	EndedAt                  string `json:"ended_at"`
+	PlannerProvider          string `json:"planner_provider"`
+	TaskProposalMode         string `json:"task_proposal_mode"`
+	ResolvedTaskProposalMode string `json:"resolved_task_proposal_mode"`
+	SelectedTaskID           string `json:"selected_task_id"`
+	Repository               struct {
+		Enabled          bool   `json:"enabled"`
+		SanitizedRepoURL string `json:"sanitized_repo_url"`
+		RepoURL          string `json:"repo_url"`
+		BaseBranch       string `json:"base_branch"`
+		WorkBranch       string `json:"work_branch"`
+		PushEnabled      bool   `json:"push_enabled"`
+		PushStatus       string `json:"push_status"`
+		PushedRef        string `json:"pushed_ref"`
+	} `json:"repository"`
+	Planner struct {
 		Provider string `json:"provider"`
 	} `json:"planner"`
 	DryRun     bool `json:"dry_run"`
-	Evaluation struct {
-		Result                string `json:"result"`
-		Status                string `json:"status"`
-		Error                 string `json:"error"`
-		RecommendedNextAction string `json:"recommended_next_action"`
-	} `json:"evaluation"`
+	Validation struct {
+		Status         string `json:"status"`
+		EvidenceStatus string `json:"evidence_status"`
+		Reason         string `json:"reason"`
+		Summary        string `json:"summary"`
+		SummaryPath    string `json:"summary_path"`
+		ResultsPath    string `json:"results_path"`
+	} `json:"validation"`
 	Commit struct {
 		Ran    bool   `json:"ran"`
 		Status string `json:"status"`
 	} `json:"commit"`
-	Artifacts map[string]string `json:"artifacts"`
-	Errors    []string          `json:"errors"`
-	Risks     []string          `json:"risks"`
+	Artifacts map[string]string       `json:"artifacts"`
+	Errors    []string                `json:"errors"`
+	Risks     []string                `json:"risks"`
+	Security  runpkg.ManifestSecurity `json:"security"`
 }
 
 type dashboardManifestLoad struct {
@@ -120,20 +157,28 @@ type artifactLink struct {
 }
 
 type runFormData struct {
-	PlanPath       string
-	CWD            string
-	RunID          string
-	DryRun         bool
-	AutoContinue   bool
-	MaxTurns       int
-	PlanningAgents int
-	OpenAIModel    string
-	CodexModel     string
-	SpecDoc        string
-	TaskDoc        string
-	EvalDoc        string
-	AllowNoGit     bool
-	LocalOnly      bool
+	PlanPath          string
+	PlanPrompt        string
+	CWD               string
+	RunID             string
+	DryRun            bool
+	AutoContinue      bool
+	MaxTurns          int
+	PlanningAgents    int
+	TaskProposalMode  string
+	TaskProposalModes []string
+	RepoURL           string
+	RepoDir           string
+	BaseBranch        string
+	WorkBranch        string
+	Push              bool
+	PushMode          string
+	GitHubTokenEnv    string
+	AllowDirty        bool
+	OpenAIModel       string
+	CodexModel        string
+	AllowNoGit        bool
+	LocalOnly         bool
 }
 
 type runStartResult struct {
@@ -196,7 +241,10 @@ func Execute(ctx context.Context, cfg Config) error {
 	if cfg.Stdout == nil {
 		cfg.Stdout = os.Stdout
 	}
-	fmt.Fprintf(cfg.Stdout, "jj: serving docs at http://%s\n", listener.Addr().String())
+	if !server.localOnly {
+		fmt.Fprintf(cfg.Stdout, "jj: warning: serving on non-local address %s; do this only on a trusted network\n", listener.Addr().String())
+	}
+	fmt.Fprintf(cfg.Stdout, "jj: serving dashboard at http://%s\n", listener.Addr().String())
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -243,6 +291,9 @@ func NewWithConfig(cfg Config) (*Server, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("cwd is not a directory: %s", abs)
 	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
 	if strings.TrimSpace(cfg.RunID) != "" {
 		if err := artifact.ValidateRunID(cfg.RunID); err != nil {
 			return nil, err
@@ -250,6 +301,9 @@ func NewWithConfig(cfg Config) (*Server, error) {
 	}
 	if strings.TrimSpace(cfg.Addr) == "" {
 		cfg.Addr = DefaultAddr
+	}
+	if !isLocalAddr(cfg.Addr) && !cfg.AddrExplicit && !cfg.HostExplicit {
+		return nil, errors.New("external dashboard binding requires explicit --host or --addr")
 	}
 	runExecutor := cfg.RunExecutor
 	if runExecutor == nil {
@@ -274,12 +328,18 @@ func NewWithConfig(cfg Config) (*Server, error) {
 }
 
 func (s *Server) Handler() http.Handler {
-	return s.mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setSecurityHeaders(w)
+		if isUnsafeRequestPath(r.URL.Path, r.URL.EscapedPath()) {
+			s.renderError(w, http.StatusForbidden, errors.New("request path is not allowed"))
+			return
+		}
+		s.mux.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("/", s.handleIndex)
-	s.mux.HandleFunc("/docs/", s.handleDocsPath)
 	s.mux.HandleFunc("/runs", s.handleRunsIndex)
 	s.mux.HandleFunc("/runs/", s.handleRunsPath)
 	s.mux.HandleFunc("/doc", s.handleDoc)
@@ -309,8 +369,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	readiness := s.workspaceReadiness()
 	s.render(w, pageData{
-		Title:       "jj docs",
-		CWD:         s.cwd,
+		Title:       "jj dashboard",
+		CWD:         displayWorkspace,
 		SelectedRun: s.runID,
 		TaskSummary: s.taskSummary(),
 		Docs:        docs,
@@ -327,22 +387,20 @@ func (s *Server) handleRunNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defaultPlan := firstReadyPath(s.workspaceReadiness(), "Plan")
-	if defaultPlan == "" {
-		defaultPlan = "plan.md"
-	}
 	s.render(w, pageData{
 		Title: "start jj run",
-		CWD:   s.cwd,
+		CWD:   displayWorkspace,
 		RunForm: &runFormData{
-			PlanPath:       defaultPlan,
-			CWD:            s.cwd,
-			DryRun:         true,
-			MaxTurns:       10,
-			PlanningAgents: runpkg.DefaultPlanningAgents,
-			SpecDoc:        runpkg.DefaultSpecDoc,
-			TaskDoc:        runpkg.DefaultTaskDoc,
-			EvalDoc:        runpkg.DefaultEvalDoc,
-			LocalOnly:      s.localOnly,
+			PlanPath:          defaultPlan,
+			CWD:               "",
+			DryRun:            true,
+			MaxTurns:          10,
+			PlanningAgents:    runpkg.DefaultPlanningAgents,
+			TaskProposalMode:  string(runpkg.TaskProposalModeAuto),
+			TaskProposalModes: runpkg.ValidTaskProposalModeValues(),
+			PushMode:          runpkg.DefaultPushMode,
+			GitHubTokenEnv:    runpkg.DefaultGitHubTokenEnv,
+			LocalOnly:         s.localOnly,
 		},
 	})
 }
@@ -356,10 +414,19 @@ func (s *Server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusBadRequest, err)
 		return
 	}
-	planPath, err := s.validatePlanPath(r.FormValue("plan_path"))
-	if err != nil {
-		s.renderError(w, http.StatusBadRequest, err)
-		return
+	planPrompt := r.FormValue("plan_prompt")
+	planPath := ""
+	if strings.TrimSpace(planPrompt) == "" {
+		if strings.TrimSpace(r.FormValue("plan_path")) == "" {
+			s.renderError(w, http.StatusBadRequest, errors.New("plan path or prompt is required"))
+			return
+		}
+		var err error
+		planPath, err = s.validatePlanPath(r.FormValue("plan_path"))
+		if err != nil {
+			s.renderError(w, http.StatusBadRequest, err)
+			return
+		}
 	}
 	formCWD := strings.TrimSpace(r.FormValue("cwd"))
 	if formCWD == "" {
@@ -420,6 +487,11 @@ func (s *Server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		planningAgents = parsed
 		planningAgentsExplicit = true
 	}
+	taskProposalMode, err := runpkg.ParseTaskProposalMode(r.FormValue("task_proposal_mode"))
+	if err != nil {
+		s.renderError(w, http.StatusBadRequest, err)
+		return
+	}
 	runID, runDir, err := s.resolveWebRunID(r.FormValue("run_id"))
 	if err != nil {
 		s.renderError(w, http.StatusBadRequest, err)
@@ -427,35 +499,51 @@ func (s *Server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	}
 	openAIModel := strings.TrimSpace(r.FormValue("openai_model"))
 	codexModel := strings.TrimSpace(r.FormValue("codex_model"))
-	specDoc := strings.TrimSpace(r.FormValue("spec_doc"))
-	taskDoc := strings.TrimSpace(r.FormValue("task_doc"))
-	evalDoc := strings.TrimSpace(r.FormValue("eval_doc"))
+	repoURL := strings.TrimSpace(r.FormValue("repo"))
+	repoDir := strings.TrimSpace(r.FormValue("repo_dir"))
+	baseBranch := strings.TrimSpace(r.FormValue("base_branch"))
+	workBranch := strings.TrimSpace(r.FormValue("work_branch"))
+	pushMode := strings.TrimSpace(r.FormValue("push_mode"))
+	githubTokenEnv := strings.TrimSpace(r.FormValue("github_token_env"))
+	push := formBool(r, "push")
+	allowDirty := formBool(r, "allow_dirty")
 	cfg := runpkg.Config{
-		PlanPath:               planPath,
-		CWD:                    s.cwd,
-		RunID:                  runID,
-		DryRun:                 dryRun,
-		DryRunExplicit:         true,
-		AllowNoGit:             allowNoGit,
-		AllowNoGitExplicit:     true,
-		PlanningAgents:         planningAgents,
-		PlanningAgentsExplicit: planningAgentsExplicit,
-		OpenAIModel:            openAIModel,
-		OpenAIModelExplicit:    openAIModel != "",
-		CodexModel:             codexModel,
-		CodexModelExplicit:     codexModel != "",
-		SpecDoc:                specDoc,
-		SpecDocExplicit:        specDoc != "",
-		SpecDocPathMode:        specDoc != "",
-		TaskDoc:                taskDoc,
-		TaskDocExplicit:        taskDoc != "",
-		TaskDocPathMode:        taskDoc != "",
-		EvalDoc:                evalDoc,
-		EvalDocExplicit:        evalDoc != "",
-		EvalDocPathMode:        evalDoc != "",
-		ConfigSearchDir:        s.cwd,
-		Stdout:                 io.Discard,
-		Stderr:                 io.Discard,
+		PlanPath:                 planPath,
+		PlanText:                 planPrompt,
+		PlanInputName:            runpkg.DefaultWebPromptInput,
+		CWD:                      s.cwd,
+		RunID:                    runID,
+		DryRun:                   dryRun,
+		DryRunExplicit:           true,
+		AllowNoGit:               allowNoGit,
+		AllowNoGitExplicit:       true,
+		PlanningAgents:           planningAgents,
+		PlanningAgentsExplicit:   planningAgentsExplicit,
+		TaskProposalMode:         taskProposalMode,
+		TaskProposalModeExplicit: true,
+		RepoURL:                  repoURL,
+		RepoURLExplicit:          repoURL != "",
+		RepoDir:                  repoDir,
+		RepoDirExplicit:          repoDir != "",
+		BaseBranch:               baseBranch,
+		BaseBranchExplicit:       baseBranch != "",
+		WorkBranch:               workBranch,
+		WorkBranchExplicit:       workBranch != "",
+		Push:                     push,
+		PushExplicit:             true,
+		PushMode:                 pushMode,
+		PushModeExplicit:         pushMode != "",
+		GitHubTokenEnv:           githubTokenEnv,
+		GitHubTokenEnvExplicit:   githubTokenEnv != "",
+		RepoAllowDirty:           allowDirty,
+		RepoAllowDirtyExplicit:   true,
+		OpenAIModel:              openAIModel,
+		OpenAIModelExplicit:      openAIModel != "",
+		CodexModel:               codexModel,
+		CodexModelExplicit:       codexModel != "",
+		ConfigSearchDir:          s.cwd,
+		Stdout:                   io.Discard,
+		Stderr:                   io.Discard,
 	}
 	cfg.RunID = runID
 	webRun := s.webRuns.create(runID, autoContinue, maxTurns)
@@ -474,7 +562,7 @@ func (s *Server) executeWebRunLoop(webRun *webRunState, baseCfg runpkg.Config, f
 			return
 		}
 		cfg := baseCfg
-		cfg.RunID = turnRunID(baseCfg.RunID, turn)
+		cfg.RunID = runpkg.TurnRunID(baseCfg.RunID, turn)
 		cfg.AdditionalPlanContext = nextContext
 		runDir := firstRunDir
 		if turn > 1 {
@@ -493,7 +581,12 @@ func (s *Server) executeWebRunLoop(webRun *webRunState, baseCfg runpkg.Config, f
 		cfg.Stderr = writer
 		result, err := s.runExecutor(s.ctx, cfg)
 		if result != nil && strings.TrimSpace(result.RunDir) != "" {
-			webRun.setCurrentTurnRunDir(result.RunDir)
+			runDir, dirErr := s.trustedRunDir(cfg.RunID, result.RunDir)
+			if dirErr == nil {
+				webRun.setCurrentTurnRunDir(runDir)
+			} else {
+				webRun.appendLog("jj web: ignored unsafe reported run directory")
+			}
 		}
 		if err != nil {
 			status := "failed"
@@ -516,12 +609,8 @@ func (s *Server) executeWebRunLoop(webRun *webRunState, baseCfg runpkg.Config, f
 			webRun.setLoopStatus("failed", "commit_failed", outcome.Error, "commit failed")
 			return
 		}
-		if outcome.Status == runpkg.StatusFailed || outcome.Status == "cancelled" || (strings.HasSuffix(outcome.Status, "_failed") && outcome.Status != runpkg.StatusPartialFailed) {
+		if strings.EqualFold(outcome.ValidationStatus, "failed") || outcome.Status == runpkg.StatusFailed || outcome.Status == "cancelled" || strings.HasSuffix(outcome.Status, "_failed") {
 			webRun.setLoopStatus("failed", "failed", outcome.Error, "turn failed")
-			return
-		}
-		if strings.EqualFold(outcome.EvaluationResult, "PASS") || outcome.Status == runpkg.StatusSuccess || outcome.Status == "success" {
-			webRun.setLoopStatus("success", "completed", "", "evaluation PASS")
 			return
 		}
 		if webRun.finishWasRequested() {
@@ -547,7 +636,7 @@ func (s *Server) finalStatusForRun(runID string) string {
 	if err != nil {
 		return "success"
 	}
-	data, err := os.ReadFile(filepath.Join(runDir, "manifest.json"))
+	data, err := readRunFile(runDir, "manifest.json")
 	if err != nil {
 		return "success"
 	}
@@ -562,7 +651,7 @@ func (s *Server) finalStatusForRun(runID string) string {
 
 type runOutcome struct {
 	Status           string
-	EvaluationResult string
+	ValidationStatus string
 	Error            string
 	CommitFailed     bool
 }
@@ -574,7 +663,7 @@ func (s *Server) runOutcomeForRun(runID string) runOutcome {
 		outcome.Error = err.Error()
 		return outcome
 	}
-	data, err := os.ReadFile(filepath.Join(runDir, "manifest.json"))
+	data, err := readRunFile(runDir, "manifest.json")
 	if err != nil {
 		outcome.Error = err.Error()
 		return outcome
@@ -583,11 +672,10 @@ func (s *Server) runOutcomeForRun(runID string) runOutcome {
 		Status       string   `json:"status"`
 		ErrorSummary string   `json:"error_summary"`
 		Errors       []string `json:"errors"`
-		Evaluation   struct {
-			Result string `json:"result"`
+		Validation   struct {
 			Status string `json:"status"`
 			Error  string `json:"error"`
-		} `json:"evaluation"`
+		} `json:"validation"`
 		Commit struct {
 			Status string `json:"status"`
 			Error  string `json:"error"`
@@ -600,16 +688,13 @@ func (s *Server) runOutcomeForRun(runID string) runOutcome {
 	if strings.TrimSpace(manifest.Status) != "" {
 		outcome.Status = manifest.Status
 	}
-	outcome.EvaluationResult = manifest.Evaluation.Result
-	if outcome.EvaluationResult == "" {
-		outcome.EvaluationResult = manifest.Evaluation.Status
-	}
+	outcome.ValidationStatus = manifest.Validation.Status
 	outcome.Error = manifest.ErrorSummary
 	if outcome.Error == "" && len(manifest.Errors) > 0 {
 		outcome.Error = manifest.Errors[0]
 	}
 	if outcome.Error == "" {
-		outcome.Error = manifest.Evaluation.Error
+		outcome.Error = manifest.Validation.Error
 	}
 	if manifest.Commit.Status == "failed" {
 		outcome.CommitFailed = true
@@ -630,7 +715,7 @@ func (s *Server) handleRunProgress(w http.ResponseWriter, r *http.Request) {
 	}
 	s.render(w, pageData{
 		Title:  "run progress",
-		CWD:    s.cwd,
+		CWD:    displayWorkspace,
 		WebRun: &view,
 	})
 }
@@ -639,12 +724,12 @@ func (s *Server) handleRunStatus(w http.ResponseWriter, r *http.Request) {
 	runID := r.URL.Query().Get("id")
 	view, err := s.webRunView(runID)
 	if err != nil {
-		http.Error(w, secrets.Redact(err.Error()), http.StatusNotFound)
+		http.Error(w, sanitizeDashboardText(err.Error(), security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}), http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err := json.NewEncoder(w).Encode(view); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, sanitizeDashboardText(err.Error(), security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}), http.StatusInternalServerError)
 	}
 }
 
@@ -687,42 +772,32 @@ func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusBadRequest, errors.New("path is required"))
 		return
 	}
-	if strings.ToLower(filepath.Ext(rel)) != ".md" {
-		s.renderError(w, http.StatusBadRequest, errors.New("only markdown documents are supported"))
+	if !isMarkdown(rel) && strings.ToLower(filepath.Ext(rel)) != ".json" {
+		s.renderError(w, http.StatusBadRequest, errors.New("only allowlisted markdown and json state files are supported"))
 		return
 	}
 	if !isAllowedDocPath(rel) {
-		s.renderError(w, http.StatusBadRequest, errors.New("document path is not allowed"))
+		s.renderError(w, http.StatusForbidden, errors.New("state path is not allowed"))
 		return
 	}
-	path, err := safeJoin(s.cwd, rel)
+	path, err := safeJoinProject(s.cwd, rel)
 	if err != nil {
-		s.renderError(w, http.StatusBadRequest, err)
+		s.renderError(w, http.StatusForbidden, err)
 		return
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		s.renderError(w, http.StatusNotFound, errors.New("document unavailable"))
+		s.renderError(w, http.StatusNotFound, errors.New("state file unavailable"))
 		return
 	}
-	content, rendered := presentContent(rel, data)
+	content, rendered := presentContent(rel, data, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace})
 	s.render(w, pageData{
 		Title:    rel,
-		CWD:      s.cwd,
+		CWD:      displayWorkspace,
 		Path:     filepath.ToSlash(rel),
 		Content:  content,
 		Rendered: rendered,
 	})
-}
-
-func (s *Server) handleDocsPath(w http.ResponseWriter, r *http.Request) {
-	rel := strings.TrimPrefix(r.URL.Path, "/docs/")
-	if strings.TrimSpace(rel) == "" {
-		s.renderError(w, http.StatusBadRequest, errors.New("path is required"))
-		return
-	}
-	r.URL.RawQuery = "path=" + url.QueryEscape("docs/"+rel)
-	s.handleDoc(w, r)
 }
 
 func (s *Server) handleRunsIndex(w http.ResponseWriter, r *http.Request) {
@@ -737,7 +812,7 @@ func (s *Server) handleRunsIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	s.render(w, pageData{
 		Title:    "runs",
-		CWD:      s.cwd,
+		CWD:      displayWorkspace,
 		Runs:     runs,
 		RunsOnly: true,
 	})
@@ -793,7 +868,7 @@ func (s *Server) renderRunArtifacts(w http.ResponseWriter, runID string) {
 	}
 	s.render(w, pageData{
 		Title:     "run " + runID,
-		CWD:       s.cwd,
+		CWD:       displayWorkspace,
 		RunID:     runID,
 		Artifacts: artifacts,
 	})
@@ -805,15 +880,14 @@ func (s *Server) handleRunManifest(w http.ResponseWriter, runID string) {
 		s.renderError(w, http.StatusBadRequest, err)
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(runDir, "manifest.json"))
+	data, err := readRunFile(runDir, "manifest.json")
 	if err != nil {
 		s.renderError(w, http.StatusNotFound, errors.New("manifest unavailable"))
 		return
 	}
-	redacted := secrets.Redact(string(data))
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	var decoded any
-	if err := json.Unmarshal([]byte(redacted), &decoded); err != nil {
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"run_id": runID,
@@ -822,7 +896,18 @@ func (s *Server) handleRunManifest(w http.ResponseWriter, runID string) {
 		})
 		return
 	}
-	_, _ = io.WriteString(w, redacted)
+	sanitized := sanitizeDashboardValue(
+		security.RedactJSONValue(decoded),
+		security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace},
+		security.CommandPathRoot{Path: runDir, Label: ".jj/runs/" + runID},
+	)
+	redacted, err := json.MarshalIndent(sanitized, "", "  ")
+	if err != nil {
+		s.renderError(w, http.StatusInternalServerError, errors.New("manifest unavailable"))
+		return
+	}
+	redacted = append(redacted, '\n')
+	_, _ = w.Write(redacted)
 }
 
 func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
@@ -834,7 +919,7 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	rel, err := cleanAllowedArtifactPath(rawRel)
 	if err != nil {
-		s.renderError(w, http.StatusBadRequest, err)
+		s.renderError(w, http.StatusForbidden, err)
 		return
 	}
 	runDir, err := s.runDir(runID)
@@ -846,12 +931,12 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusBadRequest, err)
 		return
 	} else if !ok {
-		s.renderError(w, http.StatusBadRequest, errors.New("artifact path is not listed in manifest"))
+		s.renderError(w, http.StatusForbidden, errors.New("artifact path is not listed in manifest"))
 		return
 	}
 	path, err := safeJoin(runDir, rel)
 	if err != nil {
-		s.renderError(w, http.StatusBadRequest, err)
+		s.renderError(w, http.StatusForbidden, err)
 		return
 	}
 	data, err := os.ReadFile(path)
@@ -859,10 +944,15 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusNotFound, errors.New("artifact unavailable"))
 		return
 	}
-	content, rendered := presentContent(rel, data)
+	content, rendered := presentContent(
+		rel,
+		data,
+		security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace},
+		security.CommandPathRoot{Path: runDir, Label: ".jj/runs/" + runID},
+	)
 	s.render(w, pageData{
 		Title:    runID + "/" + rel,
-		CWD:      s.cwd,
+		CWD:      displayWorkspace,
 		RunID:    runID,
 		Path:     filepath.ToSlash(rel),
 		Content:  content,
@@ -874,7 +964,36 @@ func (s *Server) runDir(runID string) (string, error) {
 	if err := artifact.ValidateRunID(runID); err != nil {
 		return "", err
 	}
-	return safeJoin(filepath.Join(s.cwd, ".jj", "runs"), runID)
+	return security.SafeJoinNoSymlinks(s.cwd, filepath.ToSlash(filepath.Join(".jj", "runs", runID)), security.PathPolicy{AllowHidden: true})
+}
+
+func (s *Server) trustedRunDir(runID, reported string) (string, error) {
+	expected, err := s.runDir(runID)
+	if err != nil {
+		return "", err
+	}
+	reported = strings.TrimSpace(reported)
+	if reported == "" {
+		return expected, nil
+	}
+	reportedAbs, err := filepath.Abs(reported)
+	if err != nil {
+		return "", err
+	}
+	expectedAbs, err := filepath.Abs(expected)
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(reportedAbs); err == nil {
+		reportedAbs = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(expectedAbs); err == nil {
+		expectedAbs = resolved
+	}
+	if filepath.Clean(reportedAbs) != filepath.Clean(expectedAbs) {
+		return "", errors.New("reported run directory is outside the expected run root")
+	}
+	return expected, nil
 }
 
 func (s *Server) resolveWebRunID(raw string) (string, string, error) {
@@ -930,22 +1049,15 @@ func (s *Server) validateAutoTurnWorkspace(ctx context.Context, allowNoGit bool)
 	return nil
 }
 
-func turnRunID(loopID string, turn int) string {
-	if turn <= 1 {
-		return loopID
-	}
-	return fmt.Sprintf("%s-t%02d", loopID, turn)
-}
-
 func (s *Server) workspaceReadiness() []readinessItem {
 	items := []readinessItem{
 		{Label: "Plan", Path: "plan.md"},
 		{Label: "README", Path: "README.md"},
-		{Label: "SPEC", Path: "docs/SPEC.md"},
-		{Label: "TASK", Path: "docs/TASK.md"},
+		{Label: "SPEC", Path: runpkg.DefaultSpecStatePath},
+		{Label: "TASK", Path: runpkg.DefaultTasksStatePath},
 	}
 	for i := range items {
-		path, err := safeJoin(s.cwd, items[i].Path)
+		path, err := safeJoinProject(s.cwd, items[i].Path)
 		if err != nil {
 			continue
 		}
@@ -956,28 +1068,43 @@ func (s *Server) workspaceReadiness() []readinessItem {
 }
 
 func (s *Server) taskSummary() string {
-	path, err := safeJoin(s.cwd, "docs/TASK.md")
+	path, err := safeJoinProject(s.cwd, runpkg.DefaultTasksStatePath)
 	if err != nil {
-		return "docs/TASK.md is missing."
+		return ".jj/tasks.json is missing."
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "docs/TASK.md is missing."
+		return ".jj/tasks.json is missing."
 	}
-	text := secrets.Redact(string(data))
-	progress := taskChecklistProgress(text)
-	lines := strings.Fields(strings.TrimSpace(text))
-	if len(lines) == 0 {
-		return "docs/TASK.md is empty."
+	var state struct {
+		ActiveTaskID *string `json:"active_task_id"`
+		Tasks        []struct {
+			ID     string `json:"id"`
+			Title  string `json:"title"`
+			Mode   string `json:"mode"`
+			Status string `json:"status"`
+		} `json:"tasks"`
 	}
-	if len(lines) > 40 {
-		lines = lines[:40]
+	if err := json.Unmarshal(data, &state); err != nil {
+		return ".jj/tasks.json is unreadable."
 	}
-	summary := strings.Join(lines, " ")
-	if progress != "" {
-		return progress + " " + summary
+	if len(state.Tasks) == 0 {
+		return ".jj/tasks.json has no tasks."
 	}
-	return summary
+	counts := map[string]int{}
+	for _, task := range state.Tasks {
+		counts[task.Status]++
+	}
+	current := state.Tasks[0]
+	if state.ActiveTaskID != nil {
+		for _, task := range state.Tasks {
+			if task.ID == *state.ActiveTaskID {
+				current = task
+				break
+			}
+		}
+	}
+	return fmt.Sprintf("Tasks: %d total, %d queued, %d in progress, %d done. Current: %s %s (%s).", len(state.Tasks), counts["queued"], counts["in_progress"]+counts["active"], counts["done"], sanitizeDashboardText(current.ID, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}), sanitizeDashboardText(current.Title, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}), sanitizeDashboardText(current.Mode, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}))
 }
 
 func taskChecklistProgress(markdown string) string {
@@ -1002,23 +1129,7 @@ func taskChecklistProgress(markdown string) string {
 }
 
 func (s *Server) buildContinuationContext(previousRunID string) (string, error) {
-	runDir, err := s.runDir(previousRunID)
-	if err != nil {
-		return "", err
-	}
-	var b strings.Builder
-	b.WriteString("This is an automatic continuation turn for jj.\n")
-	b.WriteString("Use the original plan as the source of truth, then use this evidence to decide the next smallest useful change.\n\n")
-	b.WriteString("Previous run id: ")
-	b.WriteString(previousRunID)
-	b.WriteString("\n\n")
-	s.appendContinuationFile(&b, "Workspace SPEC", filepath.Join(s.cwd, "docs", "SPEC.md"))
-	s.appendContinuationFile(&b, "Workspace TASK", filepath.Join(s.cwd, "docs", "TASK.md"))
-	s.appendContinuationFile(&b, "Workspace EVAL", filepath.Join(s.cwd, "docs", "EVAL.md"))
-	s.appendContinuationFile(&b, "Previous Manifest", filepath.Join(runDir, "manifest.json"))
-	s.appendContinuationFile(&b, "Previous Git Diff Summary", filepath.Join(runDir, "git", "diff-summary.txt"))
-	s.appendContinuationFile(&b, "Previous Codex Summary", filepath.Join(runDir, "codex", "summary.md"))
-	return truncateDisplay(secrets.Redact(b.String()), 60000), nil
+	return runpkg.BuildContinuationContext(s.cwd, previousRunID)
 }
 
 func (s *Server) appendContinuationFile(b *strings.Builder, title, path string) {
@@ -1033,11 +1144,27 @@ func (s *Server) appendContinuationFile(b *strings.Builder, title, path string) 
 	b.WriteString("\n\n")
 }
 
+func (s *Server) appendContinuationRel(b *strings.Builder, title, root, rel string) {
+	path, err := safeJoin(root, rel)
+	if err != nil {
+		return
+	}
+	s.appendContinuationFile(b, title, path)
+}
+
 func truncateDisplay(s string, max int) string {
+	s = strings.ToValidUTF8(s, "\uFFFD")
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "\n...[truncated]..."
+	cut := 0
+	for i := range s {
+		if i > max {
+			break
+		}
+		cut = i
+	}
+	return s[:cut] + "\n...[truncated]..."
 }
 
 func firstReadyPath(items []readinessItem, label string) string {
@@ -1055,7 +1182,7 @@ func (s *Server) validatePlanPath(rel string) (string, error) {
 		return "", errors.New("plan path is required")
 	}
 	if strings.Contains(rel, `\`) {
-		return "", fmt.Errorf("path escapes root: %s", rel)
+		return "", errors.New("plan path is not allowed")
 	}
 	if !isMarkdown(rel) {
 		return "", errors.New("plan path must be a markdown file")
@@ -1079,44 +1206,26 @@ func (s *Server) validatePlanPath(rel string) (string, error) {
 }
 
 func (s *Server) discoverDocs() ([]docLink, error) {
-	var docs []docLink
-	err := filepath.WalkDir(s.cwd, func(path string, d fs.DirEntry, err error) error {
+	docs := make([]docLink, 0, len(allowedProjectDocPaths))
+	for _, rel := range allowedProjectDocPaths {
+		path, err := safeJoinProject(s.cwd, rel)
 		if err != nil {
-			return err
+			continue
 		}
-		name := d.Name()
-		if d.IsDir() {
-			switch name {
-			case ".git", ".jj", "node_modules", "vendor":
-				return filepath.SkipDir
-			}
-			if path != s.cwd && !isAllowedDocDir(s.cwd, path) {
-				return filepath.SkipDir
-			}
-			return nil
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
 		}
-		if strings.ToLower(filepath.Ext(name)) != ".md" {
-			return nil
-		}
-		rel, err := filepath.Rel(s.cwd, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if isRootDoc(rel) || strings.HasPrefix(rel, "docs/") || strings.HasPrefix(rel, "playground/") {
-			docs = append(docs, docLink{Path: rel})
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
+		docs = append(docs, docLink{Path: rel})
 	}
-	sort.Slice(docs, func(i, j int) bool { return docs[i].Path < docs[j].Path })
 	return docs, nil
 }
 
 func (s *Server) discoverRuns() ([]runLink, error) {
-	runsDir := filepath.Join(s.cwd, ".jj", "runs")
+	runsDir, err := security.SafeJoinNoSymlinks(s.cwd, ".jj/runs", security.PathPolicy{AllowHidden: true})
+	if err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(runsDir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -1144,31 +1253,45 @@ func (s *Server) discoverRuns() ([]runLink, error) {
 			continue
 		}
 		manifest := loaded.Manifest
-		run.Status = secrets.Redact(manifest.Status)
-		run.StartedAt = secrets.Redact(manifest.StartedAt)
-		run.FinishedAt = secrets.Redact(manifest.FinishedAt)
-		if run.FinishedAt == "" {
-			run.FinishedAt = secrets.Redact(manifest.EndedAt)
+		safeText := func(value string) string {
+			return sanitizeDashboardText(value, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}, security.CommandPathRoot{Path: runDir, Label: ".jj/runs/" + entry.Name()})
 		}
-		run.PlannerProvider = secrets.Redact(manifest.PlannerProvider)
+		run.Status = safeText(manifest.Status)
+		run.StartedAt = safeText(manifest.StartedAt)
+		run.FinishedAt = safeText(manifest.FinishedAt)
+		if run.FinishedAt == "" {
+			run.FinishedAt = safeText(manifest.EndedAt)
+		}
+		run.PlannerProvider = safeText(manifest.PlannerProvider)
 		if run.PlannerProvider == "" {
-			run.PlannerProvider = secrets.Redact(manifest.Planner.Provider)
+			run.PlannerProvider = safeText(manifest.Planner.Provider)
+		}
+		run.TaskProposalMode = safeText(manifest.TaskProposalMode)
+		run.ResolvedTaskProposalMode = safeText(manifest.ResolvedTaskProposalMode)
+		run.SelectedTaskID = safeText(manifest.SelectedTaskID)
+		if manifest.Repository.Enabled {
+			run.RepositoryURL = safeText(firstNonEmpty(manifest.Repository.SanitizedRepoURL, manifest.Repository.RepoURL))
+			run.BaseBranch = safeText(manifest.Repository.BaseBranch)
+			run.WorkBranch = safeText(manifest.Repository.WorkBranch)
+			run.PushEnabled = manifest.Repository.PushEnabled
+			run.PushStatus = safeText(manifest.Repository.PushStatus)
+			run.PushedRef = safeText(manifest.Repository.PushedRef)
 		}
 		run.DryRun = manifest.DryRun
-		run.Evaluation = firstNonEmpty(manifest.Evaluation.Result, manifest.Evaluation.Status, manifest.Evaluation.Error)
-		run.Evaluation = secrets.Redact(run.Evaluation)
-		run.EvalArtifact = listedArtifactPath(manifest.Artifacts, "eval", "evaluation", "docs_eval")
-		if run.EvalArtifact == "" {
-			run.EvalArtifact = artifactPathByValue(manifest.Artifacts, "docs/EVAL.md")
+		run.Validation = dashboardValidationStatus(manifest)
+		run.ValidationArtifact = listedArtifactPath(manifest.Artifacts, "validation_summary", "validation_results")
+		if run.ValidationArtifact == "" {
+			run.ValidationArtifact = artifactPathByValue(manifest.Artifacts, manifest.Validation.SummaryPath)
 		}
 		if len(manifest.Errors) > 0 {
-			run.ErrorSummary = secrets.Redact(manifest.Errors[0])
-			run.Failures = redactList(manifest.Errors)
+			run.ErrorSummary = safeText(manifest.Errors[0])
+			run.Failures = sanitizeDashboardList(manifest.Errors, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}, security.CommandPathRoot{Path: runDir, Label: ".jj/runs/" + entry.Name()})
 		}
 		if len(manifest.Risks) > 0 {
-			run.RiskSummary = secrets.Redact(manifest.Risks[0])
-			run.Risks = redactList(manifest.Risks)
+			run.RiskSummary = safeText(manifest.Risks[0])
+			run.Risks = sanitizeDashboardList(manifest.Risks, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}, security.CommandPathRoot{Path: runDir, Label: ".jj/runs/" + entry.Name()})
 		}
+		run.SecuritySummary, run.SecurityDetails = dashboardSecurityDiagnostics(manifest.Security)
 		if isHistoricalCommitSuccess(manifest) {
 			note := "Legacy commit-success metadata is historical; current jj runs do not auto-commit by default."
 			run.Risks = appendUnique(run.Risks, note)
@@ -1176,26 +1299,6 @@ func (s *Server) discoverRuns() ([]runLink, error) {
 				run.RiskSummary = note
 			}
 			run.NextActions = appendUnique(run.NextActions, "Review working tree changes; do not infer current auto-commit behavior from this legacy manifest.")
-		}
-		if action := strings.TrimSpace(secrets.Redact(manifest.Evaluation.RecommendedNextAction)); action != "" {
-			run.NextActions = appendUnique(run.NextActions, action)
-		}
-		evalPath := filepath.Join(runDir, "docs", "EVAL.md")
-		if data, err := os.ReadFile(evalPath); err == nil {
-			evalText := secrets.Redact(string(data))
-			if run.Evaluation == "" {
-				run.Evaluation = firstMarkdownValue(evalText, "Verdict", "Result")
-			}
-			if len(run.Risks) == 0 {
-				run.Risks = markdownListSection(evalText, "Risks")
-				if len(run.Risks) > 0 {
-					run.RiskSummary = run.Risks[0]
-				}
-			}
-			run.Failures = appendUnique(run.Failures, markdownListSection(evalText, "Regressions")...)
-			run.Failures = appendUnique(run.Failures, markdownListSection(evalText, "Failures")...)
-			run.NextActions = appendUnique(run.NextActions, markdownListSection(evalText, "Next Actions")...)
-			run.NextActions = appendUnique(run.NextActions, markdownListSection(evalText, "Recommended Follow-ups")...)
 		}
 		runs = append(runs, run)
 	}
@@ -1223,8 +1326,108 @@ func isHistoricalCommitSuccess(manifest dashboardManifest) bool {
 	return manifest.Commit.Ran && strings.EqualFold(strings.TrimSpace(manifest.Commit.Status), "success")
 }
 
+func dashboardValidationStatus(manifest dashboardManifest) string {
+	status := strings.TrimSpace(secrets.Redact(manifest.Validation.Status))
+	evidence := strings.TrimSpace(secrets.Redact(manifest.Validation.EvidenceStatus))
+	reason := strings.TrimSpace(secrets.Redact(manifest.Validation.Reason))
+	if status == "" {
+		status = evidence
+	}
+	if status == "" {
+		status = reason
+	}
+	if status == "" {
+		return ""
+	}
+	if evidence != "" && !strings.EqualFold(status, evidence) {
+		status += " (" + evidence + ")"
+	}
+	return status
+}
+
+func dashboardSecurityDiagnostics(securityMeta runpkg.ManifestSecurity) (string, []string) {
+	diag := securityMeta.Diagnostics
+	if strings.TrimSpace(diag.Version) == "" && !securityMeta.RedactionApplied && !securityMeta.WorkspaceGuardrailsApplied {
+		return "", nil
+	}
+	commandStatus := dashboardCategory(diag.CommandSanitizationStatus, "unknown")
+	if commandStatus == "unknown" && diag.CommandMetadataSanitized {
+		commandStatus = "sanitized"
+	}
+	parityStatus := dashboardCategory(diag.DryRunParityStatus, "unknown")
+	deniedCount := diag.DeniedPathCount
+	if deniedCount < 0 {
+		deniedCount = 0
+	}
+	redactionCount := securityMeta.RedactionCount
+	if redactionCount < 0 {
+		redactionCount = 0
+	}
+	summary := fmt.Sprintf(
+		"security redactions %d · denied paths %d · command metadata %s · dry-run parity %s",
+		redactionCount,
+		deniedCount,
+		commandStatus,
+		parityStatus,
+	)
+	var details []string
+	if roots := dashboardCategoryList(diag.RootLabels, "root"); len(roots) > 0 {
+		details = append(details, "roots "+strings.Join(roots, ", "))
+	}
+	if categories := dashboardCategoryList(diag.DeniedPathCategories, "path_denied"); len(categories) > 0 {
+		details = append(details, "denied categories "+strings.Join(categories, ", "))
+	}
+	if categories := dashboardCategoryList(diag.FailureCategories, "security_failure"); len(categories) > 0 {
+		details = append(details, "failure categories "+strings.Join(categories, ", "))
+	}
+	return summary, details
+}
+
+func dashboardCategoryList(items []string, fallback string) []string {
+	out := make([]string, 0, len(items))
+	seen := map[string]bool{}
+	for _, item := range items {
+		category := dashboardCategory(item, fallback)
+		if category == "" || seen[category] {
+			continue
+		}
+		seen[category] = true
+		out = append(out, category)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func dashboardCategory(value, fallback string) string {
+	value = strings.ToLower(strings.TrimSpace(secrets.Redact(value)))
+	if value == "" || strings.Contains(value, security.RedactionMarker) {
+		return fallback
+	}
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range value {
+		valid := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if valid {
+			b.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if r == '-' || r == '_' {
+			if b.Len() > 0 && !lastUnderscore {
+				b.WriteByte('_')
+				lastUnderscore = true
+			}
+		}
+	}
+	out := strings.Trim(b.String(), "_")
+	if out == "" {
+		return fallback
+	}
+	return out
+}
+
 func loadDashboardManifest(runID, runDir string) dashboardManifestLoad {
-	data, err := os.ReadFile(filepath.Join(runDir, "manifest.json"))
+	data, err := readRunFile(runDir, "manifest.json")
 	if err != nil {
 		return dashboardManifestLoad{Valid: false, Error: "manifest unavailable"}
 	}
@@ -1275,10 +1478,10 @@ func artifactPathByValue(artifacts map[string]string, target string) string {
 	return ""
 }
 
-func redactList(items []string) []string {
+func sanitizeDashboardList(items []string, roots ...security.CommandPathRoot) []string {
 	out := make([]string, 0, len(items))
 	for _, item := range items {
-		item = strings.TrimSpace(secrets.Redact(item))
+		item = strings.TrimSpace(sanitizeDashboardText(item, roots...))
 		if item != "" {
 			out = append(out, item)
 		}
@@ -1394,40 +1597,27 @@ func discoverArtifacts(runDir string) ([]artifactLink, error) {
 
 func artifactRank(path string) int {
 	switch path {
-	case "docs/SPEC.md":
+	case "snapshots/spec.after.json":
 		return 0
-	case "docs/TASK.md":
+	case "snapshots/tasks.after.json":
 		return 1
-	case "docs/EVAL.md":
-		return 2
-	case "SPEC.md":
-		return 3
-	case "TASK.md":
-		return 4
-	case "EVAL.md":
-		return 5
 	case "manifest.json":
-		return 6
+		return 2
+	case "validation/summary.md":
+		return 3
+	case "validation/results.json":
+		return 4
 	default:
 		return 10
 	}
 }
 
-func isAllowedDocDir(root, path string) bool {
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false
-	}
-	rel = filepath.ToSlash(rel)
-	return rel == "docs" || strings.HasPrefix(rel, "docs/") || rel == "playground" || strings.HasPrefix(rel, "playground/")
-}
-
 func isAllowedDocPath(rel string) bool {
-	clean, err := cleanAllowedRelativePath(rel)
+	clean, err := cleanAllowedProjectPath(rel)
 	if err != nil {
 		return false
 	}
-	return isRootDoc(clean) || strings.HasPrefix(clean, "docs/") || clean == "playground/plan.md" || strings.HasPrefix(clean, "playground/")
+	return isProjectDocPath(clean)
 }
 
 func isAllowedArtifactPath(rel string) bool {
@@ -1444,45 +1634,16 @@ func cleanAllowedArtifactPath(rel string) (string, error) {
 }
 
 func cleanAllowedRelativePath(rel string) (string, error) {
-	rel = strings.TrimSpace(rel)
-	if rel == "" {
-		return "", errors.New("path is required")
-	}
-	if strings.ContainsRune(rel, 0) {
-		return "", errors.New("path contains NUL byte")
-	}
-	if strings.Contains(rel, `\`) {
-		return "", errors.New("backslashes are not allowed in paths")
-	}
-	if strings.HasPrefix(rel, "/") || filepath.IsAbs(rel) {
-		return "", errors.New("absolute paths are not allowed")
-	}
-	if isWindowsDrivePath(rel) || strings.HasPrefix(rel, "//") {
-		return "", errors.New("absolute paths are not allowed")
-	}
-	for _, part := range strings.Split(rel, "/") {
-		if part == "" || part == "." || part == ".." || strings.HasPrefix(part, ".") {
-			return "", errors.New("path segment is not allowed")
-		}
-	}
-	clean := filepath.ToSlash(filepath.Clean(rel))
-	if clean != rel || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", errors.New("path must be clean and stay inside the root")
-	}
-	return clean, nil
+	return security.CleanRelativePath(rel, security.PathPolicy{})
 }
 
-func isWindowsDrivePath(rel string) bool {
-	if len(rel) < 2 || rel[1] != ':' {
-		return false
-	}
-	c := rel[0]
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+func cleanAllowedProjectPath(rel string) (string, error) {
+	return security.CleanRelativePath(rel, security.PathPolicy{AllowHidden: strings.HasPrefix(rel, ".")})
 }
 
-func isRootDoc(rel string) bool {
+func isProjectDocPath(rel string) bool {
 	switch rel {
-	case "README.md", "plan.md", "SPEC.md", "TASK.md", "EVAL.md":
+	case "README.md", "plan.md", "docs/SPEC.md", "docs/TASK.md", runpkg.DefaultSpecStatePath, runpkg.DefaultTasksStatePath:
 		return true
 	default:
 		return false
@@ -1518,44 +1679,19 @@ func manifestArtifactPaths(runDir string) (map[string]struct{}, error) {
 }
 
 func safeJoin(root, rel string) (string, error) {
-	if strings.Contains(rel, `\`) {
-		return "", errors.New("path escapes root")
-	}
-	if filepath.IsAbs(rel) {
-		return "", errors.New("absolute paths are not allowed")
-	}
-	clean := filepath.Clean(rel)
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", errors.New("path escapes root")
-	}
-	path := filepath.Join(root, clean)
-	absRoot, err := filepath.Abs(root)
+	return security.SafeJoinNoSymlinks(root, rel, security.PathPolicy{})
+}
+
+func safeJoinProject(root, rel string) (string, error) {
+	return security.SafeJoinNoSymlinks(root, rel, security.PathPolicy{AllowHidden: strings.HasPrefix(rel, ".")})
+}
+
+func readRunFile(runDir, rel string) ([]byte, error) {
+	path, err := safeJoin(runDir, rel)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	relToRoot, err := filepath.Rel(absRoot, absPath)
-	if err != nil {
-		return "", err
-	}
-	if relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
-		return "", errors.New("path escapes root")
-	}
-	if evalRoot, err := filepath.EvalSymlinks(absRoot); err == nil {
-		if evalPath, err := filepath.EvalSymlinks(absPath); err == nil {
-			relToEvalRoot, err := filepath.Rel(evalRoot, evalPath)
-			if err != nil {
-				return "", err
-			}
-			if relToEvalRoot == ".." || strings.HasPrefix(relToEvalRoot, ".."+string(filepath.Separator)) {
-				return "", errors.New("path escapes root")
-			}
-		}
-	}
-	return absPath, nil
+	return os.ReadFile(path)
 }
 
 func formBool(r *http.Request, name string) bool {
@@ -1583,31 +1719,79 @@ func isLocalAddr(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+func setSecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'")
+}
+
 func (s *Server) renderError(w http.ResponseWriter, status int, err error) {
-	w.WriteHeader(status)
-	s.render(w, pageData{Title: "error", Error: secrets.Redact(err.Error())})
+	s.renderStatus(w, status, pageData{Title: "error", Error: sanitizeDashboardText(err.Error(), security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace})})
 }
 
 func (s *Server) renderErrorData(w http.ResponseWriter, status int, data pageData) {
-	w.WriteHeader(status)
 	data.CWD = ""
-	data.Error = secrets.Redact(data.Error)
-	s.render(w, data)
+	data.Error = sanitizeDashboardText(data.Error, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace})
+	s.renderStatus(w, status, data)
 }
 
 func (s *Server) render(w http.ResponseWriter, data pageData) {
+	s.renderStatus(w, http.StatusOK, data)
+}
+
+func (s *Server) renderStatus(w http.ResponseWriter, status int, data pageData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	if err := pageTemplate.Execute(w, data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, sanitizeDashboardText(err.Error(), security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}), http.StatusInternalServerError)
 	}
 }
 
-func presentContent(path string, data []byte) (string, template.HTML) {
-	redacted := secrets.Redact(string(data))
-	if isMarkdown(path) {
-		return "", renderMarkdown(redacted)
+func presentContent(path string, data []byte, roots ...security.CommandPathRoot) (string, template.HTML) {
+	redacted := security.RedactContent(path, data)
+	if strings.EqualFold(filepath.Ext(path), ".json") {
+		var decoded any
+		if err := json.Unmarshal(redacted, &decoded); err == nil {
+			sanitized := sanitizeDashboardValue(decoded, roots...)
+			if encoded, err := json.MarshalIndent(sanitized, "", "  "); err == nil {
+				redacted = append(encoded, '\n')
+			}
+		}
 	}
-	return redacted, ""
+	content := sanitizeDashboardText(string(redacted), roots...)
+	if isMarkdown(path) {
+		return "", renderMarkdown(content)
+	}
+	return content, ""
+}
+
+func sanitizeDashboardValue(value any, roots ...security.CommandPathRoot) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, child := range v {
+			out[key] = sanitizeDashboardValue(child, roots...)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, child := range v {
+			out[i] = sanitizeDashboardValue(child, roots...)
+		}
+		return out
+	case string:
+		return sanitizeDashboardText(v, roots...)
+	default:
+		return value
+	}
+}
+
+func sanitizeDashboardText(text string, roots ...security.CommandPathRoot) string {
+	text = security.SanitizeDisplayString(text, roots...)
+	return redactDashboardLogPaths(text)
 }
 
 func isMarkdown(path string) bool {
@@ -1617,6 +1801,24 @@ func isMarkdown(path string) bool {
 	default:
 		return false
 	}
+}
+
+func isUnsafeRequestPath(rawPath, escapedPath string) bool {
+	if strings.ContainsRune(rawPath, 0) || strings.Contains(rawPath, `\`) {
+		return true
+	}
+	for _, part := range strings.Split(rawPath, "/") {
+		if part == "." || part == ".." {
+			return true
+		}
+	}
+	lowerEscaped := strings.ToLower(escapedPath)
+	for _, token := range []string{"%00", "%2e", "%2f", "%5c"} {
+		if strings.Contains(lowerEscaped, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func renderMarkdown(content string) template.HTML {
@@ -1697,7 +1899,9 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
     .button.primary { background: LinkText; color: Canvas; border-color: LinkText; }
     form { max-width: 760px; display: grid; gap: 14px; }
     label { display: grid; gap: 5px; font-size: 13px; font-weight: 600; }
-    input { min-height: 34px; padding: 6px 8px; border: 1px solid color-mix(in srgb, CanvasText 22%, transparent); border-radius: 4px; background: Canvas; color: CanvasText; font: inherit; }
+    input, textarea, select { padding: 6px 8px; border: 1px solid color-mix(in srgb, CanvasText 22%, transparent); border-radius: 4px; background: Canvas; color: CanvasText; font: inherit; }
+    input, select { min-height: 34px; }
+    textarea { min-height: 150px; resize: vertical; line-height: 1.45; }
     input[type="checkbox"] { min-height: 0; width: 16px; height: 16px; }
     .check { display: flex; gap: 8px; align-items: center; font-weight: 500; }
     ul { list-style: none; padding: 0; margin: 10px 0 0; }
@@ -1827,11 +2031,14 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
     {{else if .RunForm}}
       <p><a href="/">← dashboard</a></p>
       <form method="post" action="/run/start">
+        <label>prompt
+          <textarea name="plan_prompt" placeholder="Paste a one-off jj plan prompt here.">{{.RunForm.PlanPrompt}}</textarea>
+        </label>
         <label>plan path
-          <input name="plan_path" value="{{.RunForm.PlanPath}}" required>
+          <input name="plan_path" value="{{.RunForm.PlanPath}}" placeholder="plan.md">
         </label>
         <label>cwd
-          <input name="cwd" value="{{.RunForm.CWD}}" required>
+          <input name="cwd" value="{{.RunForm.CWD}}" placeholder="[workspace]">
         </label>
         <label>run id
           <input name="run_id" value="{{.RunForm.RunID}}" placeholder="auto">
@@ -1839,27 +2046,46 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
         <label>planning agents
           <input name="planning_agents" value="{{.RunForm.PlanningAgents}}">
         </label>
+        <label>task proposal mode
+          <select name="task_proposal_mode">
+            {{range .RunForm.TaskProposalModes}}
+              <option value="{{.}}" {{if eq . $.RunForm.TaskProposalMode}}selected{{end}}>{{.}}</option>
+            {{end}}
+          </select>
+        </label>
+        <label>repository URL
+          <input name="repo" value="{{.RunForm.RepoURL}}" placeholder="https://github.com/org/repo.git">
+        </label>
+        <label>repository directory
+          <input name="repo_dir" value="{{.RunForm.RepoDir}}" placeholder="auto">
+        </label>
+        <label>base branch
+          <input name="base_branch" value="{{.RunForm.BaseBranch}}" placeholder="auto">
+        </label>
+        <label>work branch
+          <input name="work_branch" value="{{.RunForm.WorkBranch}}" placeholder="jj/run-&lt;run-id&gt;">
+        </label>
+        <label>push mode
+          <input name="push_mode" value="{{.RunForm.PushMode}}" placeholder="branch">
+        </label>
+        <label>GitHub token env
+          <input name="github_token_env" value="{{.RunForm.GitHubTokenEnv}}" placeholder="JJ_GITHUB_TOKEN">
+        </label>
         <label>OpenAI model
           <input name="openai_model" value="{{.RunForm.OpenAIModel}}" placeholder="configured default">
         </label>
         <label>Codex model
           <input name="codex_model" value="{{.RunForm.CodexModel}}" placeholder="Codex CLI default">
         </label>
-	        <label>SPEC path
-	          <input name="spec_doc" value="{{.RunForm.SpecDoc}}">
-	        </label>
-	        <label>TASK path
-	          <input name="task_doc" value="{{.RunForm.TaskDoc}}">
-	        </label>
-	        <label>EVAL path
-	          <input name="eval_doc" value="{{.RunForm.EvalDoc}}">
-	        </label>
+	        <p class="muted">Full runs write .jj/spec.json and .jj/tasks.json. Dry-runs keep planned state snapshots under .jj/runs.</p>
         <label class="check"><input type="checkbox" name="dry_run" value="true" {{if .RunForm.DryRun}}checked{{end}}> dry-run</label>
         <label class="check"><input type="checkbox" name="auto_continue" value="true" {{if .RunForm.AutoContinue}}checked{{end}}> auto continue turns</label>
         <label>max turns
           <input name="max_turns" value="{{.RunForm.MaxTurns}}">
         </label>
         <label class="check"><input type="checkbox" name="allow_no_git" value="true" {{if .RunForm.AllowNoGit}}checked{{end}}> allow no git</label>
+        <label class="check"><input type="checkbox" name="allow_dirty" value="true" {{if .RunForm.AllowDirty}}checked{{end}}> allow dirty repo</label>
+        <label class="check"><input type="checkbox" name="push" value="true" {{if .RunForm.Push}}checked{{end}}> push repository branch</label>
         <label class="check"><input type="checkbox" name="confirm_full_run" value="true"> confirm full-run workspace mutation</label>
         {{if not .RunForm.LocalOnly}}
           <p class="muted">This server is not bound to a local-only address. Full-run requests will be rejected.</p>
@@ -1871,7 +2097,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
       <h2>Runs</h2>
       <ul>
       {{range .Runs}}
-        <li>{{if .Invalid}}<strong>{{.ID}}</strong>{{else}}<a href="/runs/{{q .ID}}">{{.ID}}</a>{{end}} <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}} {{.Evaluation}}</span>{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{end}}</li>
+        <li>{{if .Invalid}}<strong>{{.ID}}</strong>{{else}}<a href="/runs/{{q .ID}}">{{.ID}}</a>{{end}} <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}}{{if .Validation}} · validation {{.Validation}}{{end}}{{if .TaskProposalMode}} · mode {{.TaskProposalMode}}{{if .ResolvedTaskProposalMode}} → {{.ResolvedTaskProposalMode}}{{end}}{{end}}{{if .SecuritySummary}} · {{.SecuritySummary}}{{end}}</span>{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{end}}</li>
       {{else}}
         <li class="muted">No jj runs found.</li>
       {{end}}
@@ -1907,10 +2133,12 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	            <p class="error">{{.ErrorSummary}}</p>
 	          {{else}}
 	            <p><a href="/run?id={{q .ID}}">{{.ID}}</a> <span class="muted">{{.Status}} {{.StartedAt}}</span></p>
-	            <p class="muted">provider {{.PlannerProvider}} · dry-run {{.DryRun}} · evaluation {{.Evaluation}}</p>
-	            <p><a href="/runs/{{q .ID}}/manifest">Raw manifest</a>{{if .EvalArtifact}} · <a href="/artifact?run={{q .ID}}&path={{q .EvalArtifact}}">Evaluation artifact</a>{{end}}</p>
+	            <p class="muted">provider {{.PlannerProvider}} · dry-run {{.DryRun}}{{if .Validation}} · validation {{.Validation}}{{end}}</p>
+	            {{if .TaskProposalMode}}<p class="muted">Task Proposal Mode: {{.TaskProposalMode}}{{if .ResolvedTaskProposalMode}} · Resolved Mode: {{.ResolvedTaskProposalMode}}{{end}}{{if .SelectedTaskID}} · Recommended Next Task: {{.SelectedTaskID}}{{end}}</p>{{end}}
+	            {{if .RepositoryURL}}<p class="muted">Repository: {{.RepositoryURL}} · Base Branch: {{.BaseBranch}} · Work Branch: {{.WorkBranch}} · Push Enabled: {{.PushEnabled}} · Push Status: {{.PushStatus}}{{if .PushedRef}} · Last Pushed Ref: {{.PushedRef}}{{end}}</p>{{end}}
+	            {{if .SecuritySummary}}<p class="muted">{{.SecuritySummary}}{{range .SecurityDetails}} · {{.}}{{end}}</p>{{end}}
+	            <p><a href="/runs/{{q .ID}}/manifest">Raw manifest</a>{{if .ValidationArtifact}} · <a href="/artifact?run={{q .ID}}&path={{q .ValidationArtifact}}">Validation artifact</a>{{end}}</p>
 	          {{end}}
-	          {{if .Evaluation}}<p><strong>Evaluation Verdict</strong> {{.Evaluation}}</p>{{end}}
 	          {{if and .ErrorSummary (not .Invalid)}}<p class="error">{{.ErrorSummary}}</p>{{end}}
 	          {{if .RiskSummary}}<p class="muted">{{.RiskSummary}}</p>{{end}}
 	        {{end}}{{else}}
@@ -1940,10 +2168,11 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
             {{end}}
           </div>
         {{end}}
-        </div>
+	        </div>
 	        <div class="actions">
-	          {{if .DefaultPlan}}<a class="button primary" href="/run/new">Start Web Run</a><a class="button" href="/doc?path={{q .DefaultPlan}}">Open Plan</a>{{end}}
-	          <a class="button" href="/doc?path=docs/TASK.md">Open TASK</a>
+	          <a class="button primary" href="/run/new">Start Web Run</a>
+	          {{if .DefaultPlan}}<a class="button" href="/doc?path={{q .DefaultPlan}}">Open Plan</a>{{end}}
+	          <a class="button" href="/doc?path=.jj/tasks.json">Open Tasks</a>
 	          <a class="button" href="/runs">Open Runs</a>
 	        </div>
       </section>
@@ -1959,12 +2188,12 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
       {{end}}
       <div class="grid">
         <section>
-          <h2>Docs</h2>
+          <h2>State Files</h2>
           <ul>
           {{range .Docs}}
             <li><a href="/doc?path={{q .Path}}">{{.Path}}</a></li>
           {{else}}
-            <li class="muted">No markdown docs found.</li>
+            <li class="muted">No allowlisted state files found.</li>
           {{end}}
           </ul>
         </section>
@@ -1972,7 +2201,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          <h2>Runs</h2>
 	          <ul>
 	          {{range .Runs}}
-	            <li>{{if .Invalid}}<strong>{{.ID}}</strong>{{else}}<a href="/run?id={{q .ID}}">{{.ID}}</a>{{end}} <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}} {{.Evaluation}}</span>{{if not .Invalid}} <a href="/runs/{{q .ID}}/manifest">manifest</a>{{end}}{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{else if .RiskSummary}} <span class="muted">{{.RiskSummary}}</span>{{end}}</li>
+	            <li>{{if .Invalid}}<strong>{{.ID}}</strong>{{else}}<a href="/run?id={{q .ID}}">{{.ID}}</a>{{end}} <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}}{{if .Validation}} · validation {{.Validation}}{{end}}{{if .TaskProposalMode}} · mode {{.TaskProposalMode}}{{if .ResolvedTaskProposalMode}} → {{.ResolvedTaskProposalMode}}{{end}}{{end}}{{if .SecuritySummary}} · {{.SecuritySummary}}{{end}}</span>{{if not .Invalid}} <a href="/runs/{{q .ID}}/manifest">manifest</a>{{end}}{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{else if .RiskSummary}} <span class="muted">{{.RiskSummary}}</span>{{end}}</li>
 	          {{else}}
 	            <li class="muted">No jj runs found. Try <code>jj run plan.md --dry-run</code>.</li>
 	          {{end}}
@@ -1981,10 +2210,11 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	        <section>
 	          <h2>Next Actions</h2>
 	          <ul>
-	            {{if .DefaultPlan}}<li><a href="/run/new">Start Web Run</a></li><li><a href="/doc?path={{q .DefaultPlan}}">Review plan</a></li>{{end}}
+	            <li><a href="/run/new">Start Web Run</a></li>
+	            {{if .DefaultPlan}}<li><a href="/doc?path={{q .DefaultPlan}}">Review plan</a></li>{{end}}
 	            {{if .Runs}}{{with index .Runs 0}}{{range .NextActions}}<li>{{.}}</li>{{end}}{{end}}{{else}}<li><code>jj run plan.md --dry-run</code></li>{{end}}
-	            <li><a href="/doc?path=docs/TASK.md">Open TASK</a></li>
-	            <li><a href="/doc?path=docs/SPEC.md">Open SPEC</a></li>
+	            <li><a href="/doc?path=.jj/tasks.json">Open Tasks</a></li>
+	            <li><a href="/doc?path=.jj/spec.json">Open SPEC</a></li>
 	          </ul>
 	        </section>
 	      </div>

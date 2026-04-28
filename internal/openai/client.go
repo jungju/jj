@@ -65,16 +65,15 @@ func (c *Client) Merge(ctx context.Context, req MergeRequest) (MergeResult, []by
 	return out, mustPrettyJSON(out), nil
 }
 
-func (c *Client) Evaluate(ctx context.Context, req EvaluationRequest) (EvaluationResult, []byte, error) {
-	var out EvaluationResult
-	raw, err := c.structured(ctx, req.Model, plannerInstructions, evaluationPrompt(req), "evaluation", evaluationSchema())
+func (c *Client) ReconcileSpec(ctx context.Context, req ReconcileSpecRequest) (ReconcileSpecResult, []byte, error) {
+	var out ReconcileSpecResult
+	raw, err := c.structured(ctx, req.Model, plannerInstructions, reconcileSpecPrompt(req), "reconciled_spec", specReconcileSchema())
 	if err != nil {
 		return out, nil, err
 	}
 	if err := DecodeStructured(raw, &out); err != nil {
 		return out, raw, err
 	}
-	NormalizeEvaluation(&out)
 	return out, mustPrettyJSON(out), nil
 }
 
@@ -194,49 +193,6 @@ func ExtractJSONObject(data []byte) ([]byte, error) {
 		return nil, errors.New("extract structured JSON: extracted object is invalid JSON")
 	}
 	return []byte(obj), nil
-}
-
-func NormalizeEvaluation(out *EvaluationResult) {
-	if out.Result == "" && out.Verdict != "" {
-		switch strings.ToLower(out.Verdict) {
-		case "pass":
-			out.Result = "PASS"
-		case "pass_with_risks", "partial":
-			out.Result = "PARTIAL"
-		case "fail":
-			out.Result = "FAIL"
-		}
-	}
-	if out.Result == "" {
-		out.Result = "PARTIAL"
-	}
-	switch out.Result {
-	case "PASS", "PARTIAL", "FAIL":
-	default:
-		out.Result = "PARTIAL"
-	}
-	if out.Score < 0 {
-		out.Score = 0
-	}
-	if out.Score > 100 {
-		out.Score = 100
-	}
-	if out.Score == 0 {
-		switch out.Result {
-		case "PASS":
-			out.Score = 85
-		case "PARTIAL":
-			out.Score = 50
-		case "FAIL":
-			out.Score = 20
-		}
-	}
-	if len(out.RequirementsCoverage) == 0 {
-		out.RequirementsCoverage = out.Reasons
-	}
-	if len(out.TestCoverage) == 0 {
-		out.TestCoverage = out.TestResults
-	}
 }
 
 func extractFencedJSON(s string) string {

@@ -1,192 +1,100 @@
-# SPEC
+# jj Security Baseline Spec
+
 ## Overview
-`jj` is a local, document-first CLI for reproducible AI coding workflows. Given one non-empty Markdown plan, it generates implementation-ready `docs/SPEC.md` and `docs/TASK.md`, optionally runs Codex implementation, captures git and execution evidence, produces evaluation output, and exposes the current state through a dashboard-first local web UI.
 
-This iteration focuses on turning the latest PARTIAL evaluation gaps into repeatable verification evidence. `jj` must prove, through deterministic local tests or verification artifacts, that Codex fallback works without `OPENAI_API_KEY`, artifact serving remains fail-closed and path-safe through the real HTTP stack, redaction covers persisted and served surfaces, and default non-dry-run behavior does not mutate git history.
+`jj` is a local CLI that turns a Markdown plan or web prompt into canonical JSON state, implementation instructions, Codex execution, validation evidence, and auditable run artifacts. `plan.md` is the initial product seed; once `.jj/spec.json` exists, that SPEC is the planning source of truth and `plan.md` becomes background product vision.
 
-## Goals
-- Generate concrete `docs/SPEC.md` and `docs/TASK.md` from one Markdown plan.
-- Use product/spec, implementation/tasking, and QA/evaluation planning perspectives.
-- Run without `OPENAI_API_KEY` by falling back to Codex CLI planning.
-- Run Codex implementation in the target workspace for non-dry-run executions.
-- Store every run under `.jj/runs/<run-id>/` for audit, comparison, and debugging.
-- Capture Codex events, summaries, git status, git diff, evaluation output, and manifest metadata.
-- Leave non-dry-run changes uncommitted for human review.
-- Provide `jj serve` as a dashboard-first local web UI showing current TASK state, recent runs, evaluation state, risks, failures, and next actions.
-- Keep secrets out of manifests, logs, planner artifacts, Codex artifacts, generated summaries, served HTML, and user-facing errors.
-- Add reproducible verification coverage for previously manual or reported-only safety checks.
+Canonical runtime state is:
 
-## Non-Goals
-- `jj` is not a cloud service.
-- `jj` is not a multi-user dashboard.
-- `jj` is not a general-purpose DAG or workflow engine.
-- `jj` does not replace git review.
-- `jj` does not guarantee AI output correctness.
-- `jj` does not expose arbitrary local files through the web UI.
-- `jj run` does not create git commits by default.
-- Adding an automatic commit feature is out of scope.
-- Automated tests must not require live OpenAI API calls or a real external Codex invocation.
-- Legacy manifests must not be made trusted by loosening artifact allowlisting.
+- `.jj/spec.json`
+- `.jj/tasks.json`
+- `.jj/runs/<run-id>/`
 
-## User Stories
-- As an individual developer, I want to write `plan.md` once and get SPEC, TASK, implementation evidence, and evaluation artifacts without repeating context across tools.
-- As a small team member, I want AI-generated changes to include requirements, task instructions, diff evidence, and evaluation notes so reviewers can understand the change.
-- As an AI workflow experimenter, I want each run to be reproducible and comparable through run manifests and artifacts.
-- As a user without an OpenAI API key, I want planning to still work through Codex CLI fallback.
-- As a reviewer, I want `jj serve --cwd .` to open on current task and run status rather than a file listing.
-- As a git user, I want `jj` to leave reviewable changes in the working tree instead of committing them automatically.
-- As a dashboard user, I want old, malformed, or partial run manifests to appear as unavailable entries without breaking the page.
-- As a maintainer, I want verification tests or artifacts that prove fallback, redaction, traversal rejection, and no-commit behavior without manual inspection.
+Dry-runs write planning artifacts and state snapshots only under `.jj/runs/<run-id>/`; they do not update `.jj/spec.json`, `.jj/tasks.json`, or workspace documentation. Dry-run `snapshots/spec.after.json` remains the proposed preview for compatibility.
 
-## Functional Requirements
-- `jj run <plan.md>` must read an existing, non-empty Markdown plan file.
-- The positional plan path must be resolved relative to the shell invocation directory, not relative to `--cwd`.
-- `--cwd` must select the target workspace where `.jj/runs`, workspace docs, Codex execution, git capture, and serve content are rooted.
-- By default the target workspace must be a git repository.
-- `--allow-no-git` must allow non-git workspaces and record `git.available=false` in the manifest.
-- `--run-id` must select the run directory name and fail if that run already exists.
-- If `--run-id` is omitted, `jj` must generate a unique time-based run id.
-- Planner provider selection order must be injected planner, OpenAI planner when `OPENAI_API_KEY` is present, then Codex CLI fallback planner when no API key is present.
-- Planning output must be structured and persisted as raw planning artifacts after redaction.
-- Drafts must be merged into final run-local `docs/SPEC.md` and `docs/TASK.md` for every successful planning run.
-- Dry-run must not write workspace `docs/SPEC.md`, workspace `docs/TASK.md`, workspace `docs/EVAL.md`, or code files.
-- Dry-run must not invoke implementation Codex.
-- Non-dry-run must write workspace SPEC and TASK before running implementation Codex.
-- Non-dry-run must capture Codex events, Codex summary, Codex exit status, final git status, git diff patch, git diff stat, and evaluation output.
-- Non-dry-run must not run `git add`, `git commit`, `git reset`, `git checkout`, `git stash`, `git clean`, or any other git history-mutating command.
-- Pre-existing dirty workspace state must be preserved and recorded as baseline evidence.
-- Failed phases must still leave produced artifacts and a failed or partial manifest when possible.
-- `jj serve --cwd .` must serve a local dashboard at `/`.
-- The dashboard must render when `.jj/runs` is empty.
-- The dashboard must render when one or more run manifests are malformed, unreadable, incomplete, legacy-shaped, or reference missing artifacts.
-- Malformed or legacy runs must be represented as invalid, unavailable, or degraded entries with concise redacted errors and no trusted artifact links.
-- Missing, skipped, absent, or legacy commit metadata must not be treated as a current workflow failure.
-- Artifact links must be generated only for paths that are safe and allowed by the manifest or explicit public workspace document allowlist.
-- Artifact routes must fail closed when a run manifest is malformed, missing, or lacks the requested artifact path.
-- The serve UI must render Markdown safely and block path traversal or access outside allowed workspace/run artifact paths.
-- Verification coverage must prove Codex fallback with `OPENAI_API_KEY` unset, HTTP traversal rejection, persisted and served redaction, malformed-manifest fail-closed behavior, and default no-commit behavior.
+Full runs append `.jj/tasks.json` during planning, but do not write workspace `.jj/spec.json` before implementation. When validation passes, jj reconciles the previous SPEC, planned SPEC, selected task, Codex summary, git diff summary, and validation summary into the final `.jj/spec.json`. If validation fails, is missing, or is skipped, the previous workspace SPEC remains unchanged and `snapshots/spec.after.json` records that unchanged state.
 
-## CLI Behavior
-### `jj run <plan.md>`
-Supported flags:
-- `--cwd <path>`: target workspace. Defaults to current directory.
-- `--run-id <id>`: explicit run id. Existing run directory is an error.
-- `--dry-run`: generate planning artifacts only.
-- `--allow-no-git`: permit execution outside a git repository.
-- `--planner-agents <n>` or `--planning-agents <n>`: planning perspective count. Default is 3.
-- `--openai-model <model>`: OpenAI planner model override.
-- `--codex-model <model>`: Codex fallback and implementation model override.
-- `--spec-doc <path>`: workspace spec document path. Default `docs/SPEC.md`.
-- `--task-doc <path>`: workspace task document path. Default `docs/TASK.md`.
+When the target workspace is a clean git repository, a successful full run creates a local commit containing source changes plus `.jj/spec.json` and `.jj/tasks.json`. `.jj/runs/<run-id>/` remains uncommitted local artifact history. If the workspace was dirty before the run, jj skips the commit to avoid mixing pre-existing user changes with generated changes.
 
-For non-dry-run executions, `jj run` writes workspace docs, runs Codex, captures evidence, generates evaluation output, and leaves resulting changes uncommitted for review. Any manifest commit section must be absent or explicitly record `ran:false` or `status:skipped`; it must never report a successful automatic commit for the default workflow.
+`.jj/tasks.json` is append-only task proposal history. Each run appends newly proposed tasks with fresh IDs, selects the first new runnable task for full-run implementation, and updates only that selected task after validation. Existing `active` or `in_progress` tasks are returned to `queued` when a new full-run task is selected.
 
-### `jj serve`
-Supported flags:
-- `--cwd <path>`: target workspace. Defaults to current directory.
-- `--addr <host:port>`: local bind address. Default must be local-only.
+`docs/SPEC.md` and `docs/TASK.md` are repository documentation for the current product boundary. The dashboard exposes those docs, `.jj/spec.json`, `.jj/tasks.json`, `README.md`, `plan.md`, and manifest-listed run artifacts through explicit allowlisted routes only.
 
-The root route `/` must render the dashboard. Artifact routes must validate the raw decoded request path before cleaning, joining, or normalization. Invalid artifact requests must return a non-2xx response without leaking filesystem paths or raw secret-like values.
+## Security Goals
 
-A new user-visible `jj verify` command is optional. Prefer strengthening deterministic tests and run-local verification artifacts unless a narrow CLI command fits the existing command structure cleanly.
+- Redact secrets before data is persisted, rendered, logged, or sent to model/provider prompts.
+- Keep all run artifacts under `.jj/runs/<run-id>/`.
+- Keep workspace state writes under the resolved workspace root.
+- Preserve dry-run as an artifact-only planning mode with no workspace state or docs writes.
+- Prevent traversal, hidden artifact paths, Windows drive prefixes, encoded path escapes, and symlink escapes.
+- Serve a dashboard-first local UI without arbitrary workspace browsing or raw absolute path disclosure.
+- Execute child commands with explicit argv/env handling instead of shell-interpolated command strings.
 
-## Pipeline Behavior
-1. Resolve the positional plan path from the invocation directory.
-2. Resolve and validate the target workspace from `--cwd`.
-3. Validate that the plan exists, is Markdown, and contains non-whitespace content.
-4. Validate git unless `--allow-no-git` is set.
-5. Create `.jj/runs/<run-id>/` and required subdirectories.
-6. Write redacted `input.md` and related input artifacts.
-7. Capture git baseline metadata when available: repo root, branch, HEAD, dirty state, and status before.
-8. Select the planner provider using injected, OpenAI, then Codex CLI fallback order.
-9. Run planning perspectives and persist raw planning JSON with redaction applied before persistence.
-10. Merge planning drafts into final run-local `docs/SPEC.md` and `docs/TASK.md`.
-11. Write or update manifest state as phases complete.
-12. If dry-run, skip workspace doc writes, implementation Codex, git diff after implementation, and workspace evaluation.
-13. If non-dry-run, write workspace `docs/SPEC.md` and `docs/TASK.md` before implementation.
-14. Run Codex implementation using generated SPEC and TASK.
-15. Generate `docs/EVAL.md` in the run artifacts and workspace for non-dry-run.
-16. Capture final git status, git diff patch, and git diff stat after docs, Codex, and evaluation have completed or failed as far as possible.
-17. Do not stage, commit, reset, checkout, stash, clean, or otherwise mutate git history.
-18. Finish manifest with final status, errors, artifact paths, provider metadata, Codex result, git metadata, and evaluation result.
-19. When serving, load run manifests independently so one malformed manifest cannot abort the dashboard.
-20. For malformed or untrusted manifests, render a sanitized invalid-run summary and omit trusted artifact links.
-21. Verification tests or artifacts must exercise the actual HTTP handler stack for traversal probes and scan deterministic text artifacts and representative HTTP responses for fake secret leakage.
+## Redaction Policy
 
-## Artifact Layout
-Each run is stored under `.jj/runs/<run-id>/`.
+The shared redaction layer is implemented in `internal/security` and surfaced through `internal/secrets`. Public helpers include `RedactString`, `RedactBytes`, and `RedactMap` for text, bytes, and structured JSON-like maps.
 
-Required planning artifacts:
-- `input.md`
-- `planning/product_spec.json`
-- `planning/implementation_task.json`
-- `planning/qa_eval.json`
-- `planning/merged.json` or equivalent merged planning artifact
-- `docs/SPEC.md`
-- `docs/TASK.md`
-- `manifest.json`
+It covers:
 
-Required non-dry-run artifacts when available:
-- `docs/EVAL.md`
-- `codex/events.jsonl`
-- `codex/summary.md`
-- `codex/exit.json`
-- `git/baseline.txt` or `git/baseline.json`
-- `git/status.before.txt`
-- `git/status.after.txt`
-- `git/diff.patch`
-- `git/diff.stat.txt` or `git/diff-summary.txt`
+- Exact sensitive environment values from keys containing `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`, `AUTHORIZATION`, or `COOKIE`.
+- OpenAI-style API keys, GitHub tokens, npm tokens, AWS access keys, Slack tokens, JWTs, private key blocks, credentialed URLs, Authorization headers, Cookie and Set-Cookie headers, Bearer tokens, and generic high-entropy token-like strings.
+- Sensitive JSON-like fields, env maps, and nested values for `api_key`, generic `*_KEY`, `*_TOKEN`, `*_SECRET`, `password`, `authorization`, `cookie`, and credential-like keys.
+- JSONL event streams, Markdown/text logs, command output, dotenv-style assignments, quoted secret values, and query-string secret parameters.
 
-Optional verification artifacts, when implemented, must be run-relative and redacted:
-- `verification/summary.md`
-- `verification/results.json`
-- `verification/http-probes.jsonl`
+Safe structure is preserved where possible with `[jj-omitted]` for unstructured text. Legacy generic redaction placeholders from upstream tools or user-authored input are normalized to the same jj marker before persistence or serving. Structured security-sensitive projections, including manifest configuration, omit values that would require redaction and keep only safe presence metadata. Redaction is a guardrail, not a cryptographic proof that every possible proprietary string is sensitive; callers must still avoid intentionally storing unnecessary raw secrets.
 
-`manifest.json` must include at least run identity and status, effective non-secret config, planner provider/model and artifacts, git availability and dirty metadata, Codex status and artifacts, evaluation status and summary, an artifact map, errors, and a redaction marker.
+## Path And Artifact Policy
 
-## Configuration
-Configuration sources must be merged with deterministic precedence: CLI flags, environment variables, `.jjrc`, then defaults.
+Workspace and artifact paths are resolved with symlink-aware containment checks before reads, writes, and serving.
 
-Configurable values include target workspace cwd, run id, planner agent count, OpenAI model, Codex binary path, Codex model, spec document path, task document path, eval document path, dry-run mode, no-git mode, and serve bind address.
+Plan file paths are resolved before planning starts. Relative plan paths are still interpreted from the invocation directory so existing CLI path semantics remain predictable, but the resolved target must stay inside the resolved `--cwd` workspace. Absolute plan paths must also resolve under the target workspace. Paths outside `--cwd`, encoded escapes, traversal, and symlink escapes are rejected.
 
-Environment variables may configure OpenAI key/model and Codex binary/model. `.jjrc` may define project defaults. `.jjrc`, manifests, logs, verification artifacts, and served HTML must never expose actual API keys, Bearer [redacted], authorization headers, or secret-like config values.
+Artifact relative paths are rejected when they:
 
-## Error Handling
-- Validation failures must identify the failed phase and reason without exposing secrets or absolute sensitive paths.
-- Planner parse failures must not write successful empty SPEC/TASK documents.
-- Codex and evaluation failures must leave partial artifacts and failed or partial manifest state when possible.
-- Malformed manifests must degrade only the affected run summary, not the entire dashboard.
-- Artifact requests against malformed, missing, or untrusted manifests must fail closed.
-- Unsafe paths including traversal, encoded traversal, absolute paths, Windows drive paths, UNC-style paths, backslash traversal, NUL bytes, empty paths, hidden segments, and hidden artifacts must be rejected before normalization can make them look safe.
+- Are absolute.
+- Contain `..`, `.`, empty segments, backslashes, encoded traversal, or NUL bytes.
+- Use Windows drive prefixes or UNC-style escapes.
+- Include hidden segments such as `.env` or `.secret`.
+- Resolve through a symlinked artifact or state path.
 
-## Security and Privacy
-- Apply central redaction before persisting or rendering plan input, planner output, Codex output, evaluation output, manifests, errors, Markdown, and HTML.
-- Redact OpenAI keys, Bearer [redacted], authorization headers, and secret-like `.jjrc` values.
-- Serve only manifest-listed run artifacts and explicit public workspace docs.
-- Do not trust malformed or legacy manifests for artifact authorization.
-- Do not include raw secret strings in verification artifacts or scan reports.
-- Do not expose arbitrary filesystem paths or local files through error pages or artifact routes.
+Artifact writes use private run permissions and atomic writes. Artifact reads through `jj serve` require the path to be present in the run manifest.
 
-## Observability
-- Every run must produce enough manifest and artifact evidence to understand phase status, provider selection, git baseline/final state, Codex execution, evaluation result, and next action.
-- The dashboard must show current TASK status, recent run status, evaluation state, failures, risks, and next actions.
-- Degraded manifest rows must explain that artifact links are unavailable for safety when a manifest is malformed, incomplete, or lacks a trusted artifact allowlist.
-- Verification evidence should record which checks ran, which request or command shape was exercised, and whether raw secrets, unsafe access, or git mutation were observed.
+## Dashboard Policy
 
-## Acceptance Criteria
-- `jj run plan.md --dry-run` creates `.jj/runs/<run-id>/input.md`, planning artifacts, run-local `docs/SPEC.md`, run-local `docs/TASK.md`, and `manifest.json`.
-- Dry-run does not create or modify workspace `docs/SPEC.md`, `docs/TASK.md`, `docs/EVAL.md`, or code files.
-- Without `OPENAI_API_KEY`, planner provider is Codex CLI fallback and is recorded as `codex` in the manifest using deterministic fake-Codex coverage.
-- With `OPENAI_API_KEY`, OpenAI is selected unless an injected planner is present.
-- Injected planner always has highest priority for tests and internal callers.
-- Non-dry-run writes workspace SPEC/TASK before Codex implementation and records Codex artifacts, git status/diff, `docs/EVAL.md`, and manifest evaluation result.
-- Non-dry-run does not create a git commit, does not stage files, and leaves `git rev-parse HEAD` unchanged.
-- Pre-existing dirty changes are preserved and recorded as baseline evidence.
-- Non-git workspaces fail by default and run with `--allow-no-git` while recording git unavailable metadata.
-- `jj serve --cwd .` renders a dashboard for no runs, valid runs, failed runs, malformed manifests, incomplete manifests, and legacy commit-success manifests.
-- Malformed or untrusted manifests cannot authorize artifact access.
-- Valid manifest-listed artifacts and explicit public workspace docs still serve successfully.
-- Representative raw and encoded traversal probes through the real HTTP stack return non-2xx and do not leak raw paths or fake secrets.
-- Fake secrets injected through plan text, planner output, Codex output, config-like values, manifest-like values, docs, and served pages do not appear in persisted text artifacts or representative HTTP responses.
-- Optional verification artifacts are redacted, run-relative, and linked only through the manifest artifact map.
-- `go test ./internal/serve ./internal/run`, `go test ./...`, `go vet ./...`, and `go build -o jj ./cmd/jj` pass.
+`jj serve` binds to `127.0.0.1:7331` by default. External binding requires explicit `--host` or `--addr`.
+
+The dashboard:
+
+- Serves only `README.md`, `plan.md`, `docs/SPEC.md`, `docs/TASK.md`, `.jj/spec.json`, `.jj/tasks.json`, and manifest-listed run artifacts.
+- Rejects traversal, encoded traversal, dotfile browsing, malformed run IDs, and symlink escapes.
+- Redacts and HTML-escapes rendered metadata and artifact content.
+- Uses safe display labels such as `[workspace]`, `.jj/runs/<run-id>`, and `[path]` instead of raw absolute workspace paths.
+- Sends `Cache-Control: no-store` on dashboard, JSON, and artifact responses so local review pages are not cached.
+
+## Command Policy
+
+Codex, Git, validation, and repository commands are launched through structured `exec.CommandContext` calls with explicit binary and arg slices. Command working directories are resolved and validated before execution, and long-running child commands are bounded by command-specific timeouts.
+
+Command metadata stored in artifacts includes sanitized argv, safe path labels, filtered environments, exit status, duration, and redacted errors. Sensitive flag values such as `--token <value>`, `--api-key <value>`, and `--api-key=value` are replaced with `[jj-omitted]`. Raw environment dumps are not persisted.
+
+## Manifest Policy
+
+`manifest.json` includes sanitized run status, SafeConfig configuration metadata, git metadata, planner provider, Codex result, validation result, artifacts, risks, errors, and security metadata.
+
+SafeConfig records non-secret fields such as planning agent count, model names when they do not match configured secret material, Codex binary when safe, task proposal mode, config file path when safe, OpenAI key environment variable name, OpenAI key presence as a boolean, no-git mode, and canonical state paths. It never stores runtime secret values such as API keys or GitHub tokens.
+
+Security metadata records:
+
+- `redaction_applied`
+- `workspace_guardrails_applied`
+- `redaction_count`
+- redaction, path, serve, command, and environment policy summaries
+
+## Validation
+
+Required validation for this baseline:
+
+- `go test ./...`
+- `go vet ./...`
+- `go build -o jj ./cmd/jj`
+- `./scripts/validate.sh`

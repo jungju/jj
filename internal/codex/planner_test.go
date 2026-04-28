@@ -83,6 +83,63 @@ func TestPlannerInvalidJSONReturnsStageError(t *testing.T) {
 	}
 }
 
+func TestMergePromptRequestsCanonicalTaskQueue(t *testing.T) {
+	prompt := mergePrompt(ai.MergeRequest{
+		Plan: "Make generated docs canonical.",
+		Drafts: []ai.PlanningDraft{{
+			Agent:        "product_spec",
+			Summary:      "summary",
+			SpecMarkdown: "# SPEC",
+			TaskMarkdown: "# TASK",
+		}},
+	})
+	for _, want := range []string{
+		`.jj/spec.json`,
+		`.jj/tasks.json`,
+		`\"version\":1`,
+		`\"active_task_id\":null`,
+		`\"mode\":\"feature\"`,
+		`\"status\":\"queued\"`,
+		`\"validation_command\":\"./scripts/validate.sh\"`,
+		"append-only proposal input, not a full replacement for .jj/tasks.json",
+		"Do not include existing tasks from context.",
+		"jj will assign fresh task IDs, append every proposed task",
+		"current .jj/spec.json state is present in the planning context, it is the source of truth",
+		"plan.md is product vision/background only",
+		"Supported statuses are queued, active, in_progress, done, blocked, failed, skipped, and superseded.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("merge prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "TASK.md must include:") || strings.Contains(prompt, "# jj TASK Queue") || strings.Contains(prompt, "## Implementation Steps") {
+		t.Fatalf("merge prompt should not request legacy task sections:\n%s", prompt)
+	}
+}
+
+func TestReconcileSpecPromptRequestsResultBasedSchema(t *testing.T) {
+	prompt := reconcileSpecPrompt(ai.ReconcileSpecRequest{
+		PreviousSpec:      `{"version":1,"title":"Before"}`,
+		PlannedSpec:       `{"version":1,"title":"Planned"}`,
+		SelectedTask:      `{"id":"T-FEATURE-001"}`,
+		CodexSummary:      "Changed code.",
+		GitDiffSummary:    "diff summary",
+		ValidationSummary: "Validation status: passed",
+	})
+
+	for _, want := range []string{
+		`"spec": "{\"version\":1`,
+		"Preserve the existing .jj/spec.json schema; do not add top-level fields.",
+		"The previous SPEC is the source of truth.",
+		"Incorporate only behavior supported by the selected task, Codex summary, git diff summary, and passed validation evidence.",
+		"Validation summary:",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("reconcile prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 type fakePlannerExecutor struct {
 	summary  string
 	requests []Request

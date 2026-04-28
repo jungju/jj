@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -13,56 +12,60 @@ import (
 
 const DefaultPlanningAgents = 3
 const defaultOpenAIModel = "gpt-5.5"
-const defaultDocsDir = "docs"
 const DefaultCodexBinary = "codex"
-
-const (
-	DefaultSpecPath = "docs/SPEC.md"
-	DefaultTaskPath = "docs/TASK.md"
-	DefaultEvalPath = "docs/EVAL.md"
-
-	// Default*Doc remain exported for older callers; values are now paths.
-	DefaultSpecDoc = DefaultSpecPath
-	DefaultTaskDoc = DefaultTaskPath
-	DefaultEvalDoc = DefaultEvalPath
-)
 
 type Config struct {
 	PlanPath              string
+	PlanText              string
+	PlanInputName         string
 	CWD                   string
 	RunID                 string
 	PlanningAgents        int
 	OpenAIModel           string
 	CodexModel            string
 	CodexBin              string
+	TaskProposalMode      TaskProposalMode
+	RepoURL               string
+	RepoDir               string
+	BaseBranch            string
+	WorkBranch            string
+	Push                  bool
+	PushMode              string
+	GitHubTokenEnv        string
+	RepoAllowDirty        bool
 	AllowNoGit            bool
 	DryRun                bool
-	SpecDoc               string
-	TaskDoc               string
-	EvalDoc               string
-	SpecDocPathMode       bool
-	TaskDocPathMode       bool
-	EvalDocPathMode       bool
 	AdditionalPlanContext string
 	CommitOnSuccess       bool
 	CommitMessage         string
+	LoopEnabled           bool
+	LoopBaseRunID         string
+	LoopTurn              int
+	LoopMaxTurns          int
+	LoopPreviousRunID     string
 
 	ConfigSearchDir string
 	ConfigFile      string
 	OpenAIAPIKey    string
 	OpenAIAPIKeyEnv string
 
-	PlanningAgentsExplicit bool
-	CWDExplicit            bool
-	RunIDExplicit          bool
-	OpenAIModelExplicit    bool
-	CodexModelExplicit     bool
-	CodexBinExplicit       bool
-	SpecDocExplicit        bool
-	TaskDocExplicit        bool
-	EvalDocExplicit        bool
-	DryRunExplicit         bool
-	AllowNoGitExplicit     bool
+	PlanningAgentsExplicit   bool
+	CWDExplicit              bool
+	RunIDExplicit            bool
+	OpenAIModelExplicit      bool
+	CodexModelExplicit       bool
+	CodexBinExplicit         bool
+	TaskProposalModeExplicit bool
+	RepoURLExplicit          bool
+	RepoDirExplicit          bool
+	BaseBranchExplicit       bool
+	WorkBranchExplicit       bool
+	PushExplicit             bool
+	PushModeExplicit         bool
+	GitHubTokenEnvExplicit   bool
+	RepoAllowDirtyExplicit   bool
+	DryRunExplicit           bool
+	AllowNoGitExplicit       bool
 
 	Stdout io.Writer
 	Stderr io.Writer
@@ -165,6 +168,93 @@ func ResolveConfig(cfg Config) (Config, error) {
 	if strings.TrimSpace(cfg.CodexBin) == "" {
 		cfg.CodexBin = DefaultCodexBinary
 	}
+	if !cfg.TaskProposalModeExplicit {
+		if v := firstEnv("JJ_TASK_PROPOSAL_MODE", "JJ_PROPOSAL_MODE"); v != "" {
+			mode, err := ParseTaskProposalMode(v)
+			if err != nil {
+				return cfg, err
+			}
+			cfg.TaskProposalMode = mode
+		} else if v := strings.TrimSpace(fileCfg.TaskProposalMode); v != "" {
+			mode, err := ParseTaskProposalMode(v)
+			if err != nil {
+				return cfg, err
+			}
+			cfg.TaskProposalMode = mode
+		} else if strings.TrimSpace(string(cfg.TaskProposalMode)) == "" {
+			cfg.TaskProposalMode = TaskProposalModeAuto
+		}
+	}
+	if !cfg.RepoURLExplicit {
+		if v := firstEnv("JJ_REPO", "JJ_REPOSITORY", "JJ_REPO_URL"); v != "" {
+			cfg.RepoURL = v
+		} else if v := strings.TrimSpace(fileCfg.RepoURL); v != "" {
+			cfg.RepoURL = v
+		}
+	}
+	if !cfg.RepoDirExplicit {
+		if v := firstEnv("JJ_REPO_DIR"); v != "" {
+			cfg.RepoDir = v
+		} else if v := strings.TrimSpace(fileCfg.RepoDir); v != "" {
+			cfg.RepoDir = v
+		}
+	}
+	if !cfg.BaseBranchExplicit {
+		if v := firstEnv("JJ_BASE_BRANCH"); v != "" {
+			cfg.BaseBranch = v
+		} else if v := strings.TrimSpace(fileCfg.BaseBranch); v != "" {
+			cfg.BaseBranch = v
+		}
+	}
+	if !cfg.WorkBranchExplicit {
+		if v := firstEnv("JJ_WORK_BRANCH"); v != "" {
+			cfg.WorkBranch = v
+		} else if v := strings.TrimSpace(fileCfg.WorkBranch); v != "" {
+			cfg.WorkBranch = v
+		}
+	}
+	if !cfg.PushExplicit {
+		if v := firstEnv("JJ_PUSH"); v != "" {
+			parsed, err := parseBool(v)
+			if err != nil {
+				return cfg, fmt.Errorf("parse JJ_PUSH: %w", err)
+			}
+			cfg.Push = parsed
+		} else if fileCfg.Push != nil {
+			cfg.Push = *fileCfg.Push
+		}
+	}
+	if !cfg.PushModeExplicit {
+		if v := firstEnv("JJ_PUSH_MODE"); v != "" {
+			cfg.PushMode = v
+		} else if v := strings.TrimSpace(fileCfg.PushMode); v != "" {
+			cfg.PushMode = v
+		} else if strings.TrimSpace(cfg.PushMode) == "" {
+			cfg.PushMode = DefaultPushMode
+		}
+	}
+	if !cfg.GitHubTokenEnvExplicit {
+		if v := firstEnv("JJ_GITHUB_TOKEN_ENV"); v != "" {
+			cfg.GitHubTokenEnv = v
+			cfg.GitHubTokenEnvExplicit = true
+		} else if v := strings.TrimSpace(fileCfg.GitHubTokenEnv); v != "" {
+			cfg.GitHubTokenEnv = v
+			cfg.GitHubTokenEnvExplicit = true
+		} else if strings.TrimSpace(cfg.GitHubTokenEnv) == "" {
+			cfg.GitHubTokenEnv = DefaultGitHubTokenEnv
+		}
+	}
+	if !cfg.RepoAllowDirtyExplicit {
+		if v := firstEnv("JJ_REPO_ALLOW_DIRTY", "JJ_ALLOW_DIRTY"); v != "" {
+			parsed, err := parseBool(v)
+			if err != nil {
+				return cfg, fmt.Errorf("parse JJ_ALLOW_DIRTY: %w", err)
+			}
+			cfg.RepoAllowDirty = parsed
+		} else if fileCfg.RepoAllowDirty != nil {
+			cfg.RepoAllowDirty = *fileCfg.RepoAllowDirty
+		}
+	}
 	if strings.TrimSpace(cfg.OpenAIAPIKeyEnv) == "" {
 		if v := firstEnv("JJ_OPENAI_API_KEY_ENV"); v != "" {
 			cfg.OpenAIAPIKeyEnv = v
@@ -174,55 +264,29 @@ func ResolveConfig(cfg Config) (Config, error) {
 			cfg.OpenAIAPIKeyEnv = "OPENAI_API_KEY"
 		}
 	}
+	if err := validateEnvVarName("OpenAI API key env", cfg.OpenAIAPIKeyEnv); err != nil {
+		return cfg, err
+	}
 	if strings.TrimSpace(cfg.OpenAIAPIKey) == "" {
 		cfg.OpenAIAPIKey = os.Getenv(cfg.OpenAIAPIKeyEnv)
 	}
-	if !cfg.SpecDocExplicit {
-		if v := firstEnv("JJ_SPEC_PATH"); v != "" {
-			cfg.SpecDoc = v
-			cfg.SpecDocPathMode = true
-		} else if v := firstEnv("JJ_SPEC_DOC"); v != "" {
-			cfg.SpecDoc = v
-			cfg.SpecDocPathMode = false
-		} else if strings.TrimSpace(fileCfg.SpecPath) != "" {
-			cfg.SpecDoc = fileCfg.SpecPath
-			cfg.SpecDocPathMode = true
-		} else if strings.TrimSpace(fileCfg.SpecDoc) != "" {
-			cfg.SpecDoc = fileCfg.SpecDoc
-			cfg.SpecDocPathMode = false
-		}
+	mode, err := ParseTaskProposalMode(string(cfg.TaskProposalMode))
+	if err != nil {
+		return cfg, err
 	}
-	if !cfg.TaskDocExplicit {
-		if v := firstEnv("JJ_TASK_PATH"); v != "" {
-			cfg.TaskDoc = v
-			cfg.TaskDocPathMode = true
-		} else if v := firstEnv("JJ_TASK_DOC"); v != "" {
-			cfg.TaskDoc = v
-			cfg.TaskDocPathMode = false
-		} else if strings.TrimSpace(fileCfg.TaskPath) != "" {
-			cfg.TaskDoc = fileCfg.TaskPath
-			cfg.TaskDocPathMode = true
-		} else if strings.TrimSpace(fileCfg.TaskDoc) != "" {
-			cfg.TaskDoc = fileCfg.TaskDoc
-			cfg.TaskDocPathMode = false
-		}
+	cfg.TaskProposalMode = mode
+	if strings.TrimSpace(cfg.PushMode) == "" {
+		cfg.PushMode = DefaultPushMode
 	}
-	if !cfg.EvalDocExplicit {
-		if v := firstEnv("JJ_EVAL_PATH"); v != "" {
-			cfg.EvalDoc = v
-			cfg.EvalDocPathMode = true
-		} else if v := firstEnv("JJ_EVAL_DOC"); v != "" {
-			cfg.EvalDoc = v
-			cfg.EvalDocPathMode = false
-		} else if strings.TrimSpace(fileCfg.EvalPath) != "" {
-			cfg.EvalDoc = fileCfg.EvalPath
-			cfg.EvalDocPathMode = true
-		} else if strings.TrimSpace(fileCfg.EvalDoc) != "" {
-			cfg.EvalDoc = fileCfg.EvalDoc
-			cfg.EvalDocPathMode = false
-		}
+	if err := validatePushMode(cfg.PushMode); err != nil {
+		return cfg, err
 	}
-	cfg = applyDocumentDefaults(cfg)
+	if strings.TrimSpace(cfg.GitHubTokenEnv) == "" {
+		cfg.GitHubTokenEnv = DefaultGitHubTokenEnv
+	}
+	if err := validateEnvVarName("GitHub token env", cfg.GitHubTokenEnv); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
 }
 
@@ -278,68 +342,12 @@ func validateResolvedConfig(cfg Config) error {
 	if strings.TrimSpace(cfg.OpenAIModel) == "" {
 		return fmt.Errorf("openai model is required")
 	}
-	if err := validateDocPath("spec-path", cfg.SpecDoc); err != nil {
+	mode, err := ParseTaskProposalMode(string(cfg.TaskProposalMode))
+	if err != nil {
 		return err
 	}
-	if err := validateDocPath("task-path", cfg.TaskDoc); err != nil {
-		return err
-	}
-	if err := validateDocPath("eval-path", cfg.EvalDoc); err != nil {
-		return err
-	}
+	cfg.TaskProposalMode = mode
 	return nil
-}
-
-func applyDocumentDefaults(cfg Config) Config {
-	if strings.TrimSpace(cfg.SpecDoc) == "" {
-		cfg.SpecDoc = DefaultSpecPath
-	} else {
-		cfg.SpecDoc = strings.TrimSpace(cfg.SpecDoc)
-	}
-	if strings.TrimSpace(cfg.TaskDoc) == "" {
-		cfg.TaskDoc = DefaultTaskPath
-	} else {
-		cfg.TaskDoc = strings.TrimSpace(cfg.TaskDoc)
-	}
-	if strings.TrimSpace(cfg.EvalDoc) == "" {
-		cfg.EvalDoc = DefaultEvalPath
-	} else {
-		cfg.EvalDoc = strings.TrimSpace(cfg.EvalDoc)
-	}
-	return cfg
-}
-
-func validateDocPath(flagName, path string) error {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return fmt.Errorf("%s is required", flagName)
-	}
-	if filepath.IsAbs(path) || strings.Contains(path, `\`) {
-		return fmt.Errorf("%s must be a workspace-relative path: %s", flagName, path)
-	}
-	clean := filepath.Clean(path)
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("%s must stay inside the workspace: %s", flagName, path)
-	}
-	if filepath.ToSlash(clean) != filepath.ToSlash(path) {
-		return fmt.Errorf("%s must be a clean workspace-relative path: %s", flagName, path)
-	}
-	if !isMarkdownLikePath(path) {
-		return fmt.Errorf("%s must be Markdown-like (.md or .markdown): %s", flagName, path)
-	}
-	return nil
-}
-
-func docRelPath(name string, pathMode bool) string {
-	name = strings.TrimSpace(name)
-	clean := filepath.Clean(name)
-	if pathMode {
-		return filepath.ToSlash(clean)
-	}
-	if strings.Contains(clean, string(filepath.Separator)) || strings.Contains(name, "/") {
-		return filepath.ToSlash(clean)
-	}
-	return filepath.ToSlash(filepath.Join(defaultDocsDir, clean))
 }
 
 func firstEnv(names ...string) string {
@@ -360,4 +368,22 @@ func parseBool(raw string) (bool, error) {
 	default:
 		return false, fmt.Errorf("invalid boolean %q", raw)
 	}
+}
+
+func validateEnvVarName(label, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("%s is required", label)
+	}
+	for i, r := range name {
+		valid := r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (i > 0 && r >= '0' && r <= '9')
+		if !valid {
+			return fmt.Errorf("%s must be an environment variable name", label)
+		}
+	}
+	first := rune(name[0])
+	if first >= '0' && first <= '9' {
+		return fmt.Errorf("%s must be an environment variable name", label)
+	}
+	return nil
 }
