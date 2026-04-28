@@ -1124,6 +1124,33 @@
       "updated_at": "2026-04-28T20:05:27Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "scripts/validate.sh is run as the only release-gate command for this verification task.",
+        "scripts/validate.sh completes successfully with only deterministic sanitized release-gate metadata.",
+        "If scripts/validate.sh passes, no repository files are changed and completed security guardrails remain closed.",
+        "If scripts/validate.sh fails, only the concrete reported security or privacy regression is patched and focused regression coverage is included.",
+        "No raw command output, environment values, manifests, diffs, artifacts, prompts, validation payloads, secret values, token-like values, or unsafe paths are persisted, uploaded, rendered, or reported.",
+        "No new user-facing features, dashboard pages, CLI flags, raw export endpoints, scanners, redaction expansion, or artifact upload behavior are introduced."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t19",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T20:07:27Z",
+      "created_by_run": "autopilot-20260428-160202-t19",
+      "created_by_turn": null,
+      "id": "TASK-0040",
+      "mode": "security",
+      "priority": "high",
+      "reason": "Security is the only justified next category because the remaining risk surface involves secrets, workspace boundaries, command execution metadata, artifacts, manifests, validation output, git diff output, planner and Codex handoffs, and dashboard exposure. There is no positive bugfix evidence and all prior tasks are done, so this task is verification-only unless the existing sanitized release gate reports a concrete security or privacy regression.",
+      "resolved_task_proposal_mode": "security",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Verify security release gate remains closed",
+      "updated_at": "2026-04-28T20:10:41Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
