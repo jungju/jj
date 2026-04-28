@@ -1269,6 +1269,33 @@
       "updated_at": "2026-04-28T21:12:05Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Dashboard root renders a compact Project docs section for a fixed allow-list of core documents such as plan.md, docs/SPEC.md, docs/TASK.md, docs/EVAL.md, and README.md.",
+        "Each item exposes only a sanitized label, deterministic state, and a guarded link when the document resolves inside the workspace and is readable through existing guarded document routes.",
+        "Missing, unreadable, denied, symlink-escape, stale, unknown, and hostile-label cases render deterministic safe states without server errors or unsafe payload reflection.",
+        "No dashboard response contains raw document bodies, unsafe absolute paths, secrets, token-like values, omission placeholders, raw manifests, raw artifacts, validation output, or diff bodies.",
+        "Existing TASK.md summary, latest-run summary, and next-action dashboard behavior remains unchanged.",
+        "Focused serve/dashboard tests cover present docs, missing docs, unreadable or denied docs, symlink escape, hostile labels, and unchanged existing dashboard summaries."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t24",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T21:16:13Z",
+      "created_by_run": "autopilot-20260428-160202-t24",
+      "created_by_turn": null,
+      "id": "TASK-0045",
+      "mode": "feature",
+      "priority": "high",
+      "reason": "Auto mode resolves to feature because all 44 prior tasks are done, there are no runnable tasks, and current evidence shows no concrete security, CI, validation, blocker, or regression signal. The next small user-facing capability is to improve the dashboard-first workflow with guarded shortcuts to fixed core project documents.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Show guarded project document shortcuts on the dashboard",
+      "updated_at": "2026-04-28T21:28:18Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

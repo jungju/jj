@@ -81,6 +81,156 @@ func TestIndexShowsMissingReadiness(t *testing.T) {
 	}
 }
 
+func TestDashboardProjectDocsShortcutsPresentAndPreserveSummaries(t *testing.T) {
+	dir := t.TempDir()
+	secret := "sk-proj-projectdocs1234567890"
+	writeFile(t, dir, "plan.md", "# Plan\n\n"+secret+"\n")
+	writeFile(t, dir, "README.md", "# README\n\n"+secret+"\n")
+	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n\n"+secret+"\n")
+	writeFile(t, dir, "docs/TASK.md", `# Work Queue
+
+- [~] TASK-0045 [feature] Show guarded project document shortcuts
+
+raw document body
+Authorization: Bearer `+secret+`
+`)
+	writeFile(t, dir, "docs/EVAL.md", "# Eval\n\n"+secret+"\n")
+	writeFile(t, dir, ".jj/runs/20260429-120000-docs/manifest.json", `{
+		"run_id": "20260429-120000-docs",
+		"status": "complete",
+		"started_at": "2026-04-29T12:00:00Z",
+		"planner_provider": "codex",
+		"artifacts": {"manifest": "manifest.json"},
+		"validation": {"status": "passed", "evidence_status": "recorded"}
+	}`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+
+	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
+	for _, rel := range []string{"plan.md", "docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md", "README.md"} {
+		want := `href="` + docURL(rel) + `">` + rel + `</a> <span class="muted">available</span>`
+		if !strings.Contains(projectDocs, want) {
+			t.Fatalf("project docs missing available shortcut %q:\n%s", want, projectDocs)
+		}
+	}
+	for _, leaked := range []string{secret, "raw document body", "Authorization: Bearer", security.RedactionMarker, "[omitted]"} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("dashboard project docs leaked %q:\n%s", leaked, body)
+		}
+	}
+
+	taskSection := htmlSection(body, "Current TASK", "Latest Run")
+	for _, want := range []string{"TASK.md: 1 total, 0 done, 1 in progress, 0 pending, 0 blocked.", "TASK-0045", "feature", "in-progress", "Show guarded project document shortcuts"} {
+		if !strings.Contains(taskSection, want) {
+			t.Fatalf("TASK summary changed, missing %q:\n%s", want, taskSection)
+		}
+	}
+	latest := htmlSection(body, "Latest Run", "Risks And Failures")
+	for _, want := range []string{"20260429-120000-docs", "complete", "provider/result codex", "evaluation passed (recorded)"} {
+		if !strings.Contains(latest, want) {
+			t.Fatalf("latest-run summary changed, missing %q:\n%s", want, latest)
+		}
+	}
+	next := htmlSection(body, "Next Action", "Project Docs")
+	for _, want := range []string{"Continue Task", "continue_task", "TASK-0045", "feature", "in-progress"} {
+		if !strings.Contains(next, want) {
+			t.Fatalf("next-action summary changed, missing %q:\n%s", want, next)
+		}
+	}
+}
+
+func TestDashboardProjectDocsShortcutsMissingUnavailableAndDeniedAreSafe(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	secret := "sk-proj-projectdocdeny1234567890"
+	writeFile(t, dir, "README.md", "# README\n")
+	writeFile(t, outside, "SPEC.md", "# Outside\n"+secret+"\n")
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "SPEC.md"), filepath.Join(dir, "docs", "SPEC.md")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "docs", "TASK.md"), 0o755); err != nil {
+		t.Fatalf("mkdir TASK dir: %v", err)
+	}
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
+	for _, want := range []string{
+		`<strong>plan.md</strong> <span class="muted">missing</span>`,
+		`<strong>docs/SPEC.md</strong> <span class="muted">denied</span>`,
+		`<strong>docs/TASK.md</strong> <span class="muted">unavailable</span>`,
+		`<strong>docs/EVAL.md</strong> <span class="muted">missing</span>`,
+		`href="` + docURL("README.md") + `">README.md</a> <span class="muted">available</span>`,
+	} {
+		if !strings.Contains(projectDocs, want) {
+			t.Fatalf("project docs missing safe state %q:\n%s", want, projectDocs)
+		}
+	}
+	for _, leaked := range []string{secret, outside, filepath.ToSlash(outside), filepath.Join(outside, "SPEC.md"), filepath.ToSlash(filepath.Join(outside, "SPEC.md")), "Outside"} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("project docs leaked denied payload %q:\n%s", leaked, body)
+		}
+	}
+}
+
+func TestDashboardProjectDocsShortcutsSanitizeHostileLabelsAndUnknownStates(t *testing.T) {
+	dir := t.TempDir()
+	secret := "sk-proj-projectdoclabel1234567890"
+	rawPath := filepath.Join(dir, "outside", "secret.md")
+	t.Setenv("JJ_PROJECT_DOC_LABEL_TOKEN", secret)
+	writeFile(t, dir, "README.md", "# README\n")
+	originalSpecs := projectDocShortcutSpecs
+	projectDocShortcutSpecs = []projectDocShortcutSpec{
+		{Label: "token=" + secret + " raw artifact body " + rawPath, Path: "docs/../" + secret + ".md"},
+		{Label: "Unknown Doc", Path: ""},
+		{Label: "README.md", Path: "README.md"},
+	}
+	t.Cleanup(func() { projectDocShortcutSpecs = originalSpecs })
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
+	for _, want := range []string{
+		`<strong>Project doc</strong> <span class="muted">denied</span>`,
+		`<strong>Unknown Doc</strong> <span class="muted">unknown</span>`,
+		`href="` + docURL("README.md") + `">README.md</a> <span class="muted">available</span>`,
+	} {
+		if !strings.Contains(projectDocs, want) {
+			t.Fatalf("hostile project docs missing %q:\n%s", want, projectDocs)
+		}
+	}
+	for _, leaked := range []string{secret, "token=", "raw artifact body", rawPath, filepath.ToSlash(rawPath), "../", security.RedactionMarker, "[omitted]"} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("hostile project docs leaked %q:\n%s", leaked, body)
+		}
+	}
+	if got := sanitizeProjectDocState("stale"); got != "unknown" {
+		t.Fatalf("stale project doc state should render as unknown, got %q", got)
+	}
+}
+
 func TestDashboardLatestRunSummaryIsCompactSanitizedAndTimestampSelected(t *testing.T) {
 	dir := newTestWorkspace(t)
 	secret := "sk-proj-latestrun1234567890"
@@ -1262,6 +1412,7 @@ func TestDocShowsRedactedMarkdown(t *testing.T) {
 
 func TestProjectDocAllowlistServesOnlyDocumentedDocs(t *testing.T) {
 	dir := newTestWorkspace(t)
+	writeFile(t, dir, "docs/EVAL.md", "# Eval Doc\n")
 	server := newTestServer(t, dir, "")
 
 	allowed := []struct {
@@ -1272,6 +1423,7 @@ func TestProjectDocAllowlistServesOnlyDocumentedDocs(t *testing.T) {
 		{"/doc?path=plan.md", "<h1>Product Plan</h1>"},
 		{"/doc?path=docs/SPEC.md", "<h1>Spec Doc</h1>"},
 		{"/doc?path=docs/TASK.md", "<h1>Task Doc</h1>"},
+		{"/doc?path=docs/EVAL.md", "<h1>Eval Doc</h1>"},
 		{"/doc?path=.jj/spec.json", "SPEC"},
 		{"/doc?path=.jj/tasks.json", "TASK-0001"},
 	}
@@ -3285,7 +3437,7 @@ func dashboardNextActionSection(t *testing.T, server *Server) string {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("dashboard status = %d body=%s", rec.Code, body)
 	}
-	return htmlSection(body, "Next Action", "Workspace Readiness")
+	return htmlSection(body, "Next Action", "Project Docs")
 }
 
 type loopFakeExecutor struct {

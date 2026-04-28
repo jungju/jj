@@ -27,6 +27,8 @@ const DefaultAddr = DefaultHost + ":7331"
 
 const displayWorkspace = "[workspace]"
 
+const workspaceEvalMarkdownPath = "docs/EVAL.md"
+
 var allowedProjectDocPaths = []string{
 	"README.md",
 	"plan.md",
@@ -34,6 +36,14 @@ var allowedProjectDocPaths = []string{
 	"docs/TASK.md",
 	runpkg.DefaultSpecStatePath,
 	runpkg.DefaultTasksStatePath,
+}
+
+var projectDocShortcutSpecs = []projectDocShortcutSpec{
+	{Label: "plan.md", Path: "plan.md"},
+	{Label: "docs/SPEC.md", Path: "docs/SPEC.md"},
+	{Label: "docs/TASK.md", Path: workspaceTaskMarkdownPath},
+	{Label: "docs/EVAL.md", Path: workspaceEvalMarkdownPath},
+	{Label: "README.md", Path: "README.md"},
 }
 
 type RunExecutor func(context.Context, runpkg.Config) (*runpkg.Result, error)
@@ -69,6 +79,17 @@ type Server struct {
 
 type docLink struct {
 	Path string
+}
+
+type projectDocShortcutSpec struct {
+	Label string
+	Path  string
+}
+
+type projectDocShortcut struct {
+	Label string
+	State string
+	URL   string
 }
 
 type readinessItem struct {
@@ -515,6 +536,7 @@ type pageData struct {
 	LatestRun        latestRunSummary
 	NextAction       nextActionSummary
 	Docs             []docLink
+	ProjectDocs      []projectDocShortcut
 	Runs             []runLink
 	Readiness        []readinessItem
 	DefaultPlan      string
@@ -705,6 +727,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	readiness := s.workspaceReadiness()
 	taskQueue := s.taskQueueSummary()
 	nextAction := nextActionSummaryFromSummaries(taskQueue, latestRun)
+	projectDocs := s.projectDocShortcuts()
 	s.render(w, pageData{
 		Title:       "jj dashboard",
 		CWD:         displayWorkspace,
@@ -713,6 +736,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		LatestRun:   latestRun,
 		NextAction:  nextAction,
 		Docs:        docs,
+		ProjectDocs: projectDocs,
 		Runs:        runs,
 		Readiness:   readiness,
 		DefaultPlan: firstReadyPath(readiness, "Plan"),
@@ -1133,31 +1157,41 @@ func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) loadDocPage(rel string) (pageData, int, error) {
-	if strings.TrimSpace(rel) == "" {
-		return pageData{}, http.StatusBadRequest, errors.New("path is required")
-	}
-	if !isMarkdown(rel) && strings.ToLower(filepath.Ext(rel)) != ".json" {
-		return pageData{}, http.StatusBadRequest, errors.New("only allowlisted markdown and json state files are supported")
-	}
-	if !isAllowedDocPath(rel) {
-		return pageData{}, http.StatusForbidden, errors.New("state path is not allowed")
-	}
-	path, err := safeJoinProject(s.cwd, rel)
+	clean, path, status, err := s.resolveProjectDocRoutePath(rel)
 	if err != nil {
-		return pageData{}, http.StatusForbidden, err
+		return pageData{}, status, err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return pageData{}, http.StatusNotFound, errors.New("state file unavailable")
 	}
-	content, rendered := presentContent(rel, data, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace})
+	content, rendered := presentContent(clean, data, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace})
 	return pageData{
-		Title:    rel,
+		Title:    clean,
 		CWD:      displayWorkspace,
-		Path:     filepath.ToSlash(rel),
+		Path:     filepath.ToSlash(clean),
 		Content:  content,
 		Rendered: rendered,
 	}, http.StatusOK, nil
+}
+
+func (s *Server) resolveProjectDocRoutePath(rel string) (string, string, int, error) {
+	rel = strings.TrimSpace(rel)
+	if rel == "" {
+		return "", "", http.StatusBadRequest, errors.New("path is required")
+	}
+	if !isMarkdown(rel) && strings.ToLower(filepath.Ext(rel)) != ".json" {
+		return "", "", http.StatusBadRequest, errors.New("only allowlisted markdown and json state files are supported")
+	}
+	clean, err := cleanAllowedProjectPath(rel)
+	if err != nil || !isProjectDocPath(clean) {
+		return "", "", http.StatusForbidden, errors.New("state path is not allowed")
+	}
+	path, err := safeJoinProject(s.cwd, clean)
+	if err != nil {
+		return clean, "", http.StatusForbidden, err
+	}
+	return clean, path, http.StatusOK, nil
 }
 
 func (s *Server) handleRunsIndex(w http.ResponseWriter, r *http.Request) {
@@ -2167,6 +2201,83 @@ func (s *Server) workspaceReadiness() []readinessItem {
 		items[i].Ready = err == nil && !info.IsDir()
 	}
 	return items
+}
+
+func (s *Server) projectDocShortcuts() []projectDocShortcut {
+	return s.projectDocShortcutsForSpecs(projectDocShortcutSpecs)
+}
+
+func (s *Server) projectDocShortcutsForSpecs(specs []projectDocShortcutSpec) []projectDocShortcut {
+	roots := []security.CommandPathRoot{{Path: s.cwd, Label: displayWorkspace}}
+	items := make([]projectDocShortcut, 0, len(specs))
+	for _, spec := range specs {
+		label := sanitizeProjectDocLabel(spec.Label, roots...)
+		state, url := s.projectDocShortcutState(spec.Path)
+		items = append(items, projectDocShortcut{
+			Label: label,
+			State: sanitizeProjectDocState(state),
+			URL:   url,
+		})
+	}
+	return items
+}
+
+func (s *Server) projectDocShortcutState(rel string) (string, string) {
+	clean, path, status, err := s.resolveProjectDocRoutePath(rel)
+	if err != nil {
+		switch status {
+		case http.StatusForbidden:
+			return "denied", ""
+		case http.StatusBadRequest:
+			return "unknown", ""
+		default:
+			return "unknown", ""
+		}
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "missing", ""
+	}
+	if err != nil || info.IsDir() {
+		return "unavailable", ""
+	}
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "missing", ""
+	}
+	if err != nil {
+		return "unavailable", ""
+	}
+	_ = file.Close()
+	return "available", docURL(clean)
+}
+
+func sanitizeProjectDocLabel(label string, roots ...security.CommandPathRoot) string {
+	label = strings.TrimSpace(sanitizeRunDetailText(label, roots...))
+	if label == "" ||
+		label == "unsafe value removed" ||
+		label == "sensitive value removed" ||
+		strings.Contains(label, security.RedactionMarker) ||
+		strings.Contains(label, "[path]") ||
+		unsafeRunDetailText(label) {
+		return "Project doc"
+	}
+	return label
+}
+
+func sanitizeProjectDocState(state string) string {
+	switch dashboardCategory(state, "unknown") {
+	case "available":
+		return "available"
+	case "missing":
+		return "missing"
+	case "unavailable":
+		return "unavailable"
+	case "denied":
+		return "denied"
+	default:
+		return "unknown"
+	}
 }
 
 func taskChecklistProgress(markdown string) string {
@@ -4193,7 +4304,7 @@ func cleanAllowedProjectPath(rel string) (string, error) {
 
 func isProjectDocPath(rel string) bool {
 	switch rel {
-	case "README.md", "plan.md", "docs/SPEC.md", "docs/TASK.md", runpkg.DefaultSpecStatePath, runpkg.DefaultTasksStatePath:
+	case "README.md", "plan.md", "docs/SPEC.md", "docs/TASK.md", workspaceEvalMarkdownPath, runpkg.DefaultSpecStatePath, runpkg.DefaultTasksStatePath:
 		return true
 	default:
 		return false
@@ -4916,6 +5027,16 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	            {{range .NextAction.Links}}<a class="button" href="{{.URL}}">{{.Label}}</a>{{end}}
 	          </div>
 	        {{end}}
+	      </section>
+	      <section>
+	        <h2>Project Docs</h2>
+	        <ul>
+	        {{range .ProjectDocs}}
+	          <li>{{if .URL}}<a href="{{.URL}}">{{.Label}}</a>{{else}}<strong>{{.Label}}</strong>{{end}} <span class="muted">{{.State}}</span></li>
+	        {{else}}
+	          <li class="muted">Project docs unavailable.</li>
+	        {{end}}
+	        </ul>
 	      </section>
 	      <section>
 	        <h2>Workspace Readiness</h2>
