@@ -142,6 +142,20 @@ type latestRunSummary struct {
 	AuditURL         string
 }
 
+type nextActionSummary struct {
+	State   string
+	Label   string
+	Message string
+	Task    *taskQueueItem
+	RunID   string
+	Links   []nextActionLink
+}
+
+type nextActionLink struct {
+	Label string
+	URL   string
+}
+
 type dashboardManifest struct {
 	RunID                    string `json:"run_id"`
 	Status                   string `json:"status"`
@@ -499,6 +513,7 @@ type pageData struct {
 	SelectedRun      string
 	TaskQueue        taskQueueSummary
 	LatestRun        latestRunSummary
+	NextAction       nextActionSummary
 	Docs             []docLink
 	Runs             []runLink
 	Readiness        []readinessItem
@@ -689,12 +704,14 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	latestRun := latestRunSummaryFromRuns(runs)
 	readiness := s.workspaceReadiness()
 	taskQueue := s.taskQueueSummary()
+	nextAction := nextActionSummaryFromSummaries(taskQueue, latestRun)
 	s.render(w, pageData{
 		Title:       "jj dashboard",
 		CWD:         displayWorkspace,
 		SelectedRun: s.runID,
 		TaskQueue:   taskQueue,
 		LatestRun:   latestRun,
+		NextAction:  nextAction,
 		Docs:        docs,
 		Runs:        runs,
 		Readiness:   readiness,
@@ -2959,6 +2976,239 @@ func guardedRunAuditURL(runID string) string {
 	return "/runs/audit?run=" + template.URLQueryEscaper(runID)
 }
 
+func nextActionSummaryFromSummaries(taskQueue taskQueueSummary, latest latestRunSummary) nextActionSummary {
+	if task := firstNextActionTask(taskQueue, "in-progress"); task != nil {
+		return taskNextAction("continue_task", "Continue Task", "Continue the in-progress task from TASK.md.", *task)
+	}
+	if task := firstNextActionTask(taskQueue, "pending"); task != nil {
+		return taskNextAction("start_task", "Start Task", "Start the first pending task from TASK.md.", *task)
+	}
+	if latestRunNeedsReview(latest) {
+		return latestRunNextAction(latest)
+	}
+	if taskQueue.Available {
+		if taskQueue.Counts.Total > 0 && taskQueue.Counts.Done == taskQueue.Counts.Total {
+			return nextActionSummary{
+				State:   "all_done",
+				Label:   "All Done",
+				Message: "All TASK.md tasks are done.",
+				Links:   nextActionLinks(nextActionLink{Label: "Open TASK.md", URL: taskDocDashboardURL()}),
+			}
+		}
+		if latest.State == "none" {
+			return nextActionSummary{
+				State:   "no_run",
+				Label:   "No Runs",
+				Message: "No runnable TASK.md tasks and no jj runs are available for review.",
+				Links: nextActionLinks(
+					nextActionLink{Label: "Start Web Run", URL: "/run/new"},
+					nextActionLink{Label: "Run History", URL: latest.HistoryURL},
+				),
+			}
+		}
+		return nextActionSummary{
+			State:   "none",
+			Label:   "No Action",
+			Message: "No runnable TASK.md tasks require action.",
+			Links: nextActionLinks(
+				nextActionLink{Label: "Open TASK.md", URL: taskDocDashboardURL()},
+				nextActionLink{Label: "Run History", URL: latest.HistoryURL},
+			),
+		}
+	}
+	switch taskQueue.State {
+	case "missing":
+		return nextActionSummary{
+			State:   "task_missing",
+			Label:   "TASK.md Missing",
+			Message: "docs/TASK.md is unavailable.",
+			Links:   nextActionLinks(nextActionLink{Label: "Start Web Run", URL: "/run/new"}),
+		}
+	case "denied", "unavailable":
+		return nextActionSummary{
+			State:   "task_unavailable",
+			Label:   "TASK.md Unavailable",
+			Message: "TASK.md cannot be read through the workspace guard.",
+			Links:   nextActionLinks(nextActionLink{Label: "Start Web Run", URL: "/run/new"}),
+		}
+	case "unknown":
+		return nextActionSummary{
+			State:   "task_unknown",
+			Label:   "TASK.md Unknown",
+			Message: "TASK.md does not contain a recognized runnable task summary.",
+			Links:   nextActionLinks(nextActionLink{Label: "Open TASK.md", URL: taskDocDashboardURL()}),
+		}
+	default:
+		return nextActionSummary{
+			State:   "unknown",
+			Label:   "Next Action Unknown",
+			Message: "Next action state is unavailable.",
+			Links:   nextActionLinks(nextActionLink{Label: "Run History", URL: latest.HistoryURL}),
+		}
+	}
+}
+
+func firstNextActionTask(summary taskQueueSummary, status string) *taskQueueItem {
+	var task *taskQueueItem
+	switch status {
+	case "in-progress":
+		task = summary.InProgress
+	case "pending":
+		task = summary.Pending
+	}
+	if task == nil {
+		return nil
+	}
+	safe := sanitizeNextActionTask(*task)
+	if safe.ID == "" || safe.Status != status {
+		return nil
+	}
+	return &safe
+}
+
+func taskNextAction(state, label, message string, task taskQueueItem) nextActionSummary {
+	task = sanitizeNextActionTask(task)
+	links := []nextActionLink{{Label: "Open TASK.md", URL: taskDocDashboardURL()}}
+	if task.Status == "pending" {
+		links = append(links, nextActionLink{Label: "Start Web Run", URL: "/run/new"})
+	}
+	return nextActionSummary{
+		State:   state,
+		Label:   label,
+		Message: message,
+		Task:    &task,
+		Links:   nextActionLinks(links...),
+	}
+}
+
+func latestRunNextAction(latest latestRunSummary) nextActionSummary {
+	runID := latestRunIDLabel(latest.RunID)
+	message := "Review the latest run before starting another full run."
+	if runID != "" {
+		status := nextActionDisplayText(latest.Status, "unknown")
+		evaluation := nextActionDisplayText(latest.EvaluationState, "unknown")
+		message = fmt.Sprintf("Review latest run %s: status %s; evaluation %s.", runID, status, evaluation)
+	}
+	if detail := nextActionDisplayText(latest.Message, ""); detail != "" && detail != "No jj runs found." {
+		message = strings.TrimSpace(message + " " + detail)
+	}
+	return nextActionSummary{
+		State:   "review_latest_run",
+		Label:   "Review Latest Run",
+		Message: message,
+		RunID:   runID,
+		Links: nextActionLinks(
+			nextActionLink{Label: "Run Detail", URL: latest.DetailURL},
+			nextActionLink{Label: "Run History", URL: latest.HistoryURL},
+			nextActionLink{Label: "Audit Export", URL: latest.AuditURL},
+		),
+	}
+}
+
+func latestRunNeedsReview(latest latestRunSummary) bool {
+	state := dashboardCategory(latest.State, "unknown")
+	switch state {
+	case "none":
+		return false
+	case "available":
+		return latestRunStatusNeedsReview(latest.Status) || latestRunStatusNeedsReview(latest.EvaluationState)
+	case "unavailable", "denied", "stale", "malformed", "inconsistent", "unknown":
+		return latestRunIDLabel(latest.RunID) != "" || latest.Message != ""
+	default:
+		return state != ""
+	}
+}
+
+func latestRunStatusNeedsReview(value string) bool {
+	token := dashboardCategory(value, "unknown")
+	switch token {
+	case "", "none":
+		return false
+	case "success", "succeeded", "complete", "completed", "completed_with_warnings", "dry_run_complete", "passed", "passed_recorded", "recorded", "skipped":
+		return false
+	case "failed", "failure", "needs_work", "unknown", "unavailable", "denied", "stale", "malformed", "incomplete", "inconsistent":
+		return true
+	}
+	for _, marker := range []string{"failed", "failure", "needs_work", "unknown", "unavailable", "denied", "stale", "malformed", "incomplete", "inconsistent"} {
+		if strings.Contains(token, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeNextActionTask(task taskQueueItem) taskQueueItem {
+	task.ID = sanitizeTaskID(task.ID)
+	task.Category = sanitizeTaskCategory(task.Category)
+	task.Status = sanitizeTaskStatus(task.Status)
+	task.Title = sanitizeTaskTitle(task.Title)
+	if task.Title == "" {
+		task.Title = "Untitled task"
+	}
+	return task
+}
+
+func nextActionDisplayText(value, fallback string) string {
+	text := strings.TrimSpace(latestRunDisplayText(value, fallback))
+	if text == "" || strings.Contains(text, security.RedactionMarker) || unsafeRunDetailText(text) {
+		return fallback
+	}
+	return text
+}
+
+func nextActionLinks(links ...nextActionLink) []nextActionLink {
+	out := make([]nextActionLink, 0, len(links))
+	seen := map[string]bool{}
+	for _, link := range links {
+		label := nextActionLinkLabel(link.Label)
+		url := nextActionURL(link.URL)
+		if label == "" || url == "" || seen[label+"\x00"+url] {
+			continue
+		}
+		seen[label+"\x00"+url] = true
+		out = append(out, nextActionLink{Label: label, URL: url})
+	}
+	return out
+}
+
+func nextActionLinkLabel(label string) string {
+	switch label {
+	case "Open TASK.md", "Start Web Run", "Run Detail", "Run History", "Audit Export":
+		return label
+	default:
+		return ""
+	}
+}
+
+func nextActionURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.ContainsAny(raw, "\x00\r\n\\") || strings.Contains(raw, security.RedactionMarker) || unsafeRunDetailText(raw) {
+		return ""
+	}
+	switch {
+	case raw == taskDocDashboardURL(), raw == "/run/new", raw == "/runs":
+		return raw
+	case strings.HasPrefix(raw, "/runs/audit?run="):
+		runID := strings.TrimPrefix(raw, "/runs/audit?run=")
+		if latestRunIDLabel(runID) == "" {
+			return ""
+		}
+		return raw
+	case strings.HasPrefix(raw, "/runs/"):
+		rest := strings.TrimPrefix(raw, "/runs/")
+		if latestRunIDLabel(rest) == "" {
+			return ""
+		}
+		return raw
+	default:
+		return ""
+	}
+}
+
+func taskDocDashboardURL() string {
+	return "/doc?path=" + workspaceTaskMarkdownPath
+}
+
 func loadDashboardManifest(runID, runDir string) dashboardManifestLoad {
 	data, err := readRunFile(runDir, "manifest.json")
 	if err != nil {
@@ -4655,6 +4905,19 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	        {{end}}
 	      </section>
 	      <section>
+	        <h2>Next Action</h2>
+	        <p><strong>{{.NextAction.Label}}</strong> <span class="muted">{{.NextAction.State}}</span></p>
+	        <p>{{.NextAction.Message}}</p>
+	        {{with .NextAction.Task}}
+	          <p><strong>{{.ID}}</strong> <span class="muted">{{.Category}} · {{.Status}}</span> {{.Title}}</p>
+	        {{end}}
+	        {{if .NextAction.Links}}
+	          <div class="actions">
+	            {{range .NextAction.Links}}<a class="button" href="{{.URL}}">{{.Label}}</a>{{end}}
+	          </div>
+	        {{end}}
+	      </section>
+	      <section>
 	        <h2>Workspace Readiness</h2>
         <div class="ready-grid">
         {{range .Readiness}}
@@ -4704,18 +4967,8 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          {{range .Runs}}
 	            <li>{{if .Invalid}}<strong>{{.ID}}</strong>{{else}}<a href="/runs/{{q .ID}}">{{.ID}}</a>{{end}} <span class="muted">{{.Status}} {{.StartedAt}} {{.PlannerProvider}}{{if .Validation}} · validation {{.Validation}}{{end}}{{if .TaskProposalMode}} · mode {{.TaskProposalMode}}{{if .ResolvedTaskProposalMode}} → {{.ResolvedTaskProposalMode}}{{end}}{{end}}{{if .SecuritySummary}} · {{.SecuritySummary}}{{range .SecurityDetails}} · {{.}}{{end}}{{end}}</span>{{if not .Invalid}} <a href="/runs/{{q .ID}}/manifest">manifest</a>{{end}}{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{else if .RiskSummary}} <span class="muted">{{.RiskSummary}}</span>{{end}}</li>
 	          {{else}}
-	            <li class="muted">No jj runs found. Try <code>jj run plan.md --dry-run</code>.</li>
+	            <li class="muted">No jj runs found.</li>
 	          {{end}}
-	          </ul>
-	        </section>
-	        <section>
-	          <h2>Next Actions</h2>
-	          <ul>
-	            <li><a href="/run/new">Start Web Run</a></li>
-	            {{if .DefaultPlan}}<li><a href="/doc?path={{q .DefaultPlan}}">Review plan</a></li>{{end}}
-	            {{if .Runs}}{{with index .Runs 0}}{{range .NextActions}}<li>{{.}}</li>{{end}}{{end}}{{else}}<li><code>jj run plan.md --dry-run</code></li>{{end}}
-	            <li><a href="/doc?path=.jj/tasks.json">Open Tasks</a></li>
-	            <li><a href="/doc?path=.jj/spec.json">Open SPEC</a></li>
 	          </ul>
 	        </section>
 	      </div>

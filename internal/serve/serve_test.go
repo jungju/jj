@@ -433,6 +433,226 @@ func TestDashboardTaskMarkdownSanitizesRenderedFields(t *testing.T) {
 	}
 }
 
+func TestDashboardNextActionTaskDrivenStates(t *testing.T) {
+	t.Run("in progress precedes pending", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "docs/TASK.md", `# Tasks
+
+- [ ] TASK-0100 [feature] Start later
+- [~] TASK-0101 [quality] Continue current
+`)
+		section := dashboardNextActionSection(t, newTestServer(t, dir, ""))
+		for _, want := range []string{"Next Action", "Continue Task", "continue_task", "TASK-0101", "quality", "in-progress", "Continue current", `href="/doc?path=docs/TASK.md"`} {
+			if !strings.Contains(section, want) {
+				t.Fatalf("in-progress next action missing %q:\n%s", want, section)
+			}
+		}
+		if strings.Contains(section, "TASK-0100") || strings.Contains(section, "Start Web Run") {
+			t.Fatalf("in-progress next action should not start the pending task:\n%s", section)
+		}
+	})
+
+	t.Run("pending task", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "docs/TASK.md", `# Tasks
+
+- [ ] TASK-0102 [docs] Write dashboard docs
+`)
+		section := dashboardNextActionSection(t, newTestServer(t, dir, ""))
+		for _, want := range []string{"Start Task", "start_task", "TASK-0102", "docs", "pending", "Write dashboard docs", `href="/run/new">Start Web Run</a>`} {
+			if !strings.Contains(section, want) {
+				t.Fatalf("pending next action missing %q:\n%s", want, section)
+			}
+		}
+	})
+
+	t.Run("all done", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "docs/TASK.md", `# Tasks
+
+- [x] TASK-0103 [feature] Finished task
+`)
+		section := dashboardNextActionSection(t, newTestServer(t, dir, ""))
+		for _, want := range []string{"All Done", "all_done", "All TASK.md tasks are done.", `href="/doc?path=docs/TASK.md"`} {
+			if !strings.Contains(section, want) {
+				t.Fatalf("all-done next action missing %q:\n%s", want, section)
+			}
+		}
+	})
+
+	t.Run("no run", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "docs/TASK.md", `# Tasks
+
+- TASK-0104 [blocked] Waiting for external input
+`)
+		section := dashboardNextActionSection(t, newTestServer(t, dir, ""))
+		for _, want := range []string{"No Runs", "no_run", "No runnable TASK.md tasks and no jj runs are available for review.", `href="/runs">Run History</a>`} {
+			if !strings.Contains(section, want) {
+				t.Fatalf("no-run next action missing %q:\n%s", want, section)
+			}
+		}
+	})
+}
+
+func TestDashboardNextActionTaskUnavailableUnknownDeniedAndHostileStates(t *testing.T) {
+	secret := "sk-proj-nextactiontask1234567890"
+
+	t.Run("missing TASK", func(t *testing.T) {
+		dir := t.TempDir()
+		section := dashboardNextActionSection(t, newTestServer(t, dir, ""))
+		for _, want := range []string{"TASK.md Missing", "task_missing", "docs/TASK.md is unavailable.", `href="/run/new">Start Web Run</a>`} {
+			if !strings.Contains(section, want) {
+				t.Fatalf("missing TASK next action missing %q:\n%s", want, section)
+			}
+		}
+	})
+
+	t.Run("unavailable TASK", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "docs", "TASK.md"), 0o755); err != nil {
+			t.Fatalf("mkdir TASK dir: %v", err)
+		}
+		section := dashboardNextActionSection(t, newTestServer(t, dir, ""))
+		for _, want := range []string{"TASK.md Unavailable", "task_unavailable", "TASK.md cannot be read through the workspace guard."} {
+			if !strings.Contains(section, want) {
+				t.Fatalf("unavailable TASK next action missing %q:\n%s", want, section)
+			}
+		}
+	})
+
+	t.Run("unknown TASK", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "docs/TASK.md", "# Tasks\n\nraw artifact body\nAuthorization: Bearer "+secret+"\n")
+		section := dashboardNextActionSection(t, newTestServer(t, dir, ""))
+		for _, want := range []string{"TASK.md Unknown", "task_unknown", "recognized runnable task summary", `href="/doc?path=docs/TASK.md"`} {
+			if !strings.Contains(section, want) {
+				t.Fatalf("unknown TASK next action missing %q:\n%s", want, section)
+			}
+		}
+		for _, leaked := range []string{secret, "raw artifact body", "Authorization: Bearer", security.RedactionMarker} {
+			if strings.Contains(section, leaked) {
+				t.Fatalf("unknown TASK next action leaked %q:\n%s", leaked, section)
+			}
+		}
+	})
+
+	t.Run("denied TASK", func(t *testing.T) {
+		dir := t.TempDir()
+		outside := t.TempDir()
+		writeFile(t, outside, "TASK.md", "# Tasks\n\n- [~] TASK-0105: "+secret+"\n")
+		if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+			t.Fatalf("mkdir docs: %v", err)
+		}
+		if err := os.Symlink(filepath.Join(outside, "TASK.md"), filepath.Join(dir, "docs", "TASK.md")); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		section := dashboardNextActionSection(t, newTestServer(t, dir, ""))
+		if !strings.Contains(section, "TASK.md Unavailable") || !strings.Contains(section, "task_unavailable") {
+			t.Fatalf("denied TASK next action missing unavailable state:\n%s", section)
+		}
+		for _, leaked := range []string{secret, outside, filepath.ToSlash(outside)} {
+			if strings.Contains(section, leaked) {
+				t.Fatalf("denied TASK next action leaked %q:\n%s", leaked, section)
+			}
+		}
+	})
+
+	t.Run("hostile task label", func(t *testing.T) {
+		dir := t.TempDir()
+		rawPath := filepath.Join(dir, "outside", "secret.txt")
+		t.Setenv("JJ_NEXT_ACTION_SECRET", secret)
+		writeFile(t, dir, "docs/TASK.md", fmt.Sprintf(`# Tasks
+
+- [~] TASK-0106 [token=%s] Fix token=%s raw artifact body %s
+`, secret, secret, rawPath))
+		section := dashboardNextActionSection(t, newTestServer(t, dir, ""))
+		for _, want := range []string{"Continue Task", "TASK-0106", "unknown", "in-progress", "unsafe value removed"} {
+			if !strings.Contains(section, want) {
+				t.Fatalf("hostile next action missing %q:\n%s", want, section)
+			}
+		}
+		for _, leaked := range []string{secret, "token=", "raw artifact body", rawPath, filepath.ToSlash(rawPath), security.RedactionMarker, "[omitted]"} {
+			if strings.Contains(section, leaked) {
+				t.Fatalf("hostile next action leaked %q:\n%s", leaked, section)
+			}
+		}
+	})
+}
+
+func TestDashboardNextActionRunDrivenStates(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		runID     string
+		manifest  string
+		want      []string
+		forbidden []string
+	}{
+		{
+			name:  "failed latest run",
+			runID: "20260429-120000-failed",
+			manifest: `{
+				"run_id":"20260429-120000-failed",
+				"status":"failed",
+				"started_at":"2026-04-29T12:00:00Z",
+				"artifacts":{"manifest":"manifest.json"},
+				"validation":{"status":"failed"}
+			}`,
+			want: []string{"Review Latest Run", "review_latest_run", "20260429-120000-failed", "status failed; evaluation failed", `href="/runs/20260429-120000-failed">Run Detail</a>`, `href="/runs/audit?run=20260429-120000-failed">Audit Export</a>`},
+		},
+		{
+			name:  "needs work latest run",
+			runID: "20260429-121000-needs",
+			manifest: `{
+				"run_id":"20260429-121000-needs",
+				"status":"needs_work",
+				"started_at":"2026-04-29T12:10:00Z",
+				"artifacts":{"manifest":"manifest.json"},
+				"validation":{"status":"needs_work"}
+			}`,
+			want: []string{"Review Latest Run", "review_latest_run", "20260429-121000-needs", "status needs_work; evaluation needs_work"},
+		},
+		{
+			name:  "unknown latest run",
+			runID: "20260429-122000-unknown",
+			manifest: `{
+				"run_id":"20260429-122000-unknown",
+				"status":"complete",
+				"started_at":"2026-04-29T12:20:00Z",
+				"artifacts":{"manifest":"manifest.json"}
+			}`,
+			want: []string{"Review Latest Run", "review_latest_run", "20260429-122000-unknown", "status complete; evaluation unknown"},
+		},
+		{
+			name:      "malformed latest run",
+			runID:     "20260429-123000-malformed",
+			manifest:  `{"run_id":"20260429-123000-malformed","status":"sk-proj-nextactionrun1234567890",`,
+			want:      []string{"Review Latest Run", "review_latest_run", "20260429-123000-malformed", "status unavailable", "manifest is malformed"},
+			forbidden: []string{"sk-proj-nextactionrun1234567890", security.RedactionMarker, "Raw manifest"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, "docs/TASK.md", `# Tasks
+
+- [x] TASK-0107 [feature] Completed task
+`)
+			writeFile(t, dir, ".jj/runs/"+tc.runID+"/manifest.json", tc.manifest)
+			section := dashboardNextActionSection(t, newTestServer(t, dir, ""))
+			for _, want := range tc.want {
+				if !strings.Contains(section, want) {
+					t.Fatalf("run-driven next action missing %q:\n%s", want, section)
+				}
+			}
+			for _, leaked := range tc.forbidden {
+				if strings.Contains(section, leaked) {
+					t.Fatalf("run-driven next action leaked %q:\n%s", leaked, section)
+				}
+			}
+		})
+	}
+}
+
 func TestDashboardUsesSafeWorkspaceDisplayPath(t *testing.T) {
 	dir := newTestWorkspace(t)
 	server := newTestServer(t, dir, "")
@@ -3054,6 +3274,18 @@ func htmlSection(body, heading, nextHeading string) string {
 		return section[:end]
 	}
 	return section
+}
+
+func dashboardNextActionSection(t *testing.T, server *Server) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard status = %d body=%s", rec.Code, body)
+	}
+	return htmlSection(body, "Next Action", "Workspace Readiness")
 }
 
 type loopFakeExecutor struct {

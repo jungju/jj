@@ -1240,6 +1240,35 @@
       "updated_at": "2026-04-28T20:56:14Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Dashboard root renders a compact next-action summary for pending, in-progress, all-done, missing TASK.md, unavailable TASK.md, failed latest-run, needs_work latest-run, unknown latest-run, and no-run states.",
+        "Next-action precedence is deterministic: continue in-progress task, then start pending task, then review latest run when no task is runnable and latest-run state needs review, otherwise render all-done, unavailable, unknown, or none.",
+        "Next-action data is derived only from shared sanitized TASK.md summary and latest-run DTO or helper output, with no handler-local raw manifest, artifact, command, environment, diff, validation output, or filesystem reads after route input parsing.",
+        "Action labels and guarded links are deterministic and sanitized, and never reflect denied paths, token-like values, configured secrets, private key blocks, omission placeholders, raw TASK.md bodies, raw manifests, raw artifact bodies, validation payloads, or diff bodies.",
+        "Existing TASK.md summary and latest-run summary dashboard behavior remains unchanged.",
+        "No new dashboard pages, CLI flags, raw export endpoints, scanners, artifact uploads, or unrelated feature surfaces are added.",
+        "Focused Go serve/dashboard tests cover task-driven, run-driven, all-done, missing, malformed, denied, unavailable, unknown, hostile label, and no-run cases.",
+        "scripts/validate.sh passes as the release validation entry point with sanitized release-gate metadata."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t23",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T20:58:02Z",
+      "created_by_run": "autopilot-20260428-160202-t23",
+      "created_by_turn": null,
+      "id": "TASK-0044",
+      "mode": "feature",
+      "priority": "high",
+      "reason": "All 43 existing tasks are done and there is no concrete failing validation, CI, boundary, disclosure, blocker, or regression evidence. A compact next-action summary is the smallest useful user-facing dashboard increment because it composes existing sanitized TASK.md and latest-run summaries to tell the user what to do next without adding pages, flags, exports, scanners, uploads, or raw reads.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Show sanitized next action on the dashboard",
+      "updated_at": "2026-04-28T21:12:05Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

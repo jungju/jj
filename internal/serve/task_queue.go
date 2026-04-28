@@ -14,11 +14,13 @@ const workspaceTaskMarkdownPath = "docs/TASK.md"
 var taskMarkdownIDPattern = regexp.MustCompile(`\bTASK-\d{1,6}\b`)
 
 type taskQueueSummary struct {
-	State     string
-	Message   string
-	Available bool
-	Counts    taskQueueCounts
-	Next      *taskQueueItem
+	State      string
+	Message    string
+	Available  bool
+	Counts     taskQueueCounts
+	Next       *taskQueueItem
+	InProgress *taskQueueItem
+	Pending    *taskQueueItem
 }
 
 type taskQueueCounts struct {
@@ -43,6 +45,9 @@ func (s *Server) taskQueueSummary() taskQueueSummary {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return unavailableTaskQueueSummary("missing")
+		}
 		return unavailableTaskQueueSummary("unavailable")
 	}
 	return parseTaskQueueSummary(string(data), security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace})
@@ -83,8 +88,16 @@ func parseTaskQueueSummary(markdown string, roots ...security.CommandPathRoot) t
 			summary.Counts.Done++
 		case "in-progress":
 			summary.Counts.InProgress++
+			if summary.InProgress == nil {
+				next := task
+				summary.InProgress = &next
+			}
 		case "pending":
 			summary.Counts.Pending++
+			if summary.Pending == nil {
+				next := task
+				summary.Pending = &next
+			}
 		case "blocked":
 			summary.Counts.Blocked++
 		}
@@ -420,7 +433,7 @@ func taskActionable(status string) bool {
 
 func taskQueueState(value, fallback string) string {
 	switch value {
-	case "available", "unavailable", "unknown", "denied":
+	case "available", "missing", "unavailable", "unknown", "denied":
 		return value
 	default:
 		return fallback
