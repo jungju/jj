@@ -67,7 +67,7 @@
     "Keep all generated artifacts, served files, plan inputs, workspace mutations, git diff artifacts, and run inspection surfaces inside the resolved target workspace and guarded run artifact roots.",
     "Prevent secrets, credentials, private key material, omission placeholders, raw commands, raw environment values, unsafe paths, raw manifests, raw artifact bodies, raw diff bodies, and attacker-controlled denied payloads from being persisted or rendered.",
     "Ensure jj serve provides a dashboard-first local experience with guarded run detail, history, comparison, and sanitized audit export views.",
-    "Preserve dry-run and non-dry-run workflows while applying identical redaction, path-boundary, diagnostics, artifact persistence, manifest metadata, diff redaction, and validation behavior.",
+    "Preserve dry-run and non-dry-run workflows while applying identical redaction, path-boundary, diagnostics, artifact persistence, diff redaction, and validation behavior.",
     "Ensure auto and balanced task proposal resolution selects bugfix only from positive current blocker evidence and does not loop on healthy, negated, or completed-task context.",
     "Enforce plan input path handling so explicitly provided plans cannot escape the configured workspace or leak external sensitive content through artifacts, manifests, logs, events, planner context, eval output, Codex summaries, git diff artifacts, or dashboard surfaces.",
     "Persist git diff artifacts only after redaction and expose any diff redaction evidence through sanitized metadata only."
@@ -144,6 +144,6 @@
   ],
   "summary": "jj is a CLI that turns a planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security hardening remains a core constraint: generated artifacts, served run-inspection surfaces, explicit plan inputs, command metadata, manifests, and git diff artifacts are guarded, redacted, and kept inside the configured workspace or allowed run artifact roots. jj serve includes guarded dashboard, run detail, run history, run comparison, and sanitized audit export flows, while automatic task proposal resolution selects bugfix only from positive current blocker evidence. Git diff evidence policy is resolved as redacted-in-place persisted diff artifacts plus optional sanitized metadata containing only booleans, counts, categories, and safe relative labels.",
   "title": "jj Security Boundary and Dashboard Run Inspection",
-  "updated_at": "2026-04-28T17:52:29Z",
+  "updated_at": "2026-04-28T17:58:17Z",
   "version": 1
 }

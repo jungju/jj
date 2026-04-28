@@ -846,6 +846,33 @@
       "updated_at": "2026-04-28T17:49:43Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Focused security and serve tests plus full validation commands pass, or any failure is reduced to the smallest security fix with a focused regression test.",
+        "Rendered HTML, audit JSON, manifests, checked artifacts, Codex artifacts, command metadata, and git diff artifacts contain no raw secrets, token-like values, private key blocks, raw command text, raw environment values, unsafe absolute paths, omission placeholders, raw artifact bodies, raw manifests, raw diff bodies, or attacker-controlled denied payloads.",
+        "Unsafe plan paths, run IDs, artifact paths, and serve route inputs produce deterministic denied or unavailable states without raw value reflection.",
+        "Dry-run and non-dry-run fixtures show equivalent redaction, path-boundary, artifact persistence, diagnostics, and git diff evidence behavior.",
+        "Detail, history, compare, and audit export surfaces remain populated through shared guarded DTO/helper paths rather than handler-local raw manifest, artifact, command, environment, diff, or path reads after route input parsing.",
+        "No new dashboard pages, CLI flags, raw export surfaces, scanner expansion, redaction algorithm expansion, or unrelated user-facing features are introduced unless required to fix a confirmed leak."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t09",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T17:52:30Z",
+      "created_by_run": "autopilot-20260428-160202-t09",
+      "created_by_turn": null,
+      "id": "TASK-0030",
+      "mode": "security",
+      "priority": "high",
+      "reason": "Auto mode resolves to security because there is no positive current blocker evidence for bugfix, all prior tasks are done, and the remaining risk surface involves secrets, workspace boundaries, command metadata, run artifacts, manifests, git diff evidence, and jj serve dashboard exposure. The next task should validate the completed guarded surfaces and only patch confirmed security regressions.",
+      "resolved_task_proposal_mode": "security",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Run security release-readiness validation and patch only confirmed gaps",
+      "updated_at": "2026-04-28T17:56:33Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
