@@ -1010,7 +1010,11 @@ func (s *Server) runOutcomeForRun(runID string) runOutcome {
 }
 
 func (s *Server) handleRunProgress(w http.ResponseWriter, r *http.Request) {
-	runID := r.URL.Query().Get("id")
+	runID, _, status, err := guardedRequestValue(r.URL.Query(), "id", "run id", true)
+	if err != nil {
+		s.renderError(w, status, err)
+		return
+	}
 	view, err := s.webRunView(runID)
 	if err != nil {
 		s.renderError(w, http.StatusNotFound, err)
@@ -1024,7 +1028,11 @@ func (s *Server) handleRunProgress(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRunStatus(w http.ResponseWriter, r *http.Request) {
-	runID := r.URL.Query().Get("id")
+	runID, _, status, err := guardedRequestValue(r.URL.Query(), "id", "run id", true)
+	if err != nil {
+		http.Error(w, sanitizeDashboardText(err.Error(), security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}), status)
+		return
+	}
 	view, err := s.webRunView(runID)
 	if err != nil {
 		http.Error(w, sanitizeDashboardText(err.Error(), security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace}), http.StatusNotFound)
@@ -1041,9 +1049,14 @@ func (s *Server) handleRunFinish(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 		return
 	}
-	runID := r.FormValue("id")
-	if strings.TrimSpace(runID) == "" {
-		runID = r.URL.Query().Get("id")
+	if err := r.ParseForm(); err != nil {
+		s.renderError(w, http.StatusBadRequest, err)
+		return
+	}
+	runID, _, status, err := guardedRequestValue(r.Form, "id", "run id", true)
+	if err != nil {
+		s.renderError(w, status, err)
+		return
 	}
 	if err := artifact.ValidateRunID(runID); err != nil {
 		s.renderError(w, http.StatusBadRequest, err)
@@ -1070,7 +1083,11 @@ func (s *Server) webRunView(runID string) (webRunView, error) {
 }
 
 func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
-	rel := r.URL.Query().Get("path")
+	rel, _, status, err := guardedRequestValue(r.URL.Query(), "path", "path", true)
+	if err != nil {
+		s.renderError(w, status, err)
+		return
+	}
 	data, status, err := s.loadDocPage(rel)
 	if err != nil {
 		s.renderError(w, status, err)
@@ -1188,8 +1205,12 @@ func (s *Server) handleRunsPath(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
-	runID := r.URL.Query().Get("id")
-	if strings.TrimSpace(runID) == "" {
+	runID, present, status, err := guardedRequestValue(r.URL.Query(), "id", "run id", false)
+	if err != nil {
+		s.renderError(w, status, err)
+		return
+	}
+	if !present {
 		runID = s.runID
 	}
 	if strings.TrimSpace(runID) == "" {
@@ -1216,6 +1237,20 @@ func (s *Server) renderRunDetail(w http.ResponseWriter, runID string) {
 		RunID:     detail.ID,
 		RunDetail: &detail,
 	})
+}
+
+func guardedRequestValue(valuesByName url.Values, name, label string, required bool) (string, bool, int, error) {
+	values, exists := valuesByName[name]
+	if !exists || len(values) == 0 || (len(values) == 1 && strings.TrimSpace(values[0]) == "") {
+		if required {
+			return "", false, http.StatusBadRequest, fmt.Errorf("%s is required", label)
+		}
+		return "", false, http.StatusOK, nil
+	}
+	if len(values) != 1 {
+		return "", false, http.StatusForbidden, fmt.Errorf("%s is not allowed", label)
+	}
+	return values[0], true, http.StatusOK, nil
 }
 
 func auditQueryRunID(query url.Values) (string, bool, runAuditExport) {
@@ -1932,8 +1967,16 @@ func (s *Server) loadRunManifestResponse(runID string) ([]byte, int, error) {
 }
 
 func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
-	runID := r.URL.Query().Get("run")
-	rawRel := r.URL.Query().Get("path")
+	runID, _, status, err := guardedRequestValue(r.URL.Query(), "run", "run id", true)
+	if err != nil {
+		s.renderError(w, status, err)
+		return
+	}
+	rawRel, _, status, err := guardedRequestValue(r.URL.Query(), "path", "artifact path", true)
+	if err != nil {
+		s.renderError(w, status, err)
+		return
+	}
 	data, status, err := s.loadArtifactPage(runID, rawRel)
 	if err != nil {
 		s.renderError(w, status, err)

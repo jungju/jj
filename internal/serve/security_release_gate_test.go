@@ -748,3 +748,65 @@ func TestSecurityReleaseGateAuditJSONDoesNotEmbedArtifactBodies(t *testing.T) {
 		t.Fatalf("audit export should remain JSON serializable: %v", err)
 	}
 }
+
+func TestSecurityReleaseGateDuplicateQueryInputsDeniedWithoutReflection(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServer(t, dir, "")
+	validID := "20260425-120000-bbbbbb"
+	secret := "sk-proj-duplicatequery1234567890"
+	attackerPath := "validation/../" + secret + ".md"
+
+	probes := []struct {
+		name   string
+		target string
+		want   string
+	}{
+		{
+			name:   "legacy run detail duplicate id",
+			target: "/run?id=" + validID + "&id=" + secret,
+			want:   "run id is not allowed",
+		},
+		{
+			name:   "web run progress duplicate id",
+			target: "/run/progress?id=" + validID + "&id=" + secret,
+			want:   "run id is not allowed",
+		},
+		{
+			name:   "web run status duplicate id",
+			target: "/run/status?id=" + validID + "&id=" + secret,
+			want:   "run id is not allowed",
+		},
+		{
+			name:   "doc duplicate path",
+			target: "/doc?path=README.md&path=" + url.QueryEscape(attackerPath),
+			want:   "path is not allowed",
+		},
+		{
+			name:   "artifact duplicate run",
+			target: "/artifact?run=" + validID + "&run=" + secret + "&path=validation/summary.md",
+			want:   "run id is not allowed",
+		},
+		{
+			name:   "artifact duplicate path",
+			target: "/artifact?run=" + validID + "&path=validation/summary.md&path=" + url.QueryEscape(attackerPath),
+			want:   "artifact path is not allowed",
+		},
+	}
+
+	for _, probe := range probes {
+		t.Run(probe.name, func(t *testing.T) {
+			body := securityReleaseGateServe(t, server, probe.target, http.StatusForbidden)
+			if !strings.Contains(body, probe.want) {
+				t.Fatalf("%s missing %q:\n%s", probe.target, probe.want, body)
+			}
+			assertSecurityReleaseGateClean(t, probe.target, body, []string{
+				secret,
+				attackerPath,
+				url.QueryEscape(attackerPath),
+				dir,
+				filepath.ToSlash(dir),
+				security.RedactionMarker,
+			})
+		})
+	}
+}

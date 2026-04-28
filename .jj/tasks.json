@@ -620,7 +620,7 @@
     {
       "acceptance_criteria": [
         "jj serve dashboard includes a link to a guarded run history page.",
-        "GET /runs lists discoverable run directories under the guarded .jj/runs root sorted newest first, using sanitized manifest-derived fields only.",
+        "GET [path] lists discoverable run directories under the guarded .jj/runs root sorted newest first, using sanitized manifest-derived fields only.",
         "The run history page supports allowlisted filters for status, dry-run mode, planner provider, evaluation state, and run-id substring query without server errors.",
         "Invalid or unknown filter values do not echo raw input and produce deterministic safe behavior.",
         "Each listed run links only to the existing guarded run detail route.",
@@ -650,7 +650,7 @@
     },
     {
       "acceptance_criteria": [
-        "jj serve exposes a guarded run comparison route for exactly two run IDs, such as /runs/compare?left=\u003crun-id\u003e\u0026right=\u003crun-id\u003e.",
+        "jj serve exposes a guarded run comparison route for exactly two run IDs, such as [path]\u003crun-id\u003e\u0026right=\u003crun-id\u003e.",
         "Both run IDs are resolved only under the configured .jj/runs root using existing path guards and sanitized run DTO construction.",
         "A valid comparison page shows sanitized side-by-side run status, timestamps, dry-run mode, planner/provider metadata, evaluation state, artifact availability, command metadata, Codex metadata, and disclosure-safe security diagnostic summaries.",
         "Invalid, missing, identical, malformed, partial, older, traversal, absolute, encoded, or symlinked run inputs render deterministic unavailable or denied states without server errors or raw query reflection.",
@@ -954,6 +954,36 @@
       "status": "done",
       "title": "Harden planner and Codex handoff payload sanitization",
       "updated_at": "2026-04-28T18:50:05Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Existing security regression tests and release-gate fixtures are inventoried against the current .jj/spec.json acceptance criteria before adding coverage.",
+        "Any new or extended Go tests cover only missing security invariants for persisted artifacts, manifests, command metadata, Codex artifacts, planner/Codex handoffs, validation output, git diff evidence, guarded plan input, run DTOs, serve detail/history/compare routes, audit export, unsafe run IDs, and dry-run/non-dry-run parity.",
+        "Hostile fixtures include secrets, token-like strings, private key blocks, unsafe absolute paths, traversal and encoded escape strings, raw command/env-looking strings, omission placeholders, raw diff-looking content, tampered manifest fields, and attacker-controlled denied payload text.",
+        "All denied, unavailable, unknown, or sanitized states are deterministic and do not reflect raw rejected values.",
+        "Failure output exposes only sanitized categories, counts, booleans, and safe relative labels.",
+        "Implementation changes are test-only unless a confirmed disclosure, path escape, unsafe persistence, handoff, validation-output, git-diff, run-DTO, serve-route, or audit-export regression is found.",
+        "Any confirmed regression is patched only in the smallest existing sanitizer, guard, artifact, manifest, validation, diff, handoff, DTO, or route helper responsible for that boundary.",
+        "No new dashboard pages, CLI flags, raw artifact export, raw manifest export, raw diff export, scanners, redaction algorithm expansion, or unrelated user-facing behavior are added.",
+        "If no regressions are found, the outcome is verification-only with no code churn beyond any necessary focused coverage."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t13",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T18:52:07Z",
+      "created_by_run": "autopilot-20260428-160202-t13",
+      "created_by_turn": null,
+      "id": "TASK-0034",
+      "mode": "security",
+      "priority": "high",
+      "reason": "Auto mode resolves to security because the remaining risk is disclosure, workspace boundary, command/artifact persistence, planner handoff, validation output, git diff, and dashboard/audit exposure. Bugfix is not justified because all 33 current tasks are done and there is no positive current evidence of failed validation, failed tests, provider failure, panic, fatal error, regression, or blocked runnable task.",
+      "resolved_task_proposal_mode": "security",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Verify remaining security release-gate coverage gaps",
+      "updated_at": "2026-04-28T19:03:33Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
     }
