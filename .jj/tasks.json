@@ -2050,6 +2050,33 @@
       "updated_at": "2026-04-29T03:06:05Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Dashboard-root Validation Status visible item construction, state messages, safe count labels, timestamp labels, deterministic display data, and guarded link decisions are centralized in a narrow helper or equivalent simplified structure.",
+        "The helper consumes only existing sanitized dashboard DTO/helper output, guarded URL decisions, fixed safe labels, safe count labels, timestamp labels, validation states, deterministic display data, or already-safe labels.",
+        "Existing Validation Status labels, ordering, visibility, guarded links, no-validation states, unavailable states, unknown states, denied states, malformed or partial metadata behavior, stale metadata behavior, hostile-label handling, token-like handling, missing timestamp behavior, tied timestamp behavior, and surrounding dashboard-root behavior remain unchanged.",
+        "No raw manifest, artifact body, raw path, command text, environment value, diff, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, arbitrary file read, unsafe path read, new dashboard page, route, CLI flag, schema field, config behavior, pagination, scanner, upload, broad file browsing, raw export, visual redesign, or user-facing output semantic change is introduced.",
+        "Focused serve coverage is added or preserved for Validation Status normal, no-validation, unavailable, unknown, denied, malformed or partial metadata, stale metadata, hostile-label, token-like, missing timestamp, and tied timestamp states where practical.",
+        "Focused dashboard Validation Status serve tests, go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t52",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T03:08:40Z",
+      "created_by_run": "autopilot-20260428-160202-t52",
+      "created_by_turn": null,
+      "id": "TASK-0073",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent requests code refactoring and simplification. Recent completed tasks simplified neighboring sanitized dashboard and run-detail presentation helpers, and no current release-gate, CI, validation, blocker, disclosure, or boundary evidence requires security or bugfix work. Dashboard-root Validation Status is the next narrow behavior-preserving refactor target.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard Validation Status presentation logic",
+      "updated_at": "2026-04-29T03:21:57Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

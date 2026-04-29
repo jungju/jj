@@ -263,6 +263,22 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !indexCalls["validationStatusSummaryFromRuns"] {
 		t.Fatalf("handleIndex must build validation-status data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
+	validationStatusCalls := serveFunctionCalls(t, funcs, "validationStatusSummaryFromRuns")
+	if !validationStatusCalls["validationStatusLatestSummary"] || !validationStatusCalls["validationStatusUnavailableSummary"] {
+		t.Fatalf("validationStatusSummaryFromRuns must use centralized state summary helpers; calls=%v", sortedCallNames(validationStatusCalls))
+	}
+	for _, fn := range []string{"validationStatusItemFromRun", "validationStatusUnavailableItemFromRun"} {
+		calls := serveFunctionCalls(t, funcs, fn)
+		if !calls["validationStatusVisibleItem"] {
+			t.Fatalf("%s must build dashboard validation-status items through the centralized visible-item helper; calls=%v", fn, sortedCallNames(calls))
+		}
+	}
+	validationStatusItemCalls := serveFunctionCalls(t, funcs, "validationStatusVisibleItem")
+	for _, requiredCall := range []string{"validationStatusSafeCountsLabel", "validationStatusTimestampLabel", "validationStatusActions"} {
+		if !validationStatusItemCalls[requiredCall] {
+			t.Fatalf("validationStatusVisibleItem must centralize %s; calls=%v", requiredCall, sortedCallNames(validationStatusItemCalls))
+		}
+	}
 	if !indexCalls["nextActionSummaryFromSummaries"] {
 		t.Fatalf("handleIndex must build next-action data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
@@ -296,6 +312,10 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"validationStatusSummaryFromRuns",
 		"validationStatusItemFromRun",
 		"validationStatusUnavailableItemFromRun",
+		"validationStatusVisibleItem",
+		"validationStatusSafeCountsLabel",
+		"validationStatusTimestampLabel",
+		"validationStatusActions",
 		"validationStatusMetadataForRun",
 		"nextActionSummaryFromSummaries",
 		"handleRunCompare",

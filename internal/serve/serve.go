@@ -240,6 +240,7 @@ type validationStatusItem struct {
 	TimestampLabel  string
 	DetailURL       string
 	AuditURL        string
+	Actions         []dashboardRunActionLink
 }
 
 type recentRunItem struct {
@@ -3545,28 +3546,84 @@ func validationStatusSummaryFromRuns(runs []runLink) validationStatusSummary {
 		if !ok {
 			continue
 		}
-		summary.State = item.ValidationState
-		summary.Message = "Latest completed run validation status."
-		summary.Items = []validationStatusItem{item}
-		return summary
+		return validationStatusLatestSummary(item)
 	}
 	if unavailableOK {
-		summary.State = unavailable.ValidationState
-		summary.Message = "Validation metadata unavailable."
-		if unavailable.ValidationState == "denied" {
-			summary.Message = "Validation metadata denied."
-		}
-		summary.Items = []validationStatusItem{unavailable}
+		return validationStatusUnavailableSummary(unavailable)
 	}
 	return summary
 }
 
 func validationStatusNoneSummary() validationStatusSummary {
+	return validationStatusStateSummary("none")
+}
+
+func validationStatusStateSummary(state string) validationStatusSummary {
 	return validationStatusSummary{
-		State:      "none",
-		Message:    "No validation metadata recorded for completed guarded runs.",
+		State:      validationStatusSummaryState(state),
+		Message:    validationStatusStateMessage(state),
 		HistoryURL: "/runs",
 	}
+}
+
+func validationStatusLatestSummary(item validationStatusItem) validationStatusSummary {
+	return validationStatusSummary{
+		State:      validationStatusSummaryState(item.ValidationState),
+		Message:    validationStatusLatestMessage(),
+		HistoryURL: "/runs",
+		Items:      []validationStatusItem{item},
+	}
+}
+
+func validationStatusUnavailableSummary(item validationStatusItem) validationStatusSummary {
+	return validationStatusSummary{
+		State:      validationStatusSummaryState(item.ValidationState),
+		Message:    validationStatusUnavailableMessage(item.ValidationState),
+		HistoryURL: "/runs",
+		Items:      []validationStatusItem{item},
+	}
+}
+
+func validationStatusSummaryState(state string) string {
+	state = dashboardCategory(state, "unknown")
+	switch state {
+	case "passed", "failed", "needs_work", "skipped", "unavailable", "denied", "unknown":
+		return state
+	case "none":
+		return "none"
+	default:
+		return "unknown"
+	}
+}
+
+func validationStatusStateMessage(state string) string {
+	switch validationStatusSummaryState(state) {
+	case "none":
+		return "No validation metadata recorded for completed guarded runs."
+	case "denied":
+		return "Validation metadata denied."
+	case "unavailable":
+		return "Validation metadata unavailable."
+	default:
+		return validationStatusLatestMessage()
+	}
+}
+
+func validationStatusLatestMessage() string {
+	return "Latest completed run validation status."
+}
+
+func validationStatusUnavailableMessage(state string) string {
+	if validationStatusSummaryState(state) == "denied" {
+		return "Validation metadata denied."
+	}
+	return "Validation metadata unavailable."
+}
+
+type validationStatusDisplayData struct {
+	RunLabels       runSummaryLabels
+	ValidationState string
+	CountsLabel     string
 }
 
 func validationStatusUnavailableItemFromRun(run runLink) (validationStatusItem, bool) {
@@ -3574,17 +3631,10 @@ func validationStatusUnavailableItemFromRun(run runLink) (validationStatusItem, 
 	if !ok {
 		return validationStatusItem{}, false
 	}
-	state := "unavailable"
-	if evaluationRunDenied(run) {
-		state = "denied"
-	}
-	return validationStatusItem{
-		RunID:           labels.RunID,
-		ValidationState: state,
-		TimestampLabel:  labels.TimestampLabel,
-		DetailURL:       labels.DetailURL,
-		AuditURL:        labels.AuditURL,
-	}, true
+	return validationStatusVisibleItem(validationStatusDisplayData{
+		RunLabels:       labels,
+		ValidationState: validationStatusUnavailableState(run),
+	}), true
 }
 
 func validationStatusItemFromRun(run runLink) (validationStatusItem, bool) {
@@ -3606,14 +3656,45 @@ func validationStatusItemFromRun(run runLink) (validationStatusItem, bool) {
 	if state == "" || state == "none" {
 		return validationStatusItem{}, false
 	}
-	return validationStatusItem{
-		RunID:           labels.RunID,
+	return validationStatusVisibleItem(validationStatusDisplayData{
+		RunLabels:       labels,
 		ValidationState: state,
 		CountsLabel:     validationStatusCountsLabel(metadata),
-		TimestampLabel:  labels.TimestampLabel,
-		DetailURL:       labels.DetailURL,
-		AuditURL:        labels.AuditURL,
-	}, true
+	}), true
+}
+
+func validationStatusVisibleItem(data validationStatusDisplayData) validationStatusItem {
+	runID := latestRunIDLabel(data.RunLabels.RunID)
+	detailURL := guardedRunDetailURL(runID)
+	auditURL := guardedRunAuditURL(runID)
+	return validationStatusItem{
+		RunID:           runID,
+		ValidationState: validationStatusSummaryState(data.ValidationState),
+		CountsLabel:     validationStatusSafeCountsLabel(data.CountsLabel),
+		TimestampLabel:  validationStatusTimestampLabel(data.RunLabels.TimestampLabel),
+		DetailURL:       detailURL,
+		AuditURL:        auditURL,
+		Actions:         validationStatusActions(detailURL, auditURL),
+	}
+}
+
+func validationStatusSafeCountsLabel(label string) string {
+	return latestRunDisplayText(label, "")
+}
+
+func validationStatusTimestampLabel(label string) string {
+	return latestRunDisplayText(label, "unknown")
+}
+
+func validationStatusActions(detailURL, auditURL string) []dashboardRunActionLink {
+	return dashboardRunActions(detailURL, auditURL)
+}
+
+func validationStatusUnavailableState(run runLink) string {
+	if evaluationRunDenied(run) {
+		return "denied"
+	}
+	return "unavailable"
 }
 
 func validationRunCompleted(status string) bool {
@@ -6950,7 +7031,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 		          <li>
 		            <a href="{{.DetailURL}}">{{.RunID}}</a> <span class="muted">validation {{.ValidationState}} · {{.TimestampLabel}}</span>
 		            {{if .CountsLabel}}<div class="muted">{{.CountsLabel}}</div>{{end}}
-		            <div>{{range $i, $link := dashboardRunActions .DetailURL .AuditURL}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
+		            <div>{{range $i, $link := .Actions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
 		          </li>
 		        {{end}}
 		        </ul>
