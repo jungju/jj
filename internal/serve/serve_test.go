@@ -4276,6 +4276,47 @@ func TestRunArtifactInventoryFromRunUsesFixedCategoriesAndGuardedLinks(t *testin
 	}
 }
 
+func TestRunDetailArtifactInventoryPresentationCentralizesFallbacksAndGuardedActions(t *testing.T) {
+	runID := "20260429-165600-abcdef"
+	secret := "sk-proj-runartifactpresentation1234567890"
+	presentation := runDetailArtifactInventoryPresentation(runLink{ArtifactInventory: []runArtifactStatus{
+		{Label: "Input plan", Path: "input/plan.md", URL: "/artifact?run=" + runID + "&path=input%2Fplan.md", Available: true, Status: "available"},
+		{Label: "Codex summary", Path: "codex/summary.md", URL: "/artifact?run=" + secret + "&path=codex%2Fsummary.md", Available: true, Status: "available"},
+	}}, "manifest available", true)
+	if presentation.Note != "" {
+		t.Fatalf("trusted artifact presentation note = %q, want empty", presentation.Note)
+	}
+	if got, want := len(presentation.Artifacts), 2; got != want {
+		t.Fatalf("trusted artifact presentation count = %d, want %d: %#v", got, want, presentation.Artifacts)
+	}
+	if presentation.Artifacts[0].Label != "Input plan" || presentation.Artifacts[0].URL == "" || !presentation.Artifacts[0].Available {
+		t.Fatalf("trusted safe artifact did not keep guarded action: %#v", presentation.Artifacts[0])
+	}
+	if presentation.Artifacts[1].Label != "Codex summary" || presentation.Artifacts[1].URL != "" || presentation.Artifacts[1].Available {
+		t.Fatalf("token-like artifact action should be removed: %#v", presentation.Artifacts[1])
+	}
+
+	empty := runDetailArtifactInventoryPresentation(runLink{}, "manifest available", true)
+	if len(empty.Artifacts) != 0 || empty.Note != runArtifactNoMetadataNote {
+		t.Fatalf("empty trusted artifact presentation = %#v, want no metadata note", empty)
+	}
+
+	untrusted := runDetailArtifactInventoryPresentation(runLink{}, "manifest is incomplete: missing artifacts", false)
+	if len(untrusted.Artifacts) != 0 || !strings.Contains(untrusted.Note, "artifact links unavailable because this run lacks a trusted top-level artifacts map or trusted manifest") {
+		t.Fatalf("untrusted artifact presentation = %#v, want unavailable fallback", untrusted)
+	}
+
+	joined := untrusted.Note
+	for _, item := range presentation.Artifacts {
+		joined += item.Label + item.Path + item.URL + item.Status
+	}
+	for _, leaked := range []string{secret, "sk-proj", security.RedactionMarker, "[omitted]"} {
+		if strings.Contains(joined, leaked) {
+			t.Fatalf("artifact presentation leaked %q: %#v %#v", leaked, presentation, untrusted)
+		}
+	}
+}
+
 func TestRunDetailRunArtifactsShowsAllowlistedInventoryAndPreservesSections(t *testing.T) {
 	dir := t.TempDir()
 	runID := "20260429-170000-artifacts"

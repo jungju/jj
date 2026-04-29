@@ -693,6 +693,11 @@ type runArtifactInventoryCategory struct {
 	Path  func(dashboardManifest) string
 }
 
+type runArtifactInventoryPresentation struct {
+	Artifacts []runArtifactStatus
+	Note      string
+}
+
 const (
 	runArtifactAvailabilityAvailable   = "available"
 	runArtifactAvailabilityMissing     = "missing"
@@ -6038,14 +6043,13 @@ func (s *Server) runDetailFromInspection(inspection runInspection) runDetail {
 		detail.RepositorySummary = strings.TrimSpace(fmt.Sprintf("%s base %s work %s push %s", repo, base, work, push))
 	}
 
+	presentation := runDetailArtifactInventoryPresentation(runDTO, detail.ManifestState, trustedManifest)
+	detail.Artifacts = presentation.Artifacts
+	detail.ArtifactNote = presentation.Note
 	if trustedManifest {
-		artifacts := runArtifactInventoryFromRun(runDTO)
-		detail.Artifacts, detail.ArtifactNote = runDetailArtifactInventoryDecision(artifacts, detail.ManifestState, true)
 		detail.Docs = s.runDetailDocs(manifest, inspection.RunDir, inspection.rawID, roots...)
 		detail.Codex = s.runCodexDetail(manifest, inspection.RunDir, inspection.rawID, roots...)
 		detail.Commands = s.runCommandDetails(manifest, inspection.RunDir, inspection.rawID, roots...)
-	} else {
-		_, detail.ArtifactNote = runDetailArtifactInventoryDecision(nil, detail.ManifestState, false)
 	}
 	detail.Validation = s.runValidationDetail(manifest, inspection.RunDir, inspection.rawID, trustedManifest, roots...)
 	detail.SecuritySummary, detail.SecurityDetails = runDetailSecurityDiagnostics(manifest.Security)
@@ -6132,14 +6136,30 @@ func runArtifactInventoryFromRun(run runLink) []runArtifactStatus {
 	return out
 }
 
+func runDetailArtifactInventoryPresentation(run runLink, manifestState string, trustedManifest bool) runArtifactInventoryPresentation {
+	var artifacts []runArtifactStatus
+	if trustedManifest {
+		artifacts = runArtifactInventoryFromRun(run)
+	}
+	artifacts, note := runDetailArtifactInventoryDecision(artifacts, manifestState, trustedManifest)
+	return runArtifactInventoryPresentation{Artifacts: artifacts, Note: note}
+}
+
 func runDetailArtifactInventoryDecision(artifacts []runArtifactStatus, manifestState string, trustedManifest bool) ([]runArtifactStatus, string) {
 	if !trustedManifest {
-		return nil, unavailableRunError(manifestState)
+		return nil, runDetailArtifactInventoryFallbackNote(manifestState, false)
 	}
 	if len(artifacts) == 0 {
-		return nil, runArtifactNoMetadataNote
+		return nil, runDetailArtifactInventoryFallbackNote(manifestState, true)
 	}
 	return artifacts, ""
+}
+
+func runDetailArtifactInventoryFallbackNote(manifestState string, trustedManifest bool) string {
+	if !trustedManifest {
+		return unavailableRunError(manifestState)
+	}
+	return runArtifactNoMetadataNote
 }
 
 func runArtifactInventoryCategories() []runArtifactInventoryCategory {
@@ -6243,11 +6263,16 @@ func runArtifactInventoryItem(label string, status runArtifactStatus) (runArtifa
 	if item.Path == "" {
 		return runArtifactStatus{}, false
 	}
-	if availability == runArtifactAvailabilityAvailable && status.Available {
-		item.URL = safeRunArtifactURL(status.URL)
-		item.Available = item.URL != ""
-	}
+	item.URL = runArtifactInventoryActionURL(status, availability)
+	item.Available = item.URL != ""
 	return item, true
+}
+
+func runArtifactInventoryActionURL(status runArtifactStatus, availability string) string {
+	if availability != runArtifactAvailabilityAvailable || !status.Available {
+		return ""
+	}
+	return safeRunArtifactURL(status.URL)
 }
 
 func runArtifactAvailabilityLabel(value string) string {

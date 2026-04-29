@@ -458,15 +458,26 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !visibleEvidenceCalls["validationEvidenceVisibleSummary"] {
 		t.Fatalf("validationEvidenceVisibleSummaryForRun must use the shared visible-summary constructor; calls=%v", sortedCallNames(visibleEvidenceCalls))
 	}
-	if !detailCalls["runArtifactInventoryFromRun"] {
-		t.Fatalf("runDetailFromInspection must build run artifacts through the sanitized run DTO helper; calls=%v", sortedCallNames(detailCalls))
+	if !detailCalls["runDetailArtifactInventoryPresentation"] {
+		t.Fatalf("runDetailFromInspection must build run artifacts through the centralized presentation helper; calls=%v", sortedCallNames(detailCalls))
 	}
-	if !detailCalls["runDetailArtifactInventoryDecision"] {
-		t.Fatalf("runDetailFromInspection must centralize run artifact state decisions; calls=%v", sortedCallNames(detailCalls))
+	presentationCalls := serveFunctionCalls(t, funcs, "runDetailArtifactInventoryPresentation")
+	for _, requiredCall := range []string{"runArtifactInventoryFromRun", "runDetailArtifactInventoryDecision"} {
+		if !presentationCalls[requiredCall] {
+			t.Fatalf("runDetailArtifactInventoryPresentation must centralize run artifact construction through %s; calls=%v", requiredCall, sortedCallNames(presentationCalls))
+		}
+	}
+	artifactDecisionCalls := serveFunctionCalls(t, funcs, "runDetailArtifactInventoryDecision")
+	if !artifactDecisionCalls["runDetailArtifactInventoryFallbackNote"] {
+		t.Fatalf("runDetailArtifactInventoryDecision must centralize fallback notes; calls=%v", sortedCallNames(artifactDecisionCalls))
 	}
 	artifactCalls := serveFunctionCalls(t, funcs, "runArtifactInventoryFromRun")
 	if !artifactCalls["runArtifactInventoryItem"] {
 		t.Fatalf("runArtifactInventoryFromRun must build run-detail artifact items through the shared item helper; calls=%v", sortedCallNames(artifactCalls))
+	}
+	artifactItemCalls := serveFunctionCalls(t, funcs, "runArtifactInventoryItem")
+	if !artifactItemCalls["runArtifactInventoryActionURL"] {
+		t.Fatalf("runArtifactInventoryItem must centralize guarded action construction; calls=%v", sortedCallNames(artifactItemCalls))
 	}
 
 	for _, fn := range []string{
@@ -551,9 +562,12 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"validationEvidenceFromRun",
 		"validationEvidenceVisibleSummaryForRun",
 		"validationEvidenceVisibleSummary",
+		"runDetailArtifactInventoryPresentation",
 		"runArtifactInventoryFromRun",
 		"runArtifactInventoryItem",
+		"runArtifactInventoryActionURL",
 		"runDetailArtifactInventoryDecision",
+		"runDetailArtifactInventoryFallbackNote",
 	} {
 		calls := serveFunctionCalls(t, funcs, fn)
 		for _, forbidden := range []string{"readRunFile", "loadDashboardManifest", "loadRunManifestResponse", "json.Unmarshal", "os.ReadFile"} {
