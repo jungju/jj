@@ -714,6 +714,8 @@ func TestDashboardRootRunSummaryActionsUseGuardedLinks(t *testing.T) {
 		t.Fatalf("status = %d body=%s", rec.Code, body)
 	}
 
+	latest := htmlSection(body, "Latest Run", "Risks And Failures")
+	assertDashboardLatestRunActions(t, latest, "20260429-130000-complete")
 	validation := dashboardValidationStatusSection(t, body)
 	assertDashboardRunActions(t, validation, "20260429-130000-complete")
 	recent := htmlSection(body, "Recent Runs", "Next Action")
@@ -722,6 +724,7 @@ func TestDashboardRootRunSummaryActionsUseGuardedLinks(t *testing.T) {
 	active := dashboardActiveRunSection(t, body)
 	assertDashboardRunActions(t, active, "20260429-120000-active")
 	for name, section := range map[string]string{
+		"latest":     latest,
 		"validation": validation,
 		"recent":     recent,
 		"active":     active,
@@ -729,6 +732,67 @@ func TestDashboardRootRunSummaryActionsUseGuardedLinks(t *testing.T) {
 		if strings.Contains(section, `href=""`) || strings.Contains(section, "manifest.json") {
 			t.Fatalf("%s run-summary actions rendered unsafe data:\n%s", name, section)
 		}
+	}
+}
+
+func TestDashboardLatestRunActionsPreserveStateOrderingAndGuardURLs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		summary latestRunSummary
+		want    []dashboardRunActionLink
+	}{
+		{
+			name: "available detail history audit",
+			summary: latestRunSummary{
+				State:      "available",
+				DetailURL:  "/runs/20260429-130000-complete",
+				HistoryURL: "/runs",
+				AuditURL:   "/runs/audit?run=20260429-130000-complete",
+			},
+			want: []dashboardRunActionLink{
+				{Label: "Run detail", URL: "/runs/20260429-130000-complete"},
+				{Label: "Run history", URL: "/runs"},
+				{Label: "Audit export", URL: "/runs/audit?run=20260429-130000-complete"},
+			},
+		},
+		{
+			name: "none history only",
+			summary: latestRunSummary{
+				State:      "none",
+				HistoryURL: "/runs",
+				DetailURL:  "/runs/20260429-130000-complete",
+				AuditURL:   "/runs/audit?run=20260429-130000-complete",
+			},
+			want: []dashboardRunActionLink{
+				{Label: "Run history", URL: "/runs"},
+			},
+		},
+		{
+			name: "unavailable history then detail",
+			summary: latestRunSummary{
+				State:      "unavailable",
+				HistoryURL: "/runs",
+				DetailURL:  "/runs/20260429-130000-complete",
+				AuditURL:   "/runs/audit?run=20260429-130000-complete",
+			},
+			want: []dashboardRunActionLink{
+				{Label: "Run history", URL: "/runs"},
+				{Label: "Run detail", URL: "/runs/20260429-130000-complete"},
+			},
+		},
+		{
+			name: "unsafe urls omitted",
+			summary: latestRunSummary{
+				State:      "available",
+				HistoryURL: "/runs\n/secret",
+				DetailURL:  "/runs/../../secret",
+				AuditURL:   "/runs/audit?run=../../secret",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requireDashboardRunActions(t, dashboardLatestRunActions(tc.summary), tc.want...)
+		})
 	}
 }
 
@@ -5244,6 +5308,26 @@ func assertDashboardRunActions(t *testing.T, section, runID string) {
 	want := `<a href="/runs/` + runID + `">Run detail</a> · <a href="/runs/audit?run=` + runID + `">Audit export</a>`
 	if !strings.Contains(section, want) {
 		t.Fatalf("dashboard run-summary actions missing %q:\n%s", want, section)
+	}
+}
+
+func assertDashboardLatestRunActions(t *testing.T, section, runID string) {
+	t.Helper()
+	want := `<a href="/runs/` + runID + `">Run detail</a> · <a href="/runs">Run history</a> · <a href="/runs/audit?run=` + runID + `">Audit export</a>`
+	if !strings.Contains(section, want) {
+		t.Fatalf("dashboard latest-run actions missing %q:\n%s", want, section)
+	}
+}
+
+func requireDashboardRunActions(t *testing.T, got []dashboardRunActionLink, want ...dashboardRunActionLink) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("dashboard actions length = %d, want %d: got %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("dashboard action %d = %#v, want %#v; all=%#v", i, got[i], want[i], got)
+		}
 	}
 }
 

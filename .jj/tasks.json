@@ -1748,6 +1748,33 @@
       "updated_at": "2026-04-29T00:50:20Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Reduce duplicated or unnecessarily nested sanitized dashboard-root summary-state rendering in one narrow area, such as Active Run, Validation Status, Recent Runs, latest-run summary, or Evaluation Findings.",
+        "Consume only existing sanitized DTO/helper output or already-safe labels and guarded URL decisions.",
+        "Preserve dashboard-root behavior for the touched section, including labels, ordering, guarded links, empty states, denied states, unavailable states, unknown states, malformed metadata, hostile labels, token-like labels, missing timestamps, tied timestamps, and partial metadata.",
+        "Do not read or render raw manifests, artifact bodies, commands, environment values, diffs, validation output, planner handoffs, TASK.md bodies, EVAL.md bodies, document bodies, unsafe paths, configured secrets, token-like values, or omission placeholders.",
+        "Do not introduce new CLI flags, dashboard pages, routes, manifest schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw export behavior, visual redesign, or user-facing output semantics.",
+        "Focused serve tests and full validation pass: go test ./internal/serve, go test ./internal/cli ./internal/serve, git diff --check, go test ./..., and scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t41",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T00:53:14Z",
+      "created_by_run": "autopilot-20260428-160202-t41",
+      "created_by_turn": null,
+      "id": "TASK-0062",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent explicitly requests refactoring and simplification. Current evidence shows all prior tasks complete and no failing validation, CI, blocker, disclosure, or boundary regression, so the next runnable task should be a narrow behavior-preserving quality refactor rather than security, bugfix, or feature work.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard root summary-state rendering",
+      "updated_at": "2026-04-29T01:01:33Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

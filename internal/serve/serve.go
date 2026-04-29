@@ -4681,14 +4681,67 @@ func nextActionURL(raw string) string {
 }
 
 func dashboardRunActions(detailURL, auditURL string) []dashboardRunActionLink {
-	links := make([]dashboardRunActionLink, 0, 2)
-	if url := dashboardRunDetailActionURL(detailURL); url != "" {
-		links = append(links, dashboardRunActionLink{Label: "Run detail", URL: url})
+	return dashboardRunActionLinks(
+		dashboardRunActionLink{Label: "Run detail", URL: detailURL},
+		dashboardRunActionLink{Label: "Audit export", URL: auditURL},
+	)
+}
+
+func dashboardLatestRunActions(summary latestRunSummary) []dashboardRunActionLink {
+	switch summary.State {
+	case "available":
+		return dashboardRunActionLinks(
+			dashboardRunActionLink{Label: "Run detail", URL: summary.DetailURL},
+			dashboardRunActionLink{Label: "Run history", URL: summary.HistoryURL},
+			dashboardRunActionLink{Label: "Audit export", URL: summary.AuditURL},
+		)
+	case "none":
+		return dashboardRunActionLinks(
+			dashboardRunActionLink{Label: "Run history", URL: summary.HistoryURL},
+		)
+	default:
+		return dashboardRunActionLinks(
+			dashboardRunActionLink{Label: "Run history", URL: summary.HistoryURL},
+			dashboardRunActionLink{Label: "Run detail", URL: summary.DetailURL},
+		)
 	}
-	if url := dashboardRunAuditActionURL(auditURL); url != "" {
-		links = append(links, dashboardRunActionLink{Label: "Audit export", URL: url})
+}
+
+func dashboardRunActionLinks(links ...dashboardRunActionLink) []dashboardRunActionLink {
+	out := make([]dashboardRunActionLink, 0, len(links))
+	seen := map[string]bool{}
+	for _, link := range links {
+		label := dashboardRunActionLabel(link.Label)
+		url := dashboardRunActionURL(label, link.URL)
+		if label == "" || url == "" || seen[label+"\x00"+url] {
+			continue
+		}
+		seen[label+"\x00"+url] = true
+		out = append(out, dashboardRunActionLink{Label: label, URL: url})
 	}
-	return links
+	return out
+}
+
+func dashboardRunActionLabel(label string) string {
+	switch label {
+	case "Run detail", "Run history", "Audit export":
+		return label
+	default:
+		return ""
+	}
+}
+
+func dashboardRunActionURL(label, raw string) string {
+	switch label {
+	case "Run detail":
+		return dashboardRunDetailActionURL(raw)
+	case "Run history":
+		return dashboardRunHistoryActionURL(raw)
+	case "Audit export":
+		return dashboardRunAuditActionURL(raw)
+	default:
+		return ""
+	}
 }
 
 func dashboardRunDetailActionURL(raw string) string {
@@ -4698,6 +4751,14 @@ func dashboardRunDetailActionURL(raw string) string {
 	}
 	runID := strings.TrimPrefix(raw, "/runs/")
 	if latestRunIDLabel(runID) == "" {
+		return ""
+	}
+	return raw
+}
+
+func dashboardRunHistoryActionURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw != "/runs" {
 		return ""
 	}
 	return raw
@@ -6054,8 +6115,9 @@ func renderMarkdown(content string) template.HTML {
 }
 
 var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
-	"dashboardRunActions": dashboardRunActions,
-	"q":                   func(s string) string { return template.URLQueryEscaper(s) },
+	"dashboardLatestRunActions": dashboardLatestRunActions,
+	"dashboardRunActions":       dashboardRunActions,
+	"q":                         func(s string) string { return template.URLQueryEscaper(s) },
 }).Parse(`<!doctype html>
 <html lang="ko">
 <head>
@@ -6531,14 +6593,14 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	        {{if eq .LatestRun.State "available"}}
 	          <p><a href="{{.LatestRun.DetailURL}}">{{.LatestRun.RunID}}</a> <span class="muted">{{.LatestRun.Status}} · {{.LatestRun.TimestampLabel}}</span></p>
 	          <p class="muted">provider/result {{.LatestRun.ProviderOrResult}} · evaluation {{.LatestRun.EvaluationState}}</p>
-	          <p><a href="{{.LatestRun.DetailURL}}">Run detail</a> · <a href="{{.LatestRun.HistoryURL}}">Run history</a>{{if .LatestRun.AuditURL}} · <a href="{{.LatestRun.AuditURL}}">Audit export</a>{{end}}</p>
+	          <p>{{range $i, $link := dashboardLatestRunActions .LatestRun}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</p>
 	        {{else if eq .LatestRun.State "none"}}
 	          <p class="muted">{{.LatestRun.Message}}</p>
-	          <p><a href="{{.LatestRun.HistoryURL}}">Run history</a></p>
+	          <p>{{range $i, $link := dashboardLatestRunActions .LatestRun}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</p>
 	        {{else}}
 	          <p><strong>{{.LatestRun.RunID}}</strong> <span class="muted">{{.LatestRun.State}} · {{.LatestRun.TimestampLabel}}</span></p>
 	          <p class="error">{{.LatestRun.Message}}</p>
-	          <p><a href="{{.LatestRun.HistoryURL}}">Run history</a>{{if .LatestRun.DetailURL}} · <a href="{{.LatestRun.DetailURL}}">Run detail</a>{{end}}</p>
+	          <p>{{range $i, $link := dashboardLatestRunActions .LatestRun}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</p>
 	        {{end}}
 	      </section>
 		      <section>
