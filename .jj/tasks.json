@@ -2184,6 +2184,36 @@
       "updated_at": "2026-04-29T04:10:59Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "jj status and jj runs continue to exit successfully in a valid workspace.",
+        "jj status output preserves existing sanitized TASK summary, latest run summary, next-action summary, Active Run, and Validation Status behavior for covered states.",
+        "jj runs output preserves existing sanitized recent-run list labels, ordering, spacing, provider/result/evaluation/validation/timestamp fields, fallback states, and deterministic recent-run ordering for covered states.",
+        "Common CLI run-summary field construction is centralized in narrow helper logic or an equivalent simplified structure without changing output semantics.",
+        "Refactored CLI rendering consumes only existing sanitized DTO/helper output, safe counts, timestamp labels, guarded labels, fixed safe labels, or already-safe labels.",
+        "No raw artifact body, manifest body, path, command text, environment value, diff body, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, or omission placeholder is introduced into CLI output.",
+        "No new CLI flag, route, schema field, config behavior, pagination, scanner, upload, dashboard behavior, raw export, or broad file browsing is added.",
+        "Focused CLI tests are added or preserved for normal, none, unavailable, unknown, denied, malformed or partial metadata, hostile-label, token-like, missing timestamp, tied timestamp, Active Run, Validation Status, and recent-run states where practical.",
+        "Validation passes: focused jj status and jj runs CLI tests, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t57",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T04:15:03Z",
+      "created_by_run": "autopilot-20260428-160202-t57",
+      "created_by_turn": null,
+      "id": "TASK-0078",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent explicitly asks for code refactoring and simplification. Recent completed work finished dashboard and run-detail presentation helper cleanup through TASK-0077, while the source SPEC still calls out shared jj status and jj runs CLI run-summary field construction as remaining duplication. There is no current blocker, failing validation, CI evidence, or concrete security/privacy regression requiring bugfix or security work.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized CLI run-summary field construction",
+      "updated_at": "2026-04-29T04:21:37Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

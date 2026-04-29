@@ -553,6 +553,11 @@ type cliRunSummaryFields struct {
 	IncludeValidation bool
 }
 
+type cliRunSummaryFieldOptions struct {
+	RunFallback       string
+	IncludeValidation bool
+}
+
 type cliRunSummaryOutputField struct {
 	Key      string
 	Value    string
@@ -560,31 +565,34 @@ type cliRunSummaryOutputField struct {
 }
 
 func cliLatestRunSummaryFields(latest serve.StatusLatestRunSummary) cliRunSummaryFields {
-	fields := cliRunSummaryFieldsFromSafeLabels(
+	return cliRunSummaryFieldsFromSafeLabels(
+		cliRunSummaryFieldOptions{RunFallback: "none"},
 		latest.State,
 		latest.RunID,
 		latest.Status,
 		latest.ProviderOrResult,
 		latest.EvaluationState,
+		"",
 		latest.TimestampLabel,
 	)
-	fields.RunFallback = "none"
-	return fields
 }
 
 func cliActiveRunSummaryFields(item serve.StatusActiveRunItem) cliRunSummaryFields {
 	return cliRunSummaryFieldsFromSafeLabels(
+		cliRunSummaryFieldOptions{},
 		"available",
 		item.RunID,
 		item.Status,
 		item.ProviderOrResult,
 		item.EvaluationState,
+		"",
 		item.TimestampLabel,
 	)
 }
 
 func cliRecentRunSummaryFields(item serve.RecentRunItem) cliRunSummaryFields {
-	return cliRunSummaryFieldsWithValidationFromSafeLabels(
+	return cliRunSummaryFieldsFromSafeLabels(
+		cliRunSummaryFieldOptions{IncludeValidation: true},
 		item.State,
 		item.RunID,
 		item.Status,
@@ -595,29 +603,18 @@ func cliRecentRunSummaryFields(item serve.RecentRunItem) cliRunSummaryFields {
 	)
 }
 
-func cliRunSummaryFieldsFromSafeLabels(state, runID, status, providerOrResult, evaluationState, timestampLabel string) cliRunSummaryFields {
+func cliRunSummaryFieldsFromSafeLabels(opts cliRunSummaryFieldOptions, state, runID, status, providerOrResult, evaluationState, validationState, timestampLabel string) cliRunSummaryFields {
 	return cliRunSummaryFields{
-		State:            state,
-		RunID:            runID,
-		Status:           status,
-		ProviderOrResult: providerOrResult,
-		EvaluationState:  evaluationState,
-		TimestampLabel:   timestampLabel,
+		State:             state,
+		RunID:             runID,
+		RunFallback:       opts.RunFallback,
+		Status:            status,
+		ProviderOrResult:  providerOrResult,
+		EvaluationState:   evaluationState,
+		ValidationState:   validationState,
+		TimestampLabel:    timestampLabel,
+		IncludeValidation: opts.IncludeValidation,
 	}
-}
-
-func cliRunSummaryFieldsWithValidationFromSafeLabels(state, runID, status, providerOrResult, evaluationState, validationState, timestampLabel string) cliRunSummaryFields {
-	fields := cliRunSummaryFieldsFromSafeLabels(
-		state,
-		runID,
-		status,
-		providerOrResult,
-		evaluationState,
-		timestampLabel,
-	)
-	fields.ValidationState = validationState
-	fields.IncludeValidation = true
-	return fields
 }
 
 func writeCLIRunSummaryLine(w io.Writer, label string, fields cliRunSummaryFields) {
