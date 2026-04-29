@@ -1775,6 +1775,34 @@
       "updated_at": "2026-04-29T01:01:33Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Refactor one narrow internal/serve dashboard-root path around Project Docs shortcut construction or rendering to reduce real duplication, unnecessary nesting, or complex structure.",
+        "Project Docs shortcut labels, ordering, guarded links, unavailable states, denied states, none states, and surrounding dashboard-root behavior remain unchanged.",
+        "The changed code consumes only existing sanitized dashboard DTO/helper output, guarded URL decisions, or fixed already-safe labels such as README, plan.md, SPEC, TASK, and EVAL.",
+        "No raw manifest, artifact body, command, environment, diff, validation output, planner handoff, TASK.md body, EVAL.md body, document body, arbitrary file path, unsafe path, configured secret, token-like value, or omission placeholder is newly read or rendered.",
+        "No new CLI flags, dashboard pages, routes, manifest schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw export behavior, visual redesign, or user-facing output semantics are introduced.",
+        "Focused serve tests are added or updated to prove Project Docs shortcut labels, ordering, guarded links, unavailable or denied behavior, and absence of unsafe/token-like labels remain preserved.",
+        "Validation passes through ./scripts/validate.sh after focused serve testing, go test ./internal/serve, go test ./internal/cli ./internal/serve, git diff --check, and go test ./... are run as appropriate."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t42",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T01:04:28Z",
+      "created_by_run": "autopilot-20260428-160202-t42",
+      "created_by_turn": null,
+      "id": "TASK-0063",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active .jj/next-intent.md override asks for code refactoring and simplification. There is no current blocker, failing validation, CI issue, disclosure, or concrete security boundary regression, so the next task should be a narrow behavior-preserving quality refactor rather than security or bugfix work.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized Project Docs shortcut presentation logic",
+      "updated_at": "2026-04-29T01:12:32Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

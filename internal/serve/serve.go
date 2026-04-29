@@ -2353,45 +2353,56 @@ func (s *Server) projectDocShortcutsForSpecs(specs []projectDocShortcutSpec) []p
 	roots := []security.CommandPathRoot{{Path: s.cwd, Label: displayWorkspace}}
 	items := make([]projectDocShortcut, 0, len(specs))
 	for _, spec := range specs {
-		label := sanitizeProjectDocLabel(spec.Label, roots...)
-		state, url := s.projectDocShortcutState(spec.Path)
-		items = append(items, projectDocShortcut{
-			Label: label,
-			State: sanitizeProjectDocState(state),
-			URL:   url,
-		})
+		items = append(items, s.projectDocShortcutForSpec(spec, roots...))
 	}
 	return items
+}
+
+func (s *Server) projectDocShortcutForSpec(spec projectDocShortcutSpec, roots ...security.CommandPathRoot) projectDocShortcut {
+	state, url := s.projectDocShortcutState(spec.Path)
+	return projectDocShortcut{
+		Label: sanitizeProjectDocLabel(spec.Label, roots...),
+		State: sanitizeProjectDocState(state),
+		URL:   url,
+	}
 }
 
 func (s *Server) projectDocShortcutState(rel string) (string, string) {
 	clean, path, status, err := s.resolveProjectDocRoutePath(rel)
 	if err != nil {
-		switch status {
-		case http.StatusForbidden:
-			return "denied", ""
-		case http.StatusBadRequest:
-			return "unknown", ""
-		default:
-			return "unknown", ""
-		}
+		return projectDocRouteErrorState(status), ""
 	}
+	state := projectDocFileState(path)
+	if state != "available" {
+		return state, ""
+	}
+	return "available", docURL(clean)
+}
+
+func projectDocRouteErrorState(status int) string {
+	if status == http.StatusForbidden {
+		return "denied"
+	}
+	return "unknown"
+}
+
+func projectDocFileState(path string) string {
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return "missing", ""
+		return "missing"
 	}
 	if err != nil || info.IsDir() {
-		return "unavailable", ""
+		return "unavailable"
 	}
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return "missing", ""
+		return "missing"
 	}
 	if err != nil {
-		return "unavailable", ""
+		return "unavailable"
 	}
 	_ = file.Close()
-	return "available", docURL(clean)
+	return "available"
 }
 
 func sanitizeProjectDocLabel(label string, roots ...security.CommandPathRoot) string {

@@ -114,12 +114,13 @@ Authorization: Bearer `+secret+`
 	}
 
 	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
-	for _, rel := range []string{"plan.md", "docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md", "README.md"} {
-		want := `href="` + docURL(rel) + `">` + rel + `</a> <span class="muted">available</span>`
-		if !strings.Contains(projectDocs, want) {
-			t.Fatalf("project docs missing available shortcut %q:\n%s", want, projectDocs)
-		}
-	}
+	assertSubstringsInOrder(t, projectDocs, []string{
+		`href="` + docURL("plan.md") + `">plan.md</a> <span class="muted">available</span>`,
+		`href="` + docURL("docs/SPEC.md") + `">docs/SPEC.md</a> <span class="muted">available</span>`,
+		`href="` + docURL("docs/TASK.md") + `">docs/TASK.md</a> <span class="muted">available</span>`,
+		`href="` + docURL("docs/EVAL.md") + `">docs/EVAL.md</a> <span class="muted">available</span>`,
+		`href="` + docURL("README.md") + `">README.md</a> <span class="muted">available</span>`,
+	})
 	for _, leaked := range []string{secret, "raw document body", "Authorization: Bearer", security.RedactionMarker, "[omitted]"} {
 		if strings.Contains(body, leaked) {
 			t.Fatalf("dashboard project docs leaked %q:\n%s", leaked, body)
@@ -171,15 +172,17 @@ func TestDashboardProjectDocsShortcutsMissingUnavailableAndDeniedAreSafe(t *test
 		t.Fatalf("status = %d body=%s", rec.Code, body)
 	}
 	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
-	for _, want := range []string{
+	expectedProjectDocs := []string{
 		`<strong>plan.md</strong> <span class="muted">missing</span>`,
 		`<strong>docs/SPEC.md</strong> <span class="muted">denied</span>`,
 		`<strong>docs/TASK.md</strong> <span class="muted">unavailable</span>`,
 		`<strong>docs/EVAL.md</strong> <span class="muted">missing</span>`,
 		`href="` + docURL("README.md") + `">README.md</a> <span class="muted">available</span>`,
-	} {
-		if !strings.Contains(projectDocs, want) {
-			t.Fatalf("project docs missing safe state %q:\n%s", want, projectDocs)
+	}
+	assertSubstringsInOrder(t, projectDocs, expectedProjectDocs)
+	for _, blockedURL := range []string{docURL("plan.md"), docURL("docs/SPEC.md"), docURL("docs/TASK.md"), docURL("docs/EVAL.md")} {
+		if strings.Contains(projectDocs, `href="`+blockedURL+`"`) {
+			t.Fatalf("project docs linked unavailable or denied shortcut %q:\n%s", blockedURL, projectDocs)
 		}
 	}
 	for _, leaked := range []string{secret, outside, filepath.ToSlash(outside), filepath.Join(outside, "SPEC.md"), filepath.ToSlash(filepath.Join(outside, "SPEC.md")), "Outside"} {
@@ -228,6 +231,29 @@ func TestDashboardProjectDocsShortcutsSanitizeHostileLabelsAndUnknownStates(t *t
 	}
 	if got := sanitizeProjectDocState("stale"); got != "unknown" {
 		t.Fatalf("stale project doc state should render as unknown, got %q", got)
+	}
+}
+
+func TestDashboardProjectDocsShortcutsNoneState(t *testing.T) {
+	dir := t.TempDir()
+	originalSpecs := projectDocShortcutSpecs
+	projectDocShortcutSpecs = nil
+	t.Cleanup(func() { projectDocShortcutSpecs = originalSpecs })
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
+	if !strings.Contains(projectDocs, `<li class="muted">Project docs unavailable.</li>`) {
+		t.Fatalf("project docs none state changed:\n%s", projectDocs)
+	}
+	if strings.Contains(projectDocs, `href="/doc?path=`) {
+		t.Fatalf("project docs none state should not render document links:\n%s", projectDocs)
 	}
 }
 
@@ -5246,6 +5272,18 @@ func containsLine(lines []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func assertSubstringsInOrder(t *testing.T, haystack string, needles []string) {
+	t.Helper()
+	offset := 0
+	for _, needle := range needles {
+		idx := strings.Index(haystack[offset:], needle)
+		if idx < 0 {
+			t.Fatalf("missing ordered substring %q:\n%s", needle, haystack)
+		}
+		offset += idx + len(needle)
+	}
 }
 
 func htmlSection(body, heading, nextHeading string) string {
