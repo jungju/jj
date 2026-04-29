@@ -4117,38 +4117,35 @@ func evaluationFindingsSummaryFromRuns(runs []runLink) evaluationFindingsSummary
 }
 
 func evaluationFindingsSummaryForRun(run runLink) evaluationFindingsSummary {
-	runID := latestRunIDLabel(run.ID)
-	if runID == "" {
+	labels, ok := runSummaryLabelsFor(run)
+	if !ok {
 		return evaluationFindingsNoneSummary("No jj runs found.")
 	}
 
 	run.Evaluation = evaluationMetadataForRun(run)
-	summary := evaluationFindingsBaseSummary(run, runID)
-
 	if run.Invalid {
-		summary.applyState(evaluationFindingsUnavailableState(run))
-		return sanitizeEvaluationFindingsSummary(summary)
+		state := evaluationFindingsUnavailableState(run)
+		return sanitizeEvaluationFindingsSummary(evaluationFindingsVisibleSummary(evaluationFindingsDisplayData{
+			RunLabels: labels,
+			State:     state,
+		}))
 	}
 
 	evaluation := run.Evaluation
-	summary.EvaluationState = evaluation.Status
-	summary.SummaryLabel = evaluation.SummaryLabel
-	summary.IssueCount = evaluationIssueCount(run, evaluation)
-	summary.RiskCount = len(run.Risks)
-	summary.WarningCount = evaluationWarningCount(run)
-	summary.Findings = evaluationFindingItems(run, evaluation, summary.IssueCount, summary.RiskCount, summary.WarningCount)
-	summary.AuditURL = guardedRunAuditURL(runID)
-	summary.applyState(evaluationFindingsStateForRun(run, evaluation, summary.IssueCount, summary.RiskCount, summary.WarningCount))
-	return sanitizeEvaluationFindingsSummary(summary)
-}
-
-func evaluationFindingsBaseSummary(run runLink, runID string) evaluationFindingsSummary {
-	return evaluationFindingsSummary{
-		RunID:          runID,
-		TimestampLabel: latestRunTimestampLabel(run),
-		DetailURL:      guardedRunDetailURL(runID),
-		HistoryURL:     "/runs",
-	}
+	issueCount := evaluationIssueCount(run, evaluation)
+	riskCount := len(run.Risks)
+	warningCount := evaluationWarningCount(run)
+	return sanitizeEvaluationFindingsSummary(evaluationFindingsVisibleSummary(evaluationFindingsDisplayData{
+		RunLabels:       labels,
+		State:           evaluationFindingsStateForRun(run, evaluation, issueCount, riskCount, warningCount),
+		EvaluationState: evaluation.Status,
+		SummaryLabel:    evaluation.SummaryLabel,
+		IssueCount:      issueCount,
+		RiskCount:       riskCount,
+		WarningCount:    warningCount,
+		Findings:        evaluationFindingItems(run, evaluation, issueCount, riskCount, warningCount),
+		IncludeAudit:    true,
+	}))
 }
 
 type evaluationFindingsStateDecision struct {
@@ -4169,49 +4166,99 @@ func (summary *evaluationFindingsSummary) applyState(state evaluationFindingsSta
 	}
 }
 
+type evaluationFindingsDisplayData struct {
+	RunLabels       runSummaryLabels
+	State           evaluationFindingsStateDecision
+	EvaluationState string
+	SummaryLabel    string
+	IssueCount      int
+	RiskCount       int
+	WarningCount    int
+	Findings        []evaluationFindingItem
+	IncludeAudit    bool
+}
+
+type evaluationFindingsLinkSet struct {
+	DetailURL  string
+	HistoryURL string
+	AuditURL   string
+}
+
+func evaluationFindingsVisibleSummary(data evaluationFindingsDisplayData) evaluationFindingsSummary {
+	links := evaluationFindingsGuardedLinks(data.RunLabels.RunID, data.IncludeAudit)
+	summary := evaluationFindingsSummary{
+		RunID:           latestRunIDLabel(data.RunLabels.RunID),
+		EvaluationState: data.EvaluationState,
+		SummaryLabel:    data.SummaryLabel,
+		IssueCount:      data.IssueCount,
+		RiskCount:       data.RiskCount,
+		WarningCount:    data.WarningCount,
+		Findings:        data.Findings,
+		TimestampLabel:  data.RunLabels.TimestampLabel,
+		DetailURL:       links.DetailURL,
+		HistoryURL:      links.HistoryURL,
+		AuditURL:        links.AuditURL,
+	}
+	summary.applyState(data.State)
+	return summary
+}
+
+func evaluationFindingsGuardedLinks(runID string, includeAudit bool) evaluationFindingsLinkSet {
+	runID = latestRunIDLabel(runID)
+	links := evaluationFindingsLinkSet{HistoryURL: "/runs"}
+	if runID == "" {
+		return links
+	}
+	links.DetailURL = guardedRunDetailURL(runID)
+	if includeAudit {
+		links.AuditURL = guardedRunAuditURL(runID)
+	}
+	return links
+}
+
 func evaluationFindingsUnavailableState(run runLink) evaluationFindingsStateDecision {
 	state := "unavailable"
 	if evaluationRunDenied(run) {
 		state = "denied"
 	}
-	return evaluationFindingsStateDecision{
-		State:           state,
-		Message:         evaluationFindingsMessage(state),
-		EvaluationState: state,
-		SummaryLabel:    "evaluation " + state,
-	}
+	return evaluationFindingsDecisionWithMetadata(state, state, "evaluation "+state)
 }
 
 func evaluationFindingsStateForRun(run runLink, evaluation runEvaluationMetadata, issueCount, riskCount, warningCount int) evaluationFindingsStateDecision {
 	if evaluationInconsistent(run, evaluation) {
-		return evaluationFindingsStateDecision{
-			State:           "unknown",
-			Message:         evaluationFindingsMessage("unknown"),
-			EvaluationState: "unknown",
-			SummaryLabel:    "evaluation unknown",
-		}
+		return evaluationFindingsDecisionWithMetadata("unknown", "unknown", "evaluation unknown")
 	}
 	switch {
 	case evaluation.State == "none":
-		return evaluationFindingsStateDecision{
-			State:           "none",
-			Message:         "No evaluation metadata recorded for latest run.",
-			EvaluationState: "none",
-			SummaryLabel:    "evaluation none",
-		}
+		return evaluationFindingsDecisionWithMetadata("none", "none", "evaluation none")
 	case evaluation.State == "unavailable":
-		return evaluationFindingsStateDecision{State: "unavailable", Message: evaluationFindingsMessage("unavailable")}
+		return evaluationFindingsDecision("unavailable")
 	case evaluation.State == "unknown":
-		return evaluationFindingsStateDecision{State: "unknown", Message: evaluationFindingsMessage("unknown")}
+		return evaluationFindingsDecision("unknown")
 	case evaluation.State == "all-clear" && issueCount == 0 && riskCount == 0 && warningCount == 0:
-		return evaluationFindingsStateDecision{State: "all-clear", Message: "Latest evaluation is all clear."}
+		return evaluationFindingsDecision("all-clear")
 	case evaluation.State == "all-clear":
-		return evaluationFindingsStateDecision{State: "findings", Message: "Latest evaluation has findings."}
+		return evaluationFindingsDecision("findings")
 	case issueCount > 0 || riskCount > 0 || warningCount > 0:
-		return evaluationFindingsStateDecision{State: "findings", Message: "Latest evaluation has findings."}
+		return evaluationFindingsDecision("findings")
 	default:
-		return evaluationFindingsStateDecision{State: "unknown", Message: evaluationFindingsMessage("unknown")}
+		return evaluationFindingsDecision("unknown")
 	}
+}
+
+func evaluationFindingsDecision(state string) evaluationFindingsStateDecision {
+	state = evaluationFindingsStateToken(state, "unknown")
+	return evaluationFindingsStateDecision{
+		State:   state,
+		Message: evaluationFindingsMessage(state),
+	}
+}
+
+func evaluationFindingsDecisionWithMetadata(state, evaluationState, summaryLabel string) evaluationFindingsStateDecision {
+	decision := evaluationFindingsDecision(state)
+	decision.EvaluationState = evaluationState
+	decision.SummaryLabel = summaryLabel
+	return decision
 }
 
 func evaluationFindingsNoneSummary(message string) evaluationFindingsSummary {
@@ -4603,18 +4650,11 @@ func sanitizeEvaluationFindingsSummary(summary evaluationFindingsSummary) evalua
 	} else if summary.TimestampLabel != "none" {
 		summary.TimestampLabel = "unknown"
 	}
-	if summary.HistoryURL != "/runs" {
-		summary.HistoryURL = "/runs"
-	}
-	if summary.RunID == "" {
-		summary.DetailURL = ""
-		summary.AuditURL = ""
-	} else {
-		summary.DetailURL = guardedRunDetailURL(summary.RunID)
-		if summary.AuditURL != "" {
-			summary.AuditURL = guardedRunAuditURL(summary.RunID)
-		}
-	}
+	includeAudit := summary.AuditURL != ""
+	links := evaluationFindingsGuardedLinks(summary.RunID, includeAudit)
+	summary.DetailURL = links.DetailURL
+	summary.HistoryURL = links.HistoryURL
+	summary.AuditURL = links.AuditURL
 	findings := make([]evaluationFindingItem, 0, minInt(len(summary.Findings), dashboardEvaluationFindingsLimit))
 	for _, finding := range summary.Findings {
 		if len(findings) >= dashboardEvaluationFindingsLimit {

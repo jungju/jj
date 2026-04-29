@@ -2104,6 +2104,32 @@
       "updated_at": "2026-04-29T03:31:40Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Dashboard-root Evaluation Findings base guarded links, unavailable and denied states, state/message decisions, item construction, and guarded link decisions are centralized in narrow helper logic or an equivalent simplified structure.",
+        "The refactor consumes only existing sanitized dashboard DTO/helper output, guarded URL decisions, fixed safe labels, or already-safe labels.",
+        "Evaluation Findings labels, ordering, visibility, guarded links, all-clear states, empty states, unavailable states, unknown states, denied states, hostile-label handling, token-like handling, malformed metadata handling, stale metadata handling, partial metadata handling, and surrounding dashboard-root behavior remain unchanged.",
+        "No raw manifest, artifact body, raw path, command text, environment value, diff body, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, arbitrary file read, unsafe path read, new dashboard page, route, CLI flag, schema field, config behavior, pagination, scanner, upload, broad file browsing, raw export, visual redesign, or user-facing output semantic change is introduced.",
+        "Focused serve coverage is added or preserved for Evaluation Findings normal, all-clear, empty, unavailable, denied, unknown, malformed or partial metadata, stale metadata, hostile-label, token-like, and guarded-link states where practical."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t54",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T03:35:36Z",
+      "created_by_run": "autopilot-20260428-160202-t54",
+      "created_by_turn": null,
+      "id": "TASK-0075",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent asks for code refactoring and simplification. There is no current blocker, failing validation, CI, release-gate, disclosure, or boundary evidence requiring bugfix or security work. Evaluation Findings remains an explicit maintainability target in the source-of-truth spec and is a small continuation of the completed dashboard presentation simplification tasks.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard Evaluation Findings presentation logic",
+      "updated_at": "2026-04-29T03:43:53Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

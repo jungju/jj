@@ -260,6 +260,32 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !indexCalls["evaluationFindingsSummaryFromRuns"] {
 		t.Fatalf("handleIndex must build evaluation-findings data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
+	evaluationFindingsCalls := serveFunctionCalls(t, funcs, "evaluationFindingsSummaryForRun")
+	for _, requiredCall := range []string{"evaluationFindingsVisibleSummary", "evaluationFindingsUnavailableState", "evaluationFindingsStateForRun", "evaluationFindingItems"} {
+		if !evaluationFindingsCalls[requiredCall] {
+			t.Fatalf("evaluationFindingsSummaryForRun must centralize %s; calls=%v", requiredCall, sortedCallNames(evaluationFindingsCalls))
+		}
+	}
+	visibleFindingsCalls := serveFunctionCalls(t, funcs, "evaluationFindingsVisibleSummary")
+	for _, requiredCall := range []string{"evaluationFindingsGuardedLinks", "applyState"} {
+		if !visibleFindingsCalls[requiredCall] {
+			t.Fatalf("evaluationFindingsVisibleSummary must centralize %s; calls=%v", requiredCall, sortedCallNames(visibleFindingsCalls))
+		}
+	}
+	sanitizeFindingsCalls := serveFunctionCalls(t, funcs, "sanitizeEvaluationFindingsSummary")
+	if !sanitizeFindingsCalls["evaluationFindingsGuardedLinks"] {
+		t.Fatalf("sanitizeEvaluationFindingsSummary must reuse guarded Evaluation Findings links; calls=%v", sortedCallNames(sanitizeFindingsCalls))
+	}
+	for _, fn := range []string{"evaluationFindingsUnavailableState", "evaluationFindingsStateForRun"} {
+		calls := serveFunctionCalls(t, funcs, fn)
+		if !calls["evaluationFindingsDecision"] && !calls["evaluationFindingsDecisionWithMetadata"] {
+			t.Fatalf("%s must use centralized Evaluation Findings state decisions; calls=%v", fn, sortedCallNames(calls))
+		}
+	}
+	decisionCalls := serveFunctionCalls(t, funcs, "evaluationFindingsDecision")
+	if !decisionCalls["evaluationFindingsMessage"] {
+		t.Fatalf("evaluationFindingsDecision must centralize Evaluation Findings messages; calls=%v", sortedCallNames(decisionCalls))
+	}
 	if !indexCalls["validationStatusSummaryFromRuns"] {
 		t.Fatalf("handleIndex must build validation-status data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
@@ -309,6 +335,15 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"recentRunsSummaryFromRuns",
 		"recentRunItemFromRun",
 		"evaluationFindingsSummaryFromRuns",
+		"evaluationFindingsSummaryForRun",
+		"evaluationFindingsVisibleSummary",
+		"evaluationFindingsGuardedLinks",
+		"evaluationFindingsUnavailableState",
+		"evaluationFindingsStateForRun",
+		"evaluationFindingsDecision",
+		"evaluationFindingsDecisionWithMetadata",
+		"evaluationFindingItems",
+		"sanitizeEvaluationFindingsSummary",
 		"validationStatusSummaryFromRuns",
 		"validationStatusItemFromRun",
 		"validationStatusUnavailableItemFromRun",
