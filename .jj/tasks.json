@@ -2077,6 +2077,33 @@
       "updated_at": "2026-04-29T03:21:57Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Project Docs shortcut construction is centralized in a narrow helper or equivalent simplified structure.",
+        "The helper consumes only existing sanitized dashboard DTO/helper output, guarded URL decisions, route or file state metadata, fixed safe labels, or already-safe labels.",
+        "Existing Project Docs labels, ordering, visibility, guarded links, unavailable states, denied states, none states, missing metadata behavior, hostile-label handling, token-like handling, malformed or partial metadata handling, and surrounding dashboard-root behavior remain unchanged.",
+        "No raw document body, raw path, manifest, artifact body, command text, environment value, diff, validation payload, planner handoff payload, TASK.md body, EVAL.md body, secret, token-like value, omission placeholder, arbitrary file read, unsafe path read, route, page, CLI flag, schema field, config behavior, pagination, scanner, upload, broad file browsing, raw export, visual redesign, or user-facing semantic change is introduced.",
+        "Focused serve tests are added or preserved for Project Docs normal, unavailable, denied, missing or none, malformed or hostile-label, and token-like states where practical.",
+        "Focused Project Docs/dashboard serve tests, go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t53",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T03:23:53Z",
+      "created_by_run": "autopilot-20260428-160202-t53",
+      "created_by_turn": null,
+      "id": "TASK-0074",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent explicitly asks for code refactoring and simplification. Current evidence shows no release-gate, CI, validation, test, disclosure, boundary, or blocker regression requiring security or bugfix work first. Recent completed tasks already simplified adjacent sanitized dashboard and CLI presentation helpers, while Project Docs shortcut presentation remains an allowed, uncompleted narrow refactor area in the SPEC.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard Project Docs shortcut presentation logic",
+      "updated_at": "2026-04-29T03:31:40Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

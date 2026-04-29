@@ -96,6 +96,11 @@ type projectDocShortcut struct {
 	URL   string
 }
 
+type projectDocShortcutAvailability struct {
+	State     string
+	CleanPath string
+}
+
 type readinessItem struct {
 	Label string
 	Path  string
@@ -2382,24 +2387,48 @@ func (s *Server) projectDocShortcutsForSpecs(specs []projectDocShortcutSpec) []p
 }
 
 func (s *Server) projectDocShortcutForSpec(spec projectDocShortcutSpec, roots ...security.CommandPathRoot) projectDocShortcut {
-	state, url := s.projectDocShortcutState(spec.Path)
-	return projectDocShortcut{
-		Label: sanitizeProjectDocLabel(spec.Label, roots...),
-		State: sanitizeProjectDocState(state),
-		URL:   url,
-	}
+	return projectDocShortcutFromAvailability(spec.Label, s.projectDocShortcutAvailability(spec.Path), roots...)
 }
 
 func (s *Server) projectDocShortcutState(rel string) (string, string) {
-	clean, path, status, err := s.resolveProjectDocRoutePath(rel)
-	if err != nil {
-		return projectDocRouteErrorState(status), ""
-	}
-	state := projectDocFileState(path)
+	availability := s.projectDocShortcutAvailability(rel)
+	state := sanitizeProjectDocState(availability.State)
 	if state != "available" {
 		return state, ""
 	}
-	return "available", docURL(clean)
+	return state, guardedProjectDocShortcutURL(availability.CleanPath)
+}
+
+func (s *Server) projectDocShortcutAvailability(rel string) projectDocShortcutAvailability {
+	clean, path, status, err := s.resolveProjectDocRoutePath(rel)
+	if err != nil {
+		return projectDocShortcutAvailability{State: projectDocRouteErrorState(status)}
+	}
+	state := projectDocFileState(path)
+	if state != "available" {
+		return projectDocShortcutAvailability{State: state}
+	}
+	return projectDocShortcutAvailability{State: "available", CleanPath: clean}
+}
+
+func projectDocShortcutFromAvailability(label string, availability projectDocShortcutAvailability, roots ...security.CommandPathRoot) projectDocShortcut {
+	state := sanitizeProjectDocState(availability.State)
+	shortcut := projectDocShortcut{
+		Label: sanitizeProjectDocLabel(label, roots...),
+		State: state,
+	}
+	if state == "available" {
+		shortcut.URL = guardedProjectDocShortcutURL(availability.CleanPath)
+	}
+	return shortcut
+}
+
+func guardedProjectDocShortcutURL(clean string) string {
+	clean, err := cleanAllowedProjectPath(clean)
+	if err != nil || !isProjectDocPath(clean) {
+		return ""
+	}
+	return docURL(clean)
 }
 
 func projectDocRouteErrorState(status int) string {
