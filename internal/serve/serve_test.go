@@ -1009,6 +1009,87 @@ func TestDashboardSharedGuardedActionAndFallbackHelpersPreserveStates(t *testing
 	}
 }
 
+func TestDashboardSummaryRowsPreserveNormalAndFallbackStates(t *testing.T) {
+	runID := "20260429-142000-summary"
+	latest := dashboardLatestRun(latestRunSummary{
+		State:            "available",
+		RunID:            runID,
+		Status:           "complete",
+		ProviderOrResult: "openai",
+		EvaluationState:  "passed (recorded)",
+		TimestampLabel:   "2026-04-29T14:20:00Z",
+		DetailURL:        "/runs/" + runID,
+		HistoryURL:       "/runs",
+		AuditURL:         "/runs/audit?run=" + runID,
+	})
+	if latest.Primary == nil || latest.Primary.Meta != "complete · 2026-04-29T14:20:00Z" || latest.Secondary != "provider/result openai · evaluation passed (recorded)" {
+		t.Fatalf("available latest-run summary rows changed: %#v", latest)
+	}
+
+	unavailableLatest := dashboardLatestRun(latestRunSummary{
+		State:          "unavailable",
+		RunID:          runID,
+		Message:        "Latest run metadata unavailable.",
+		TimestampLabel: "unknown",
+	})
+	if unavailableLatest.Primary == nil || unavailableLatest.Primary.Meta != "unavailable · unknown" || unavailableLatest.ErrorMessage != "Latest run metadata unavailable." {
+		t.Fatalf("unavailable latest-run summary rows changed: %#v", unavailableLatest)
+	}
+
+	noneLatest := dashboardLatestRun(latestRunNoneSummary())
+	if noneLatest.Primary != nil || noneLatest.MutedMessage != "No jj runs found." {
+		t.Fatalf("none latest-run fallback changed: %#v", noneLatest)
+	}
+
+	recent := dashboardRecentRunItemView(recentRunItem{
+		State:            "available",
+		RunID:            runID,
+		Status:           "complete",
+		ProviderOrResult: "codex",
+		EvaluationState:  "passed",
+		TimestampLabel:   "2026-04-29T14:20:00Z",
+		DetailURL:        "/runs/" + runID,
+	})
+	if recent.StateLine != "available · complete · 2026-04-29T14:20:00Z" || recent.ProviderLine != "provider/result codex · evaluation passed" {
+		t.Fatalf("available recent-run summary rows changed: %#v", recent)
+	}
+
+	deniedRecent := dashboardRecentRunItemView(recentRunItem{
+		State:            "denied",
+		RunID:            runID,
+		Status:           "denied",
+		ProviderOrResult: "denied",
+		EvaluationState:  "denied",
+		TimestampLabel:   "unknown",
+	})
+	if deniedRecent.StateLine != "denied · denied · unknown" || deniedRecent.ProviderLine != "provider/result denied · evaluation denied" {
+		t.Fatalf("denied recent-run summary rows changed: %#v", deniedRecent)
+	}
+
+	findings := dashboardEvaluationFindings(evaluationFindingsSummary{
+		State:          "all-clear",
+		Message:        "Evaluation passed.",
+		RunID:          runID,
+		DetailURL:      "/runs/" + runID,
+		HistoryURL:     "/runs",
+		AuditURL:       "/runs/audit?run=" + runID,
+		SummaryLabel:   "evaluation passed (recorded)",
+		TimestampLabel: "2026-04-29T14:20:00Z",
+	})
+	if findings.StateLine != "all-clear · 2026-04-29T14:20:00Z" || findings.SummaryLine != "evaluation passed (recorded) · issues 0 · risks 0 · warnings 0" || !findings.ShowAllClear {
+		t.Fatalf("evaluation-findings summary rows changed: %#v", findings)
+	}
+
+	findingsFallback := dashboardEvaluationFindings(evaluationFindingsSummary{
+		State:      "none",
+		Message:    "No jj runs found.",
+		HistoryURL: "/runs",
+	})
+	if findingsFallback.RunID != "" || findingsFallback.Fallback.Message != "No jj runs found." || findingsFallback.Fallback.HistoryAction == nil || *findingsFallback.Fallback.HistoryAction != (dashboardRunActionLink{Label: "Run history", URL: "/runs"}) {
+		t.Fatalf("evaluation-findings fallback changed: %#v", findingsFallback)
+	}
+}
+
 func TestDashboardActiveRunShowsSanitizedNonTerminalRunsAndPreservesSections(t *testing.T) {
 	dir := t.TempDir()
 	secret := "sk-proj-activerun1234567890"

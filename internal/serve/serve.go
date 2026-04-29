@@ -3554,11 +3554,11 @@ func dashboardLatestRunPrimary(runID, url, meta string) *dashboardLatestRunPrima
 }
 
 func dashboardLatestRunMetaLine(left, timestamp string) string {
-	return left + " · " + timestamp
+	return dashboardSummaryRow(left, timestamp)
 }
 
 func dashboardLatestRunProviderLine(summary latestRunSummary) string {
-	return "provider/result " + summary.ProviderOrResult + " · evaluation " + summary.EvaluationState
+	return dashboardSummaryRow("provider/result "+summary.ProviderOrResult, "evaluation "+summary.EvaluationState)
 }
 
 func recentRunsSummaryFromRuns(runs []runLink) recentRunsSummary {
@@ -3659,11 +3659,11 @@ func dashboardRecentRunsFallback(summary recentRunsSummary, historyAction *dashb
 }
 
 func dashboardRecentRunStateLine(item recentRunItem) string {
-	return item.State + " · " + item.Status + " · " + item.TimestampLabel
+	return dashboardSummaryRow(item.State, item.Status, item.TimestampLabel)
 }
 
 func dashboardRecentRunProviderLine(item recentRunItem) string {
-	return "provider/result " + item.ProviderOrResult + " · evaluation " + item.EvaluationState
+	return dashboardSummaryRow("provider/result "+item.ProviderOrResult, "evaluation "+item.EvaluationState)
 }
 
 func dashboardRecentRunHistoryAction(historyURL string) *dashboardRunActionLink {
@@ -5174,11 +5174,20 @@ func dashboardEvaluationFindingItemView(item evaluationFindingItem) dashboardEva
 }
 
 func dashboardEvaluationFindingsStateLine(summary evaluationFindingsSummary) string {
-	return summary.State + " · " + summary.TimestampLabel
+	return dashboardSummaryRow(summary.State, summary.TimestampLabel)
 }
 
 func dashboardEvaluationFindingsSummaryLine(summary evaluationFindingsSummary) string {
-	return fmt.Sprintf("%s · issues %d · risks %d · warnings %d", summary.SummaryLabel, summary.IssueCount, summary.RiskCount, summary.WarningCount)
+	return dashboardSummaryRow(
+		summary.SummaryLabel,
+		fmt.Sprintf("issues %d", summary.IssueCount),
+		fmt.Sprintf("risks %d", summary.RiskCount),
+		fmt.Sprintf("warnings %d", summary.WarningCount),
+	)
+}
+
+func dashboardSummaryRow(parts ...string) string {
+	return strings.Join(parts, " · ")
 }
 
 func dashboardEvaluationFindingsShowAllClear(summary evaluationFindingsSummary) bool {

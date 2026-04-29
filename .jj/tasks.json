@@ -2810,6 +2810,33 @@
       "updated_at": "2026-04-29T09:01:52Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Identify one narrow remaining cluster of duplicated or unnecessarily nested sanitized dashboard root summary-row, TASK summary, Next Action, latest-run, or Project Docs shortcut presentation code not already fully covered by TASK-0091 through TASK-0100.",
+        "Introduce only unexported helper logic in internal/serve that consumes existing sanitized DTO/helper output, guarded URL decisions, fixed labels, safe state metadata, safe timestamps or counts, and already-safe fallback text.",
+        "Preserve dashboard root behavior for TASK summary, latest-run summary, next-action summary, Project Docs shortcuts, Recent Runs, Evaluation Findings, Active Run, and Validation Status, including labels, ordering, spacing, visibility, links, timestamps, fallback messages, and denied, unavailable, unknown, none, empty, malformed, stale, hostile-label, token-like, partial, and inconsistent metadata states for touched paths.",
+        "Do not introduce routes, CLI flags, schema fields, config behavior, scanners, uploads, raw exports, broad file reads, raw manifest reads, raw artifact reads, raw TASK.md or EVAL.md body reads, visual redesign, redaction policy changes, path-boundary policy changes, validation behavior changes, or user-facing semantic changes.",
+        "Add or update focused internal/serve tests for every touched dashboard state, including representative normal and fallback cases where existing fixtures support them.",
+        "Focused serve tests, go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t80",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T09:03:11Z",
+      "created_by_run": "autopilot-20260428-160202-t80",
+      "created_by_turn": null,
+      "id": "TASK-0101",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent explicitly asks for code refactoring and simplification. Current evidence shows no failing validation, blocker, disclosure, or boundary regression, so a narrow quality refactor is appropriate. This task targets remaining duplicated sanitized dashboard root TASK summary, Next Action, latest-run, or Project Docs summary-row construction while preserving existing behavior.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard summary-row presentation construction",
+      "updated_at": "2026-04-29T09:11:40Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

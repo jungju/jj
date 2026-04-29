@@ -267,6 +267,12 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 			t.Fatalf("dashboardLatestRunActions must centralize Latest Run action construction through %s; calls=%v", requiredCall, sortedCallNames(latestRunActionCalls))
 		}
 	}
+	for _, fn := range []string{"dashboardLatestRunMetaLine", "dashboardLatestRunProviderLine"} {
+		calls := serveFunctionCalls(t, funcs, fn)
+		if !calls["dashboardSummaryRow"] {
+			t.Fatalf("%s must centralize dashboard summary-row formatting; calls=%v", fn, sortedCallNames(calls))
+		}
+	}
 	if !rootSectionsCalls["recentRunsSummaryFromRuns"] {
 		t.Fatalf("dashboardRootSectionsFrom must build recent-runs data through the sanitized summary helper; calls=%v", sortedCallNames(rootSectionsCalls))
 	}
@@ -289,6 +295,12 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 			t.Fatalf("dashboardRecentRunItemView must centralize %s; calls=%v", requiredCall, sortedCallNames(recentRunItemViewCalls))
 		}
 	}
+	for _, fn := range []string{"dashboardRecentRunStateLine", "dashboardRecentRunProviderLine"} {
+		calls := serveFunctionCalls(t, funcs, fn)
+		if !calls["dashboardSummaryRow"] {
+			t.Fatalf("%s must centralize dashboard summary-row formatting; calls=%v", fn, sortedCallNames(calls))
+		}
+	}
 	recentRunHistoryActionCalls := serveFunctionCalls(t, funcs, "dashboardRecentRunHistoryAction")
 	if !recentRunHistoryActionCalls["dashboardOptionalRunAction"] {
 		t.Fatalf("dashboardRecentRunHistoryAction must guard Recent Runs history links through shared optional action helper; calls=%v", sortedCallNames(recentRunHistoryActionCalls))
@@ -303,6 +315,12 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	for _, requiredCall := range []string{"dashboardEvaluationFindingItems", "dashboardEvaluationFindingsSummaryLine", "dashboardEvaluationFindingsActions", "dashboardEvaluationFindingsFallback", "dashboardEvaluationFindingsHistoryAction"} {
 		if !dashboardFindingsCalls[requiredCall] {
 			t.Fatalf("dashboardEvaluationFindings must centralize Evaluation Findings presentation through %s; calls=%v", requiredCall, sortedCallNames(dashboardFindingsCalls))
+		}
+	}
+	for _, fn := range []string{"dashboardEvaluationFindingsStateLine", "dashboardEvaluationFindingsSummaryLine"} {
+		calls := serveFunctionCalls(t, funcs, fn)
+		if !calls["dashboardSummaryRow"] {
+			t.Fatalf("%s must centralize dashboard summary-row formatting; calls=%v", fn, sortedCallNames(calls))
 		}
 	}
 	dashboardFindingItemsCalls := serveFunctionCalls(t, funcs, "dashboardEvaluationFindingItems")
@@ -553,6 +571,9 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"validationStatusTimestampLabel",
 		"validationStatusActions",
 		"validationStatusMetadataForRun",
+		"dashboardSummaryRow",
+		"dashboardLatestRunMetaLine",
+		"dashboardLatestRunProviderLine",
 		"dashboardLatestRunActions",
 		"dashboardTaskSummary",
 		"dashboardTaskSummaryViewForDecision",
