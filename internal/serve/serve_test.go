@@ -257,6 +257,60 @@ func TestDashboardProjectDocsShortcutsNoneState(t *testing.T) {
 	}
 }
 
+func TestProjectDocShortcutPresentationHelperPreservesGuardedURLs(t *testing.T) {
+	dir := t.TempDir()
+	secret := "sk-proj-projectdochelper1234567890"
+	rawPath := filepath.Join(dir, "outside", "secret.md")
+	roots := []security.CommandPathRoot{{Path: dir, Label: displayWorkspace}}
+
+	for _, tc := range []struct {
+		name         string
+		label        string
+		availability projectDocShortcutAvailability
+		want         projectDocShortcut
+		forbidden    []string
+	}{
+		{
+			name:         "available shortcut keeps guarded URL",
+			label:        "README.md",
+			availability: projectDocShortcutAvailability{State: "available", CleanPath: "README.md"},
+			want:         projectDocShortcut{Label: "README.md", State: "available", URL: docURL("README.md")},
+		},
+		{
+			name:         "denied shortcut has no URL",
+			label:        "docs/SPEC.md",
+			availability: projectDocShortcutAvailability{State: "denied", CleanPath: "docs/SPEC.md"},
+			want:         projectDocShortcut{Label: "docs/SPEC.md", State: "denied"},
+		},
+		{
+			name:         "hostile label and malformed state stay safe",
+			label:        "token=" + secret + " raw artifact body " + rawPath,
+			availability: projectDocShortcutAvailability{State: "stale", CleanPath: "README.md"},
+			want:         projectDocShortcut{Label: "Project doc", State: "unknown"},
+			forbidden:    []string{secret, "token=", "raw artifact body", rawPath, filepath.ToSlash(rawPath), security.RedactionMarker, "[omitted]"},
+		},
+		{
+			name:         "available shortcut rejects unsafe route target",
+			label:        "docs/TASK.md",
+			availability: projectDocShortcutAvailability{State: "available", CleanPath: "../docs/TASK.md"},
+			want:         projectDocShortcut{Label: "docs/TASK.md", State: "available"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := projectDocShortcutFromAvailability(tc.label, tc.availability, roots...)
+			if got != tc.want {
+				t.Fatalf("shortcut = %#v, want %#v", got, tc.want)
+			}
+			rendered := fmt.Sprintf("%#v", got)
+			for _, leaked := range tc.forbidden {
+				if strings.Contains(rendered, leaked) {
+					t.Fatalf("shortcut leaked %q: %#v", leaked, got)
+				}
+			}
+		})
+	}
+}
+
 func TestDashboardLatestRunSummaryIsCompactSanitizedAndTimestampSelected(t *testing.T) {
 	dir := newTestWorkspace(t)
 	secret := "sk-proj-latestrun1234567890"
@@ -2292,6 +2346,48 @@ func TestDashboardNextActionTaskDrivenStates(t *testing.T) {
 			t.Fatalf("no-action next action should only show TASK and history links:\n%s", section)
 		}
 	})
+}
+
+func TestNextActionTaskDrivenPresentationHelperPreservesOrderAndLinks(t *testing.T) {
+	inProgress := &taskQueueItem{ID: "TASK-0201", Category: "quality", Status: "in-progress", Title: "Continue first"}
+	pending := &taskQueueItem{ID: "TASK-0202", Category: "feature", Status: "pending", Title: "Start second"}
+
+	summary, ok := taskDrivenNextAction(taskQueueSummary{InProgress: inProgress, Pending: pending})
+	if !ok {
+		t.Fatal("task-driven next action should be present")
+	}
+	if summary.State != "continue_task" || summary.Label != "Continue Task" || summary.Message != "Continue the in-progress task from TASK.md." {
+		t.Fatalf("in-progress next action changed: %#v", summary)
+	}
+	if summary.Task == nil || summary.Task.ID != "TASK-0201" || summary.Task.Category != "quality" || summary.Task.Status != "in-progress" || summary.Task.Title != "Continue first" {
+		t.Fatalf("in-progress task changed: %#v", summary.Task)
+	}
+	if len(summary.Links) != 1 || summary.Links[0].Label != "Open TASK.md" || summary.Links[0].URL != taskDocDashboardURL() {
+		t.Fatalf("in-progress links changed: %#v", summary.Links)
+	}
+
+	summary, ok = taskDrivenNextAction(taskQueueSummary{Pending: pending})
+	if !ok {
+		t.Fatal("pending next action should be present")
+	}
+	if summary.State != "start_task" || summary.Label != "Start Task" || summary.Message != "Start the first pending task from TASK.md." {
+		t.Fatalf("pending next action changed: %#v", summary)
+	}
+	if summary.Task == nil || summary.Task.ID != "TASK-0202" || summary.Task.Category != "feature" || summary.Task.Status != "pending" || summary.Task.Title != "Start second" {
+		t.Fatalf("pending task changed: %#v", summary.Task)
+	}
+	if len(summary.Links) != 2 ||
+		summary.Links[0].Label != "Open TASK.md" || summary.Links[0].URL != taskDocDashboardURL() ||
+		summary.Links[1].Label != "Start Web Run" || summary.Links[1].URL != "/run/new" {
+		t.Fatalf("pending links changed: %#v", summary.Links)
+	}
+
+	summary, ok = taskDrivenNextAction(taskQueueSummary{
+		InProgress: &taskQueueItem{ID: "TASK-0203", Category: "quality", Status: "pending", Title: "Wrong status"},
+	})
+	if ok || summary.State != "" || summary.Label != "" || summary.Message != "" || summary.Task != nil || summary.RunID != "" || len(summary.Links) != 0 {
+		t.Fatalf("malformed task should not produce next action: ok=%v summary=%#v", ok, summary)
+	}
 }
 
 func TestDashboardNextActionTaskUnavailableUnknownDeniedAndHostileStates(t *testing.T) {

@@ -2456,6 +2456,34 @@
       "updated_at": "2026-04-29T06:16:50Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Inspect internal/serve dashboard-root Project Docs shortcut and next-action summary construction for duplicated branching, fixed-label construction, or unnecessary complexity.",
+        "Extract or tighten only narrow unexported helper logic where it reduces duplication without changing DTO contracts or user-facing semantics.",
+        "Preserve exact Project Docs shortcut labels, order, visibility, spacing, guarded URLs, denied/unavailable behavior, and fixed safe route targets.",
+        "Preserve exact next-action summary labels, ordering, visibility, spacing, fallback messages, guarded links, none/unknown/unavailable/denied behavior, and sanitized display data.",
+        "Helper inputs consume only existing sanitized DTO/helper output, guarded URL decisions, fixed safe labels, or already-safe labels.",
+        "Do not introduce raw manifest, artifact body, raw path, command text, environment value, diff body, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, unsafe file read, new route, CLI flag, schema change, config behavior, scanner, upload, raw export, visual redesign, or user-facing semantic change.",
+        "Add or adjust focused serve tests for the touched Project Docs and next-action states, then confirm focused serve tests, go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t67",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T06:19:23Z",
+      "created_by_run": "autopilot-20260428-160202-t67",
+      "created_by_turn": null,
+      "id": "TASK-0088",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next intent explicitly asks for code refactoring and simplification. Current evidence shows all prior tasks complete and no concrete security, CI, validation, blocker, or regression signal, so the next best small runnable task is a behavior-preserving quality refactor in internal/serve presentation code.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard Project Docs and next-action presentation construction",
+      "updated_at": "2026-04-29T06:27:16Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

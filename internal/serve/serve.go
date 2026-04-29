@@ -349,6 +349,13 @@ type nextActionStaticSpec struct {
 	Links   []nextActionLinkKind
 }
 
+type nextActionTaskSpec struct {
+	Status  string
+	State   string
+	Label   string
+	Message string
+}
+
 type dashboardTaskSummaryView struct {
 	Message      string
 	MessageMuted bool
@@ -2455,10 +2462,7 @@ func (s *Server) projectDocShortcutForSpec(spec projectDocShortcutSpec, roots ..
 func (s *Server) projectDocShortcutState(rel string) (string, string) {
 	availability := s.projectDocShortcutAvailability(rel)
 	state := sanitizeProjectDocState(availability.State)
-	if state != "available" {
-		return state, ""
-	}
-	return state, guardedProjectDocShortcutURL(availability.CleanPath)
+	return state, projectDocShortcutURLForState(state, availability.CleanPath)
 }
 
 func (s *Server) projectDocShortcutAvailability(rel string) projectDocShortcutAvailability {
@@ -2475,14 +2479,18 @@ func (s *Server) projectDocShortcutAvailability(rel string) projectDocShortcutAv
 
 func projectDocShortcutFromAvailability(label string, availability projectDocShortcutAvailability, roots ...security.CommandPathRoot) projectDocShortcut {
 	state := sanitizeProjectDocState(availability.State)
-	shortcut := projectDocShortcut{
+	return projectDocShortcut{
 		Label: sanitizeProjectDocLabel(label, roots...),
 		State: state,
+		URL:   projectDocShortcutURLForState(state, availability.CleanPath),
 	}
-	if state == "available" {
-		shortcut.URL = guardedProjectDocShortcutURL(availability.CleanPath)
+}
+
+func projectDocShortcutURLForState(state, clean string) string {
+	if sanitizeProjectDocState(state) != "available" {
+		return ""
 	}
-	return shortcut
+	return guardedProjectDocShortcutURL(clean)
 }
 
 func guardedProjectDocShortcutURL(clean string) string {
@@ -5047,16 +5055,35 @@ func guardedRunAuditURL(runID string) string {
 }
 
 func nextActionSummaryFromSummaries(taskQueue taskQueueSummary, latest latestRunSummary) nextActionSummary {
-	if task := firstNextActionTask(taskQueue, "in-progress"); task != nil {
-		return taskNextAction("continue_task", "Continue Task", "Continue the in-progress task from TASK.md.", *task)
-	}
-	if task := firstNextActionTask(taskQueue, "pending"); task != nil {
-		return taskNextAction("start_task", "Start Task", "Start the first pending task from TASK.md.", *task)
+	if summary, ok := taskDrivenNextAction(taskQueue); ok {
+		return summary
 	}
 	if latestRunNeedsReview(latest) {
 		return latestRunNextAction(latest)
 	}
 	return staticNextActionSummary(staticNextActionKindFromSummaries(taskQueue, latest), latest)
+}
+
+func taskDrivenNextAction(taskQueue taskQueueSummary) (nextActionSummary, bool) {
+	for _, spec := range []nextActionTaskSpec{
+		{
+			Status:  "in-progress",
+			State:   "continue_task",
+			Label:   "Continue Task",
+			Message: "Continue the in-progress task from TASK.md.",
+		},
+		{
+			Status:  "pending",
+			State:   "start_task",
+			Label:   "Start Task",
+			Message: "Start the first pending task from TASK.md.",
+		},
+	} {
+		if task := firstNextActionTask(taskQueue, spec.Status); task != nil {
+			return taskNextAction(spec.State, spec.Label, spec.Message, *task), true
+		}
+	}
+	return nextActionSummary{}, false
 }
 
 func staticNextActionKindFromSummaries(taskQueue taskQueueSummary, latest latestRunSummary) nextActionStaticKind {
