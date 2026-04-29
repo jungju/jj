@@ -2566,6 +2566,33 @@
       "updated_at": "2026-04-29T07:04:24Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Dashboard-root Evaluation Findings item, summary, action, and fallback presentation construction is centralized or simplified through narrow unexported helper logic only where behavior is identical.",
+        "The implementation consumes only existing sanitized evaluation or finding DTO/helper output, guarded URL decisions, fixed safe labels, and already-safe state metadata.",
+        "Dashboard Evaluation Findings rendered labels, ordering, visibility, spacing, fallback messages, guarded URLs, denied, unavailable, unknown, none, all-clear, hostile-label, token-like, malformed, and partial metadata behavior remain unchanged.",
+        "No raw manifest, artifact body, raw path, command text, environment value, diff body, validation payload, planner handoff payload, raw TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, unsafe file read, new route, CLI flag, schema field, config behavior, scanner, upload, raw export, visual redesign, redaction policy change, path-boundary policy change, or user-facing semantic change is introduced.",
+        "Focused internal/serve coverage is preserved or strengthened for Evaluation Findings ordering, fallback, guarded-link, all-clear, denied, unavailable, unknown, and sanitized invalid metadata behavior.",
+        "Validation passes: gofmt on touched Go files, focused Evaluation Findings serve tests, go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and ./scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t71",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T07:08:29Z",
+      "created_by_run": "autopilot-20260428-160202-t71",
+      "created_by_turn": null,
+      "id": "TASK-0092",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent asks for refactoring and simplification. All existing tasks are complete, and there is no current validation, CI, blocker, disclosure, or boundary evidence that would justify bugfix or security work. The next smallest useful behavior-preserving cleanup is to centralize dashboard-root Evaluation Findings presentation construction while preserving sanitized output semantics.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard Evaluation Findings presentation construction",
+      "updated_at": "2026-04-29T07:19:36Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

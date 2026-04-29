@@ -291,6 +291,31 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !indexCalls["evaluationFindingsSummaryFromRuns"] {
 		t.Fatalf("handleIndex must build evaluation-findings data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
+	if !indexCalls["dashboardEvaluationFindings"] {
+		t.Fatalf("handleIndex must build dashboard Evaluation Findings presentation through the centralized helper; calls=%v", sortedCallNames(indexCalls))
+	}
+	dashboardFindingsCalls := serveFunctionCalls(t, funcs, "dashboardEvaluationFindings")
+	for _, requiredCall := range []string{"dashboardEvaluationFindingItems", "dashboardEvaluationFindingsSummaryLine", "dashboardEvaluationFindingsActions", "dashboardEvaluationFindingsFallback", "dashboardEvaluationFindingsHistoryAction"} {
+		if !dashboardFindingsCalls[requiredCall] {
+			t.Fatalf("dashboardEvaluationFindings must centralize Evaluation Findings presentation through %s; calls=%v", requiredCall, sortedCallNames(dashboardFindingsCalls))
+		}
+	}
+	dashboardFindingItemsCalls := serveFunctionCalls(t, funcs, "dashboardEvaluationFindingItems")
+	if !dashboardFindingItemsCalls["dashboardEvaluationFindingItemView"] {
+		t.Fatalf("dashboardEvaluationFindingItems must build Evaluation Findings items through the item view helper; calls=%v", sortedCallNames(dashboardFindingItemsCalls))
+	}
+	dashboardFindingsActionCalls := serveFunctionCalls(t, funcs, "dashboardEvaluationFindingsActions")
+	for _, requiredCall := range []string{"dashboardRunAction", "dashboardRunActionLinks"} {
+		if !dashboardFindingsActionCalls[requiredCall] {
+			t.Fatalf("dashboardEvaluationFindingsActions must guard Evaluation Findings action links through %s; calls=%v", requiredCall, sortedCallNames(dashboardFindingsActionCalls))
+		}
+	}
+	dashboardFindingsHistoryActionCalls := serveFunctionCalls(t, funcs, "dashboardEvaluationFindingsHistoryAction")
+	for _, requiredCall := range []string{"dashboardRunAction", "dashboardRunActionLinks"} {
+		if !dashboardFindingsHistoryActionCalls[requiredCall] {
+			t.Fatalf("dashboardEvaluationFindingsHistoryAction must guard Evaluation Findings history links through %s; calls=%v", requiredCall, sortedCallNames(dashboardFindingsHistoryActionCalls))
+		}
+	}
 	if !indexCalls["dashboardTaskSummary"] {
 		t.Fatalf("handleIndex must build dashboard TASK summary data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
@@ -467,6 +492,15 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"evaluationFindingsDecisionWithMetadata",
 		"evaluationFindingItems",
 		"sanitizeEvaluationFindingsSummary",
+		"dashboardEvaluationFindings",
+		"dashboardEvaluationFindingItems",
+		"dashboardEvaluationFindingItemView",
+		"dashboardEvaluationFindingsStateLine",
+		"dashboardEvaluationFindingsSummaryLine",
+		"dashboardEvaluationFindingsShowAllClear",
+		"dashboardEvaluationFindingsActions",
+		"dashboardEvaluationFindingsFallback",
+		"dashboardEvaluationFindingsHistoryAction",
 		"activeRunsStateSummary",
 		"activeRunsStateLabel",
 		"activeRunsStateMessage",

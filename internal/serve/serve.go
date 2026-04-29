@@ -327,6 +327,29 @@ type evaluationFindingItem struct {
 	Label string
 }
 
+type dashboardEvaluationFindingsView struct {
+	State        string
+	Message      string
+	RunID        string
+	DetailURL    string
+	StateLine    string
+	SummaryLine  string
+	Findings     []dashboardEvaluationFindingItem
+	ShowAllClear bool
+	Actions      []dashboardRunActionLink
+	Fallback     dashboardEvaluationFindingsFallbackView
+}
+
+type dashboardEvaluationFindingItem struct {
+	Kind  string
+	Label string
+}
+
+type dashboardEvaluationFindingsFallbackView struct {
+	Message       string
+	HistoryAction *dashboardRunActionLink
+}
+
 type nextActionSummary struct {
 	State   string
 	Label   string
@@ -783,7 +806,7 @@ type pageData struct {
 	TaskSummary        dashboardTaskSummaryView
 	LatestRun          latestRunSummary
 	RecentRuns         dashboardRecentRunsView
-	EvaluationFindings evaluationFindingsSummary
+	EvaluationFindings dashboardEvaluationFindingsView
 	ValidationStatus   validationStatusSummary
 	NextAction         nextActionSummary
 	Docs               []docLink
@@ -976,7 +999,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	runs = s.sanitizeRunHistoryLinks(runs)
 	latestRun := latestRunSummaryFromRuns(runs)
 	recentRuns := dashboardRecentRuns(recentRunsSummaryFromRuns(runs))
-	evaluationFindings := evaluationFindingsSummaryFromRuns(runs)
+	evaluationFindings := dashboardEvaluationFindings(evaluationFindingsSummaryFromRuns(runs))
 	validationStatus := validationStatusSummaryFromRuns(runs)
 	readiness := s.workspaceReadiness()
 	taskQueue := s.taskQueueSummary()
@@ -4988,6 +5011,78 @@ func sanitizeEvaluationFindingsSummary(summary evaluationFindingsSummary) evalua
 	return summary
 }
 
+// dashboardEvaluationFindings expects the shared sanitized Evaluation Findings
+// summary and only assembles dashboard presentation labels and guarded actions.
+func dashboardEvaluationFindings(summary evaluationFindingsSummary) dashboardEvaluationFindingsView {
+	historyAction := dashboardEvaluationFindingsHistoryAction(summary.HistoryURL)
+	return dashboardEvaluationFindingsView{
+		State:        summary.State,
+		Message:      summary.Message,
+		RunID:        summary.RunID,
+		DetailURL:    summary.DetailURL,
+		StateLine:    dashboardEvaluationFindingsStateLine(summary),
+		SummaryLine:  dashboardEvaluationFindingsSummaryLine(summary),
+		Findings:     dashboardEvaluationFindingItems(summary.Findings),
+		ShowAllClear: dashboardEvaluationFindingsShowAllClear(summary),
+		Actions:      dashboardEvaluationFindingsActions(summary),
+		Fallback:     dashboardEvaluationFindingsFallback(summary, historyAction),
+	}
+}
+
+func dashboardEvaluationFindingItems(items []evaluationFindingItem) []dashboardEvaluationFindingItem {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]dashboardEvaluationFindingItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, dashboardEvaluationFindingItemView(item))
+	}
+	return out
+}
+
+func dashboardEvaluationFindingItemView(item evaluationFindingItem) dashboardEvaluationFindingItem {
+	return dashboardEvaluationFindingItem{
+		Kind:  item.Kind,
+		Label: item.Label,
+	}
+}
+
+func dashboardEvaluationFindingsStateLine(summary evaluationFindingsSummary) string {
+	return summary.State + " · " + summary.TimestampLabel
+}
+
+func dashboardEvaluationFindingsSummaryLine(summary evaluationFindingsSummary) string {
+	return fmt.Sprintf("%s · issues %d · risks %d · warnings %d", summary.SummaryLabel, summary.IssueCount, summary.RiskCount, summary.WarningCount)
+}
+
+func dashboardEvaluationFindingsShowAllClear(summary evaluationFindingsSummary) bool {
+	return summary.State == "all-clear" && len(summary.Findings) == 0
+}
+
+func dashboardEvaluationFindingsActions(summary evaluationFindingsSummary) []dashboardRunActionLink {
+	return dashboardRunActionLinks(
+		dashboardRunAction(dashboardRunActionDetail, summary.DetailURL),
+		dashboardRunAction(dashboardRunActionHistory, summary.HistoryURL),
+		dashboardRunAction(dashboardRunActionAudit, summary.AuditURL),
+	)
+}
+
+func dashboardEvaluationFindingsFallback(summary evaluationFindingsSummary, historyAction *dashboardRunActionLink) dashboardEvaluationFindingsFallbackView {
+	return dashboardEvaluationFindingsFallbackView{
+		Message:       summary.Message,
+		HistoryAction: historyAction,
+	}
+}
+
+func dashboardEvaluationFindingsHistoryAction(historyURL string) *dashboardRunActionLink {
+	links := dashboardRunActionLinks(dashboardRunAction(dashboardRunActionHistory, historyURL))
+	if len(links) == 0 {
+		return nil
+	}
+	link := links[0]
+	return &link
+}
+
 func latestRunNoneSummary() latestRunSummary {
 	return latestRunSummary{
 		State:            "none",
@@ -7564,8 +7659,8 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 		      <section>
 		        <h2>Evaluation Findings</h2>
 	        {{if .EvaluationFindings.RunID}}
-	          <p><a href="{{.EvaluationFindings.DetailURL}}">{{.EvaluationFindings.RunID}}</a> <span class="muted">{{.EvaluationFindings.State}} · {{.EvaluationFindings.TimestampLabel}}</span></p>
-	          <p class="muted">{{.EvaluationFindings.SummaryLabel}} · issues {{.EvaluationFindings.IssueCount}} · risks {{.EvaluationFindings.RiskCount}} · warnings {{.EvaluationFindings.WarningCount}}</p>
+	          <p><a href="{{.EvaluationFindings.DetailURL}}">{{.EvaluationFindings.RunID}}</a> <span class="muted">{{.EvaluationFindings.StateLine}}</span></p>
+	          <p class="muted">{{.EvaluationFindings.SummaryLine}}</p>
 	          <p>{{.EvaluationFindings.Message}}</p>
 	          {{if .EvaluationFindings.Findings}}
 	            <ul>
@@ -7573,13 +7668,13 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	              <li><span class="muted">{{.Kind}}</span> {{.Label}}</li>
 	            {{end}}
 	            </ul>
-	          {{else if eq .EvaluationFindings.State "all-clear"}}
+	          {{else if .EvaluationFindings.ShowAllClear}}
 	            <p class="muted">All clear.</p>
 	          {{end}}
-	          <p><a href="{{.EvaluationFindings.DetailURL}}">Run detail</a> · <a href="{{.EvaluationFindings.HistoryURL}}">Run history</a>{{if .EvaluationFindings.AuditURL}} · <a href="{{.EvaluationFindings.AuditURL}}">Audit export</a>{{end}}</p>
+	          <p>{{range $i, $link := .EvaluationFindings.Actions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</p>
 	        {{else}}
-	          <p class="muted">{{.EvaluationFindings.Message}}</p>
-	          <p><a href="{{.EvaluationFindings.HistoryURL}}">Run history</a></p>
+	          <p class="muted">{{.EvaluationFindings.Fallback.Message}}</p>
+	          {{with .EvaluationFindings.Fallback.HistoryAction}}<p><a href="{{.URL}}">{{.Label}}</a></p>{{end}}
 	        {{end}}
 	      </section>
 	      <section>
