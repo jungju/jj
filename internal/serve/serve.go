@@ -3597,51 +3597,82 @@ func validationStatusCountsLabel(metadata runEvaluationMetadata) string {
 }
 
 func validationEvidenceFromRun(run runLink) validationEvidenceSummary {
-	summary := validationEvidenceNoneSummary()
+	summary, ok := validationEvidenceVisibleSummaryForRun(run)
+	if !ok {
+		return validationEvidenceNoneSummary()
+	}
+	return summary
+}
+
+type validationEvidenceVisibleInput struct {
+	RunLabels   runSummaryLabels
+	State       string
+	CountsLabel string
+	Labels      []string
+}
+
+func validationEvidenceVisibleSummaryForRun(run runLink) (validationEvidenceSummary, bool) {
 	runLabels, ok := runSummaryLabelsFor(run)
 	if !ok {
-		return summary
+		return validationEvidenceSummary{}, false
 	}
 	if run.Invalid {
-		state := "unavailable"
-		if evaluationRunDenied(run) {
-			state = "denied"
-		}
-		return validationEvidenceVisibleSummary(runLabels, state, "", []string{"category " + state})
+		state := validationEvidenceUnavailableState(run)
+		return validationEvidenceVisibleSummary(validationEvidenceVisibleInput{
+			RunLabels: runLabels,
+			State:     state,
+			Labels:    []string{"category " + state},
+		}), true
 	}
 	if !validationRunCompleted(run.Status) {
-		return summary
+		return validationEvidenceSummary{}, false
 	}
 	metadata := validationStatusMetadataForRun(run)
 	if !validationMetadataRecorded(run, metadata) {
-		return summary
+		return validationEvidenceSummary{}, false
 	}
 	if evaluationInconsistent(run, metadata) {
-		metadata.State = "unknown"
-		metadata.Status = "unknown"
-		metadata.EvidenceStatus = "unknown"
-		metadata.SummaryLabel = "evaluation unknown"
+		metadata = validationEvidenceUnknownMetadata(metadata)
 	}
 	state := validationStatusState(metadata)
 	if state == "" || state == "none" {
-		return summary
+		return validationEvidenceSummary{}, false
 	}
-	evidenceLabels := validationEvidenceLabelsForRun(run, metadata, state)
-	return validationEvidenceVisibleSummary(runLabels, state, validationEvidenceCountsLabel(metadata), evidenceLabels)
+	return validationEvidenceVisibleSummary(validationEvidenceVisibleInput{
+		RunLabels:   runLabels,
+		State:       state,
+		CountsLabel: validationEvidenceCountsLabel(metadata),
+		Labels:      validationEvidenceLabelsForRun(run, metadata, state),
+	}), true
 }
 
-func validationEvidenceVisibleSummary(runLabels runSummaryLabels, state, countsLabel string, labels []string) validationEvidenceSummary {
+func validationEvidenceUnavailableState(run runLink) string {
+	if evaluationRunDenied(run) {
+		return "denied"
+	}
+	return "unavailable"
+}
+
+func validationEvidenceUnknownMetadata(metadata runEvaluationMetadata) runEvaluationMetadata {
+	metadata.State = "unknown"
+	metadata.Status = "unknown"
+	metadata.EvidenceStatus = "unknown"
+	metadata.SummaryLabel = "evaluation unknown"
+	return metadata
+}
+
+func validationEvidenceVisibleSummary(input validationEvidenceVisibleInput) validationEvidenceSummary {
 	return validationEvidenceSummary{
 		Visible:         true,
-		State:           state,
-		Message:         validationEvidenceMessage(state),
-		RunID:           runLabels.RunID,
-		ValidationState: state,
-		CountsLabel:     countsLabel,
-		TimestampLabel:  runLabels.TimestampLabel,
-		Labels:          labels,
-		DetailURL:       runLabels.DetailURL,
-		AuditURL:        runLabels.AuditURL,
+		State:           input.State,
+		Message:         validationEvidenceMessage(input.State),
+		RunID:           input.RunLabels.RunID,
+		ValidationState: input.State,
+		CountsLabel:     input.CountsLabel,
+		TimestampLabel:  input.RunLabels.TimestampLabel,
+		Labels:          append([]string(nil), input.Labels...),
+		DetailURL:       input.RunLabels.DetailURL,
+		AuditURL:        input.RunLabels.AuditURL,
 	}
 }
 

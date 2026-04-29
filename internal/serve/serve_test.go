@@ -3236,6 +3236,16 @@ func TestRunDetailValidationEvidenceStatesAreSafe(t *testing.T) {
 			want: []string{"validation unavailable", "status missing", "2026-04-29T14:20:00Z"},
 		},
 		{
+			name:        "unavailable metadata",
+			runID:       "20260429-142500-unavailable",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","started_at":"2026-04-29T14:25:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"unavailable","evidence_status":"unavailable"}}`)
+			},
+			want: []string{"validation unavailable", "status unavailable", "2026-04-29T14:25:00Z"},
+		},
+		{
 			name:        "partial metadata",
 			runID:       "20260429-143000-partial",
 			status:      http.StatusOK,
@@ -3292,6 +3302,16 @@ func TestRunDetailValidationEvidenceStatesAreSafe(t *testing.T) {
 				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","started_at":"2026-04-29T15:10:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"passed","evidence_status":"recorded","command_count":1,"passed_count":1,"failed_count":1}}`)
 			},
 			want: []string{"validation unknown", "commands 1 · passed 1 · failed 1 · skipped 0 · errors 0", "status unknown"},
+		},
+		{
+			name:        "missing timestamp",
+			runID:       "20260429-147500-notime",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","artifacts":{"manifest":"manifest.json"},"validation":{"status":"passed","evidence_status":"recorded","command_count":1,"passed_count":1}}`)
+			},
+			want: []string{"validation passed", "commands 1 · passed 1 · failed 0 · skipped 0 · errors 0", "status passed", "unknown"},
 		},
 		{
 			name:        "malformed metadata",

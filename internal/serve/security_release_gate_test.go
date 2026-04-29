@@ -270,6 +270,14 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !detailCalls["validationEvidenceFromRun"] {
 		t.Fatalf("runDetailFromInspection must build validation evidence through the sanitized run DTO helper; calls=%v", sortedCallNames(detailCalls))
 	}
+	evidenceCalls := serveFunctionCalls(t, funcs, "validationEvidenceFromRun")
+	if !evidenceCalls["validationEvidenceVisibleSummaryForRun"] {
+		t.Fatalf("validationEvidenceFromRun must build visible summaries through the centralized presentation helper; calls=%v", sortedCallNames(evidenceCalls))
+	}
+	visibleEvidenceCalls := serveFunctionCalls(t, funcs, "validationEvidenceVisibleSummaryForRun")
+	if !visibleEvidenceCalls["validationEvidenceVisibleSummary"] {
+		t.Fatalf("validationEvidenceVisibleSummaryForRun must use the shared visible-summary constructor; calls=%v", sortedCallNames(visibleEvidenceCalls))
+	}
 	if !detailCalls["runArtifactInventoryFromRun"] {
 		t.Fatalf("runDetailFromInspection must build run artifacts through the sanitized run DTO helper; calls=%v", sortedCallNames(detailCalls))
 	}
@@ -299,6 +307,8 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"runHistoryLinkFromInspection",
 		"runDetailFromInspection",
 		"validationEvidenceFromRun",
+		"validationEvidenceVisibleSummaryForRun",
+		"validationEvidenceVisibleSummary",
 		"runArtifactInventoryFromRun",
 		"runArtifactInventoryItem",
 	} {

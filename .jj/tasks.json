@@ -1940,6 +1940,34 @@
       "updated_at": "2026-04-29T02:16:58Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Run-detail Validation Evidence visible-summary construction is centralized in a narrow helper or equivalent simplified structure.",
+        "The helper consumes only existing sanitized run DTO/helper output, guarded URL decisions, or already-safe labels.",
+        "Existing Validation Evidence labels, count labels, state messages, guarded links, ordering, visibility, and none/unavailable/unknown/denied behavior are preserved.",
+        "Normal, missing, unavailable, unknown, denied, malformed, partial, hostile-label, token-like, stale, missing timestamp, and internally inconsistent validation-evidence metadata render deterministic safe states without panics or unsafe reflection.",
+        "No raw manifest, artifact body, command text, environment value, diff, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, unsafe path, configured secret, token-like value, or omission placeholder is read or rendered.",
+        "No new dashboard pages, routes, CLI flags, schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw exports, visual redesign, or user-facing output semantics are introduced.",
+        "Focused run-detail Validation Evidence serve tests, go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t48",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T02:20:03Z",
+      "created_by_run": "autopilot-20260428-160202-t48",
+      "created_by_turn": null,
+      "id": "TASK-0069",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent explicitly asks for code refactoring and simplification. Current evidence shows no failing validation, blocker, or security regression, so the next runnable task should be quality-scoped. Run-detail Validation Evidence presentation is a small remaining sanitized presentation-helper slice that can reduce duplicated or nested rendering logic without changing user-facing behavior.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized run-detail Validation Evidence presentation logic",
+      "updated_at": "2026-04-29T02:28:05Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
