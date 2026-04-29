@@ -1885,6 +1885,33 @@
       "updated_at": "2026-04-29T01:45:17Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Common sanitized CLI run-summary field construction is centralized in a narrow helper or equivalent simplified structure used by jj status and jj runs where behavior is identical.",
+        "The helper consumes only existing sanitized DTO/helper output or already-safe labels and does not read raw manifests, artifacts, command text, environment values, diffs, validation output, planner handoff payloads, TASK.md bodies, EVAL.md bodies, document bodies, arbitrary files, unsafe paths, configured secrets, token-like values, or omission placeholders.",
+        "jj status and jj runs output remains byte-for-byte equivalent for covered normal, none, unavailable, unknown, denied, malformed, hostile-label, token-like, partial metadata, missing timestamp, and tied timestamp scenarios touched by the change.",
+        "Deterministic ordering and fallback behavior for jj runs, Active Run, Validation Status, latest run, next action, and TASK summary states touched by the refactor remain unchanged.",
+        "No new CLI flags, dashboard pages, routes, manifest schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw export behavior, or user-facing output semantics are introduced.",
+        "Focused CLI tests are added or updated for the refactored status and runs presentation states, and validation passes focused CLI tests, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t46",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T01:53:50Z",
+      "created_by_run": "autopilot-20260428-160202-t46",
+      "created_by_turn": null,
+      "id": "TASK-0067",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent explicitly asks for code refactoring and simplification. Current evidence shows all prior tasks are complete and no failing validation, CI, release-gate, security disclosure, boundary regression, panic, or blocker signal is present, so the next runnable work should be a narrow behavior-preserving quality refactor. The most useful small target is duplicated sanitized CLI presentation logic shared by jj status and jj runs because it improves maintainability without changing user-facing output or security boundaries.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized CLI recent-run and status presentation helpers",
+      "updated_at": "2026-04-29T02:02:31Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

@@ -642,27 +642,25 @@ func TestRunsCommandStaleAndInternallyInconsistentMetadata(t *testing.T) {
 
 func TestCLIRunSummaryLineUsesOrderedFieldsAndFallbacks(t *testing.T) {
 	var latest bytes.Buffer
-	writeCLIRunSummaryLine(&latest, "Latest Run", cliRunSummaryFields{
+	writeCLIRunSummaryLine(&latest, "Latest Run", cliLatestRunSummaryFields(serve.StatusLatestRunSummary{
 		State:            "available",
-		RunFallback:      "none",
 		Status:           "complete",
 		ProviderOrResult: "codex",
 		EvaluationState:  "passed",
 		TimestampLabel:   "2026-04-29T15:00:00Z",
-	})
+	}))
 	if got, want := latest.String(), "Latest Run: state=available run=none status=complete provider_or_result=codex evaluation=passed timestamp=2026-04-29T15:00:00Z\n"; got != want {
 		t.Fatalf("latest-run summary line changed:\nwant %q\ngot  %q", want, got)
 	}
 
 	var recent bytes.Buffer
-	writeCLIRunSummaryLine(&recent, "Run", cliRunSummaryFields{
-		State:             "denied",
-		RunID:             "20260429-124000-denied",
-		Status:            "[redacted]",
-		ProviderOrResult:  "sensitive value removed",
-		ValidationState:   "denied",
-		IncludeValidation: true,
-	})
+	writeCLIRunSummaryLine(&recent, "Run", cliRecentRunSummaryFields(serve.RecentRunItem{
+		State:            "denied",
+		RunID:            "20260429-124000-denied",
+		Status:           "[redacted]",
+		ProviderOrResult: "sensitive value removed",
+		ValidationState:  "denied",
+	}))
 	if got, want := recent.String(), "Run: state=denied run=20260429-124000-denied status=unknown provider_or_result=unknown evaluation=unknown validation=denied timestamp=unknown\n"; got != want {
 		t.Fatalf("recent-run summary line changed:\nwant %q\ngot  %q", want, got)
 	}
