@@ -3599,6 +3599,49 @@ func TestComparePreviousPresentationBuildsGuardedVisibleSummary(t *testing.T) {
 	}
 }
 
+func TestRunArtifactInventoryFromRunUsesFixedCategoriesAndGuardedLinks(t *testing.T) {
+	runID := "20260429-165500-helper"
+	items := runArtifactInventoryFromRun(runLink{ArtifactInventory: []runArtifactStatus{
+		{Label: "Generated TASK", Path: "snapshots/tasks.after.json", URL: "/artifact?run=" + runID + "&path=snapshots%2Ftasks.after.json", Available: true, Status: "available"},
+		{Label: "Input plan", Path: "input/plan.md", URL: "https://example.test/artifact?run=" + runID + "&path=input%2Fplan.md", Available: true, Status: "available"},
+		{Label: "Generated SPEC", Path: "snapshots/spec.after.json", URL: "/artifact?run=" + runID + "&path=snapshots%2Fspec.after.json", Available: true, Status: "notlisted"},
+		{Label: "hostile_label", Path: "planning/raw-response.txt", URL: "/artifact?run=" + runID + "&path=planning%2Fraw-response.txt", Available: true, Status: "available"},
+		{Label: "Codex summary", Path: "codex/summary.md", URL: "/artifact?run=sk-proj-runartifacthelper1234567890&path=codex%2Fsummary.md", Available: true, Status: "available"},
+		{Label: "token=sk-proj-runartifacthelper1234567890", Path: "raw artifact body", URL: "/artifact?run=" + runID + "&path=codex%2Fevents.jsonl", Available: true, Status: "available"},
+		{Label: "Input plan", Path: "input/duplicate.md", URL: "/artifact?run=" + runID + "&path=input%2Fduplicate.md", Available: true, Status: "available"},
+	}})
+	if got, want := len(items), 4; got != want {
+		t.Fatalf("inventory item count = %d, want %d: %#v", got, want, items)
+	}
+	var labels []string
+	for _, item := range items {
+		labels = append(labels, item.Label)
+	}
+	if got, want := strings.Join(labels, "|"), "Input plan|Generated SPEC|Generated TASK|Codex summary"; got != want {
+		t.Fatalf("inventory labels = %q, want %q", got, want)
+	}
+	if items[0].URL != "" || items[0].Available {
+		t.Fatalf("unsafe absolute URL should not be linked: %#v", items[0])
+	}
+	if items[1].Status != "not listed" || items[1].URL != "" || items[1].Available {
+		t.Fatalf("not-listed artifact should keep safe label without link: %#v", items[1])
+	}
+	if items[2].URL == "" || !items[2].Available {
+		t.Fatalf("guarded artifact URL should be preserved for available fixed category: %#v", items[2])
+	}
+	if items[3].URL != "" || items[3].Available {
+		t.Fatalf("token-like run URL should not be linked: %#v", items[3])
+	}
+	for _, item := range items {
+		joined := item.Label + item.Path + item.URL + item.Status
+		for _, leaked := range []string{"hostile_label", "token=", "sk-proj", "raw artifact body", "duplicate.md", security.RedactionMarker, "[omitted]"} {
+			if strings.Contains(joined, leaked) {
+				t.Fatalf("inventory item leaked %q: %#v", leaked, item)
+			}
+		}
+	}
+}
+
 func TestRunDetailRunArtifactsShowsAllowlistedInventoryAndPreservesSections(t *testing.T) {
 	dir := t.TempDir()
 	runID := "20260429-170000-artifacts"

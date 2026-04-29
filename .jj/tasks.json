@@ -1968,6 +1968,34 @@
       "updated_at": "2026-04-29T02:28:05Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Run-detail Run Artifacts fixed item construction, safe availability labels, and guarded link decisions are centralized in a narrow helper or equivalent simplified structure.",
+        "The helper consumes only existing sanitized run DTO/helper output, guarded URL decisions, fixed expected artifact categories, or already-safe labels.",
+        "Run Artifacts labels, ordering, visibility, guarded links, none states, unavailable states, unknown states, denied states, malformed metadata handling, partial metadata handling, hostile-label handling, token-like handling, and surrounding run-detail behavior are unchanged.",
+        "No raw manifest, artifact body, raw path, command text, environment value, diff, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, or omission placeholder is read or rendered.",
+        "No new dashboard pages, routes, CLI flags, schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw exports, visual redesign, or user-facing output semantics are introduced.",
+        "Focused serve coverage exists for the Run Artifacts states touched by the refactor.",
+        "go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t49",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T02:32:42Z",
+      "created_by_run": "autopilot-20260428-160202-t49",
+      "created_by_turn": null,
+      "id": "TASK-0070",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent explicitly asks for code refactoring and simplification. Completed work through TASK-0069 already simplified adjacent sanitized presentation helpers, and the remaining concrete uncompleted SPEC target is run-detail Run Artifacts presentation logic. There is no current failing validation, blocker, or concrete security regression requiring bugfix or security priority.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized run-detail Run Artifacts presentation logic",
+      "updated_at": "2026-04-29T02:42:56Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

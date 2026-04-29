@@ -581,6 +581,11 @@ type runArtifactStatus struct {
 	Status    string
 }
 
+type runArtifactInventoryCategory struct {
+	Label string
+	Path  func(dashboardManifest) string
+}
+
 type runValidationDetail struct {
 	Status         string
 	EvidenceStatus string
@@ -5294,48 +5299,25 @@ func (s *Server) runDetailDocs(manifest dashboardManifest, runDir, runID string,
 }
 
 func (s *Server) runArtifactStatuses(manifest dashboardManifest, runDir, runID string, roots ...security.CommandPathRoot) []runArtifactStatus {
-	seenLabels := map[string]bool{}
-	artifacts := make([]runArtifactStatus, 0, 7)
-	addCategory := func(label string, candidates ...string) {
-		if seenLabels[label] {
-			return
+	categories := runArtifactInventoryCategories()
+	artifacts := make([]runArtifactStatus, 0, len(categories))
+	for _, category := range categories {
+		status := artifactStatusForPath(manifest, runDir, runID, category.Path(manifest), roots...)
+		if status.Path == "" {
+			continue
 		}
-		for _, candidate := range candidates {
-			status := artifactStatusForPath(manifest, runDir, runID, candidate, roots...)
-			if status.Path == "" {
-				continue
-			}
-			status.Label = label
-			artifacts = append(artifacts, status)
-			seenLabels[label] = true
-			return
-		}
+		status.Label = category.Label
+		artifacts = append(artifacts, status)
 	}
-	addCategory("Input plan", listedArtifactPath(manifest.Artifacts, "input_plan", "input_original", "input"))
-	addCategory("Generated SPEC", listedArtifactPath(manifest.Artifacts, "snapshot_spec_after", "snapshot_spec_planned", "spec_state"))
-	addCategory("Generated TASK", listedArtifactPath(manifest.Artifacts, "snapshot_tasks_after", "tasks_state"))
-	addCategory("Evaluation", firstNonEmpty(
-		manifest.Validation.SummaryPath,
-		listedArtifactPath(manifest.Artifacts, "validation_summary"),
-		manifest.Validation.ResultsPath,
-		listedArtifactPath(manifest.Artifacts, "validation_results"),
-	))
-	addCategory("Manifest summary", listedArtifactPath(manifest.Artifacts, "manifest"))
-	addCategory("Git diff summary", firstNonEmpty(
-		manifest.Git.DiffSummaryPath,
-		listedArtifactPath(manifest.Artifacts, "git_diff_summary"),
-	))
-	addCategory("Codex summary", firstNonEmpty(
-		manifest.Codex.SummaryPath,
-		listedArtifactPath(manifest.Artifacts, "codex_summary"),
-	))
 	return artifacts
 }
 
 func runArtifactInventoryFromRun(run runLink) []runArtifactStatus {
-	out := make([]runArtifactStatus, 0, len(run.ArtifactInventory))
-	for _, status := range run.ArtifactInventory {
-		item, ok := runArtifactInventoryItem(status)
+	statuses := runArtifactInventoryByLabel(run.ArtifactInventory)
+	categories := runArtifactInventoryCategories()
+	out := make([]runArtifactStatus, 0, minInt(len(statuses), len(categories)))
+	for _, category := range categories {
+		item, ok := runArtifactInventoryItem(category.Label, statuses[category.Label])
 		if ok {
 			out = append(out, item)
 		}
@@ -5343,21 +5325,111 @@ func runArtifactInventoryFromRun(run runLink) []runArtifactStatus {
 	return out
 }
 
-func runArtifactInventoryItem(status runArtifactStatus) (runArtifactStatus, bool) {
+func runArtifactInventoryCategories() []runArtifactInventoryCategory {
+	return []runArtifactInventoryCategory{
+		{
+			Label: "Input plan",
+			Path: func(manifest dashboardManifest) string {
+				return listedArtifactPath(manifest.Artifacts, "input_plan", "input_original", "input")
+			},
+		},
+		{
+			Label: "Generated SPEC",
+			Path: func(manifest dashboardManifest) string {
+				return listedArtifactPath(manifest.Artifacts, "snapshot_spec_after", "snapshot_spec_planned", "spec_state")
+			},
+		},
+		{
+			Label: "Generated TASK",
+			Path: func(manifest dashboardManifest) string {
+				return listedArtifactPath(manifest.Artifacts, "snapshot_tasks_after", "tasks_state")
+			},
+		},
+		{
+			Label: "Evaluation",
+			Path: func(manifest dashboardManifest) string {
+				return firstNonEmpty(
+					manifest.Validation.SummaryPath,
+					listedArtifactPath(manifest.Artifacts, "validation_summary"),
+					manifest.Validation.ResultsPath,
+					listedArtifactPath(manifest.Artifacts, "validation_results"),
+				)
+			},
+		},
+		{
+			Label: "Manifest summary",
+			Path: func(manifest dashboardManifest) string {
+				return listedArtifactPath(manifest.Artifacts, "manifest")
+			},
+		},
+		{
+			Label: "Git diff summary",
+			Path: func(manifest dashboardManifest) string {
+				return firstNonEmpty(
+					manifest.Git.DiffSummaryPath,
+					listedArtifactPath(manifest.Artifacts, "git_diff_summary"),
+				)
+			},
+		},
+		{
+			Label: "Codex summary",
+			Path: func(manifest dashboardManifest) string {
+				return firstNonEmpty(
+					manifest.Codex.SummaryPath,
+					listedArtifactPath(manifest.Artifacts, "codex_summary"),
+				)
+			},
+		},
+	}
+}
+
+func runArtifactInventoryByLabel(statuses []runArtifactStatus) map[string]runArtifactStatus {
+	out := make(map[string]runArtifactStatus, len(statuses))
+	for _, status := range statuses {
+		label, ok := runArtifactInventoryCategoryLabel(status.Label)
+		if !ok {
+			continue
+		}
+		if _, exists := out[label]; exists {
+			continue
+		}
+		status.Label = label
+		out[label] = status
+	}
+	return out
+}
+
+func runArtifactInventoryCategoryLabel(label string) (string, bool) {
+	label = strings.TrimSpace(sanitizeRunDetailText(label))
+	if label == "" || unsafeRunDetailText(label) {
+		return "", false
+	}
+	for _, category := range runArtifactInventoryCategories() {
+		if label == category.Label {
+			return category.Label, true
+		}
+	}
+	return "", false
+}
+
+func runArtifactInventoryItem(label string, status runArtifactStatus) (runArtifactStatus, bool) {
+	label, ok := runArtifactInventoryCategoryLabel(label)
+	if !ok {
+		return runArtifactStatus{}, false
+	}
+	availability := runArtifactAvailabilityLabel(status.Status)
 	item := runArtifactStatus{
-		Label:     sanitizeRunDetailText(status.Label),
-		Path:      sanitizeRunDetailText(status.Path),
-		URL:       safeRunArtifactURL(status.URL),
-		Available: status.Available,
-		Status:    runArtifactAvailabilityLabel(status.Status),
+		Label:  label,
+		Path:   sanitizeRunDetailText(status.Path),
+		Status: availability,
 	}
-	if item.Label == "" || unsafeRunDetailText(item.Label) {
+	if item.Path == "" {
 		return runArtifactStatus{}, false
 	}
-	if item.Path == "" && item.URL == "" {
-		return runArtifactStatus{}, false
+	if availability == "available" && status.Available {
+		item.URL = safeRunArtifactURL(status.URL)
+		item.Available = item.URL != ""
 	}
-	item.Available = item.Available && item.URL != ""
 	return item, true
 }
 
