@@ -3956,6 +3956,97 @@ func TestRunDetailValidationEvidenceStatesAreSafe(t *testing.T) {
 	}
 }
 
+func TestValidationEvidencePresentationHelpersBuildExactSummary(t *testing.T) {
+	runID := "20260429-140500-evidence-exact"
+	got := validationEvidenceFromRun(runLink{
+		ID:         runID,
+		Status:     "complete",
+		StartedAt:  "2026-04-29T14:05:00Z",
+		Validation: "failed",
+		ValidationLabels: []string{
+			"unit tests",
+			"status failed",
+		},
+		Evaluation: runEvaluationMetadata{
+			State:          "findings",
+			Status:         "failed",
+			EvidenceStatus: "recorded",
+			CommandCount:   2,
+			PassedCount:    1,
+			FailedCount:    1,
+		},
+	})
+	want := validationEvidenceSummary{
+		Visible:         true,
+		State:           "failed",
+		Message:         "Validation evidence has findings.",
+		RunID:           runID,
+		ValidationState: "failed",
+		CountsLabel:     "commands 2 · passed 1 · failed 1 · skipped 0 · errors 0",
+		TimestampLabel:  "2026-04-29T14:05:00Z",
+		Labels:          []string{"unit tests", "status failed"},
+		DetailURL:       "/runs/" + runID,
+		AuditURL:        "/runs/audit?run=" + runID,
+	}
+	assertValidationEvidenceSummary(t, got, want)
+}
+
+func TestValidationEvidencePresentationHelpersPreserveFallbacksAndNoLinks(t *testing.T) {
+	runID := "20260429-141500-fb"
+	got := validationEvidenceVisibleSummary(validationEvidenceFallbackInput(runSummaryLabels{
+		RunID:          runID,
+		TimestampLabel: "unknown",
+	}, "denied"))
+	want := validationEvidenceSummary{
+		Visible:         true,
+		State:           "denied",
+		Message:         "Validation evidence denied.",
+		RunID:           runID,
+		ValidationState: "denied",
+		TimestampLabel:  "unknown",
+		Labels:          []string{"category denied"},
+	}
+	assertValidationEvidenceSummary(t, got, want)
+
+	got = validationEvidenceVisibleSummary(validationEvidenceVisibleInput{
+		RunLabels: runSummaryLabels{
+			RunID:          runID,
+			TimestampLabel: "2026-04-29T14:15:00Z",
+			DetailURL:      "/runs/" + runID + "?api_key=sk-proj-rundetaillink1234567890",
+			AuditURL:       "https://attacker.example/runs/audit?run=" + runID,
+		},
+		State: "passed",
+		Metadata: runEvaluationMetadata{
+			Status:       "passed",
+			CommandCount: 1,
+			PassedCount:  1,
+		},
+		SafeLabels: []string{"status passed"},
+	})
+	want = validationEvidenceSummary{
+		Visible:         true,
+		State:           "passed",
+		Message:         "Validation evidence passed.",
+		RunID:           runID,
+		ValidationState: "passed",
+		CountsLabel:     "commands 1 · passed 1 · failed 0 · skipped 0 · errors 0",
+		TimestampLabel:  "2026-04-29T14:15:00Z",
+		Labels:          []string{"status passed"},
+		DetailURL:       "/runs/" + runID,
+		AuditURL:        "/runs/audit?run=" + runID,
+	}
+	assertValidationEvidenceSummary(t, got, want)
+
+	got = validationEvidenceNoneSummary()
+	want = validationEvidenceSummary{
+		State:           "none",
+		Message:         "No validation evidence recorded for this run.",
+		ValidationState: "none",
+		TimestampLabel:  "none",
+	}
+	assertValidationEvidenceSummary(t, got, want)
+}
+
 func TestRunDetailComparePreviousShowsSanitizedGuardedAction(t *testing.T) {
 	dir := newTestWorkspace(t)
 	secret := "sk-proj-compareprevious1234567890"
@@ -6269,6 +6360,22 @@ func runDetailValidationEvidenceSection(t *testing.T, body string) string {
 		t.Fatalf("run detail missing Validation Evidence section:\n%s", body)
 	}
 	return htmlSection(body, "Validation Evidence", "Codex")
+}
+
+func assertValidationEvidenceSummary(t *testing.T, got, want validationEvidenceSummary) {
+	t.Helper()
+	if got.Visible != want.Visible ||
+		got.State != want.State ||
+		got.Message != want.Message ||
+		got.RunID != want.RunID ||
+		got.ValidationState != want.ValidationState ||
+		got.CountsLabel != want.CountsLabel ||
+		got.TimestampLabel != want.TimestampLabel ||
+		got.DetailURL != want.DetailURL ||
+		got.AuditURL != want.AuditURL ||
+		strings.Join(got.Labels, "\x00") != strings.Join(want.Labels, "\x00") {
+		t.Fatalf("validation evidence summary mismatch\ngot:  %#v\nwant: %#v", got, want)
+	}
 }
 
 func runDetailComparePreviousSection(t *testing.T, body string) string {

@@ -4194,13 +4194,7 @@ func validationEvidenceVisibleInputForRun(run runLink) (validationEvidenceVisibl
 	}
 	if run.Invalid {
 		state := validationEvidenceUnavailableState(run)
-		return validationEvidenceVisibleInput{
-			RunLabels: runLabels,
-			State:     state,
-			SafeLabels: []string{
-				"category " + state,
-			},
-		}, true
+		return validationEvidenceFallbackInput(runLabels, state), true
 	}
 	if !validationRunCompleted(run.Status) {
 		return validationEvidenceVisibleInput{}, false
@@ -4237,27 +4231,76 @@ func validationEvidenceUnknownMetadata(metadata runEvaluationMetadata) runEvalua
 }
 
 func validationEvidenceVisibleSummary(input validationEvidenceVisibleInput) validationEvidenceSummary {
+	state := validationEvidenceStateLabel(input.State)
+	links := validationEvidenceGuardedLinks(input.RunLabels)
 	return validationEvidenceSummary{
 		Visible:         true,
-		State:           input.State,
-		Message:         validationEvidenceMessage(input.State),
-		RunID:           input.RunLabels.RunID,
-		ValidationState: input.State,
+		State:           state,
+		Message:         validationEvidenceMessage(state),
+		RunID:           links.RunID,
+		ValidationState: state,
 		CountsLabel:     validationEvidenceCountsLabel(input.Metadata),
-		TimestampLabel:  input.RunLabels.TimestampLabel,
-		Labels:          append([]string(nil), input.SafeLabels...),
-		DetailURL:       input.RunLabels.DetailURL,
-		AuditURL:        input.RunLabels.AuditURL,
+		TimestampLabel:  validationEvidenceTimestampLabel(input.RunLabels.TimestampLabel),
+		Labels:          validationEvidenceLabelItems(input.SafeLabels),
+		DetailURL:       links.DetailURL,
+		AuditURL:        links.AuditURL,
+	}
+}
+
+func validationEvidenceFallbackInput(runLabels runSummaryLabels, state string) validationEvidenceVisibleInput {
+	return validationEvidenceVisibleInput{
+		RunLabels:  runLabels,
+		State:      state,
+		SafeLabels: validationEvidenceFallbackLabels(state),
 	}
 }
 
 func validationEvidenceNoneSummary() validationEvidenceSummary {
+	return validationEvidenceHiddenSummary("none", "No validation evidence recorded for this run.")
+}
+
+func validationEvidenceHiddenSummary(state, message string) validationEvidenceSummary {
+	state = dashboardCategory(state, "unknown")
 	return validationEvidenceSummary{
-		State:           "none",
-		Message:         "No validation evidence recorded for this run.",
-		ValidationState: "none",
+		State:           state,
+		Message:         message,
+		ValidationState: state,
 		TimestampLabel:  "none",
 	}
+}
+
+func validationEvidenceStateLabel(state string) string {
+	if state = validationStatusState(runEvaluationMetadata{Status: state}); state != "" {
+		return state
+	}
+	return "unknown"
+}
+
+func validationEvidenceTimestampLabel(label string) string {
+	return latestRunDisplayText(label, "unknown")
+}
+
+func validationEvidenceLabelItems(safeLabels []string) []string {
+	return append([]string(nil), safeLabels...)
+}
+
+func validationEvidenceFallbackLabels(state string) []string {
+	return []string{"category " + firstNonEmpty(state, "unknown")}
+}
+
+func validationEvidenceGuardedLinks(labels runSummaryLabels) dashboardRunLinks {
+	runID := latestRunIDLabel(labels.RunID)
+	if runID == "" {
+		return dashboardRunLinks{}
+	}
+	links := dashboardRunLinks{RunID: runID}
+	if strings.TrimSpace(labels.DetailURL) != "" {
+		links.DetailURL = guardedRunDetailURL(runID)
+	}
+	if strings.TrimSpace(labels.AuditURL) != "" {
+		links.AuditURL = guardedRunAuditURL(runID)
+	}
+	return links
 }
 
 func validationEvidenceMessage(state string) string {
