@@ -308,6 +308,28 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !indexCalls["nextActionSummaryFromSummaries"] {
 		t.Fatalf("handleIndex must build next-action data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
+	nextActionCalls := serveFunctionCalls(t, funcs, "nextActionSummaryFromSummaries")
+	for _, requiredCall := range []string{"staticNextActionKindFromSummaries", "staticNextActionSummary"} {
+		if !nextActionCalls[requiredCall] {
+			t.Fatalf("nextActionSummaryFromSummaries must centralize static Next Action decisions through %s; calls=%v", requiredCall, sortedCallNames(nextActionCalls))
+		}
+	}
+	staticNextActionKindCalls := serveFunctionCalls(t, funcs, "staticNextActionKindFromSummaries")
+	if !staticNextActionKindCalls["taskQueueUnavailableNextActionKind"] {
+		t.Fatalf("staticNextActionKindFromSummaries must centralize TASK-unavailable Next Action states; calls=%v", sortedCallNames(staticNextActionKindCalls))
+	}
+	staticNextActionCalls := serveFunctionCalls(t, funcs, "staticNextActionSummary")
+	for _, requiredCall := range []string{"nextActionStaticSpecFor", "nextActionLinksForKinds"} {
+		if !staticNextActionCalls[requiredCall] {
+			t.Fatalf("staticNextActionSummary must build labels and guarded links through %s; calls=%v", requiredCall, sortedCallNames(staticNextActionCalls))
+		}
+	}
+	nextActionLinkCalls := serveFunctionCalls(t, funcs, "nextActionLinksForKinds")
+	for _, requiredCall := range []string{"nextActionLinkForKind", "nextActionLinks"} {
+		if !nextActionLinkCalls[requiredCall] {
+			t.Fatalf("nextActionLinksForKinds must route fixed Next Action links through %s; calls=%v", requiredCall, sortedCallNames(nextActionLinkCalls))
+		}
+	}
 	detailCalls := serveFunctionCalls(t, funcs, "runDetailFromInspection")
 	if !detailCalls["validationEvidenceFromRun"] {
 		t.Fatalf("runDetailFromInspection must build validation evidence through the sanitized run DTO helper; calls=%v", sortedCallNames(detailCalls))
@@ -353,6 +375,12 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"validationStatusActions",
 		"validationStatusMetadataForRun",
 		"nextActionSummaryFromSummaries",
+		"staticNextActionKindFromSummaries",
+		"taskQueueUnavailableNextActionKind",
+		"staticNextActionSummary",
+		"nextActionStaticSpecFor",
+		"nextActionLinksForKinds",
+		"nextActionLinkForKind",
 		"handleRunCompare",
 		"loadRunCompareSide",
 		"handleRunAudit",

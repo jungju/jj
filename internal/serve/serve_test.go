@@ -1917,6 +1917,30 @@ func TestDashboardNextActionTaskDrivenStates(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("no action after successful latest run", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "docs/TASK.md", `# Tasks
+
+- TASK-0108 [blocked] Waiting for external input
+`)
+		writeFile(t, dir, ".jj/runs/20260429-124000-complete/manifest.json", `{
+			"run_id":"20260429-124000-complete",
+			"status":"complete",
+			"started_at":"2026-04-29T12:40:00Z",
+			"artifacts":{"manifest":"manifest.json"},
+			"validation":{"ran":true,"status":"passed","evidence_status":"recorded"}
+		}`)
+		section := dashboardNextActionSection(t, newTestServer(t, dir, ""))
+		for _, want := range []string{"No Action", "none", "No runnable TASK.md tasks require action.", `href="/doc?path=docs/TASK.md"`, `href="/runs">Run History</a>`} {
+			if !strings.Contains(section, want) {
+				t.Fatalf("no-action next action missing %q:\n%s", want, section)
+			}
+		}
+		if strings.Contains(section, "Run Detail") || strings.Contains(section, "Audit Export") {
+			t.Fatalf("no-action next action should only show TASK and history links:\n%s", section)
+		}
+	})
 }
 
 func TestDashboardNextActionTaskUnavailableUnknownDeniedAndHostileStates(t *testing.T) {
@@ -2074,6 +2098,36 @@ func TestDashboardNextActionRunDrivenStates(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDashboardNextActionGuardedLinksRejectUnsafeURLs(t *testing.T) {
+	secret := "sk-proj-nextactionlink1234567890"
+	latest := latestRunSummary{
+		State:           "unavailable",
+		RunID:           "20260429-125000-unsafe",
+		Status:          "failed",
+		EvaluationState: "failed",
+		Message:         "Latest run metadata unavailable.",
+		DetailURL:       "/runs/" + secret,
+		HistoryURL:      "https://example.invalid/runs",
+		AuditURL:        "/runs/audit?run=" + secret,
+	}
+	summary := nextActionSummaryFromSummaries(taskQueueSummary{
+		State:     "available",
+		Available: true,
+	}, latest)
+
+	if summary.State != "review_latest_run" || summary.Label != "Review Latest Run" {
+		t.Fatalf("guarded-link next action = %#v", summary)
+	}
+	if len(summary.Links) != 0 {
+		t.Fatalf("guarded-link next action kept unsafe links: %#v", summary.Links)
+	}
+	for _, leaked := range []string{secret, "https://example.invalid", security.RedactionMarker} {
+		if strings.Contains(summary.Message, leaked) || strings.Contains(summary.RunID, leaked) {
+			t.Fatalf("guarded-link next action leaked %q: %#v", leaked, summary)
+		}
 	}
 }
 

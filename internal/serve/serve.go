@@ -308,6 +308,35 @@ type nextActionLink struct {
 	URL   string
 }
 
+type nextActionStaticKind string
+
+const (
+	nextActionStaticAllDone         nextActionStaticKind = "all_done"
+	nextActionStaticNoRun           nextActionStaticKind = "no_run"
+	nextActionStaticNoAction        nextActionStaticKind = "none"
+	nextActionStaticTaskMissing     nextActionStaticKind = "task_missing"
+	nextActionStaticTaskUnavailable nextActionStaticKind = "task_unavailable"
+	nextActionStaticTaskUnknown     nextActionStaticKind = "task_unknown"
+	nextActionStaticUnknown         nextActionStaticKind = "unknown"
+)
+
+type nextActionLinkKind string
+
+const (
+	nextActionLinkTaskDoc     nextActionLinkKind = "task_doc"
+	nextActionLinkWebRun      nextActionLinkKind = "web_run"
+	nextActionLinkRunDetail   nextActionLinkKind = "run_detail"
+	nextActionLinkRunHistory  nextActionLinkKind = "run_history"
+	nextActionLinkAuditExport nextActionLinkKind = "audit_export"
+)
+
+type nextActionStaticSpec struct {
+	State   string
+	Label   string
+	Message string
+	Links   []nextActionLinkKind
+}
+
 type dashboardTaskSummaryView struct {
 	Message      string
 	MessageMuted bool
@@ -4825,53 +4854,96 @@ func nextActionSummaryFromSummaries(taskQueue taskQueueSummary, latest latestRun
 	if latestRunNeedsReview(latest) {
 		return latestRunNextAction(latest)
 	}
+	return staticNextActionSummary(staticNextActionKindFromSummaries(taskQueue, latest), latest)
+}
+
+func staticNextActionKindFromSummaries(taskQueue taskQueueSummary, latest latestRunSummary) nextActionStaticKind {
 	if !taskQueue.Available {
-		return taskQueueUnavailableNextAction(taskQueue.State, latest)
+		return taskQueueUnavailableNextActionKind(taskQueue.State)
 	}
 	if taskQueue.Counts.Total > 0 && taskQueue.Counts.Done == taskQueue.Counts.Total {
-		return staticNextAction("all_done", "All Done", "All TASK.md tasks are done.",
-			nextActionLink{Label: "Open TASK.md", URL: taskDocDashboardURL()},
-		)
+		return nextActionStaticAllDone
 	}
 	if latest.State == "none" {
-		return staticNextAction("no_run", "No Runs", "No runnable TASK.md tasks and no jj runs are available for review.",
-			nextActionLink{Label: "Start Web Run", URL: "/run/new"},
-			nextActionLink{Label: "Run History", URL: latest.HistoryURL},
-		)
+		return nextActionStaticNoRun
 	}
-	return staticNextAction("none", "No Action", "No runnable TASK.md tasks require action.",
-		nextActionLink{Label: "Open TASK.md", URL: taskDocDashboardURL()},
-		nextActionLink{Label: "Run History", URL: latest.HistoryURL},
-	)
+	return nextActionStaticNoAction
 }
 
-func taskQueueUnavailableNextAction(state string, latest latestRunSummary) nextActionSummary {
+func taskQueueUnavailableNextActionKind(state string) nextActionStaticKind {
 	switch state {
 	case "missing":
-		return staticNextAction("task_missing", "TASK.md Missing", "docs/TASK.md is unavailable.",
-			nextActionLink{Label: "Start Web Run", URL: "/run/new"},
-		)
+		return nextActionStaticTaskMissing
 	case "denied", "unavailable":
-		return staticNextAction("task_unavailable", "TASK.md Unavailable", "TASK.md cannot be read through the workspace guard.",
-			nextActionLink{Label: "Start Web Run", URL: "/run/new"},
-		)
+		return nextActionStaticTaskUnavailable
 	case "unknown":
-		return staticNextAction("task_unknown", "TASK.md Unknown", "TASK.md does not contain a recognized runnable task summary.",
-			nextActionLink{Label: "Open TASK.md", URL: taskDocDashboardURL()},
-		)
+		return nextActionStaticTaskUnknown
 	default:
-		return staticNextAction("unknown", "Next Action Unknown", "Next action state is unavailable.",
-			nextActionLink{Label: "Run History", URL: latest.HistoryURL},
-		)
+		return nextActionStaticUnknown
 	}
 }
 
-func staticNextAction(state, label, message string, links ...nextActionLink) nextActionSummary {
+func staticNextActionSummary(kind nextActionStaticKind, latest latestRunSummary) nextActionSummary {
+	spec := nextActionStaticSpecFor(kind)
 	return nextActionSummary{
-		State:   state,
-		Label:   label,
-		Message: message,
-		Links:   nextActionLinks(links...),
+		State:   spec.State,
+		Label:   spec.Label,
+		Message: spec.Message,
+		Links:   nextActionLinksForKinds(latest, spec.Links...),
+	}
+}
+
+func nextActionStaticSpecFor(kind nextActionStaticKind) nextActionStaticSpec {
+	switch kind {
+	case nextActionStaticAllDone:
+		return nextActionStaticSpec{
+			State:   "all_done",
+			Label:   "All Done",
+			Message: "All TASK.md tasks are done.",
+			Links:   []nextActionLinkKind{nextActionLinkTaskDoc},
+		}
+	case nextActionStaticNoRun:
+		return nextActionStaticSpec{
+			State:   "no_run",
+			Label:   "No Runs",
+			Message: "No runnable TASK.md tasks and no jj runs are available for review.",
+			Links:   []nextActionLinkKind{nextActionLinkWebRun, nextActionLinkRunHistory},
+		}
+	case nextActionStaticNoAction:
+		return nextActionStaticSpec{
+			State:   "none",
+			Label:   "No Action",
+			Message: "No runnable TASK.md tasks require action.",
+			Links:   []nextActionLinkKind{nextActionLinkTaskDoc, nextActionLinkRunHistory},
+		}
+	case nextActionStaticTaskMissing:
+		return nextActionStaticSpec{
+			State:   "task_missing",
+			Label:   "TASK.md Missing",
+			Message: "docs/TASK.md is unavailable.",
+			Links:   []nextActionLinkKind{nextActionLinkWebRun},
+		}
+	case nextActionStaticTaskUnavailable:
+		return nextActionStaticSpec{
+			State:   "task_unavailable",
+			Label:   "TASK.md Unavailable",
+			Message: "TASK.md cannot be read through the workspace guard.",
+			Links:   []nextActionLinkKind{nextActionLinkWebRun},
+		}
+	case nextActionStaticTaskUnknown:
+		return nextActionStaticSpec{
+			State:   "task_unknown",
+			Label:   "TASK.md Unknown",
+			Message: "TASK.md does not contain a recognized runnable task summary.",
+			Links:   []nextActionLinkKind{nextActionLinkTaskDoc},
+		}
+	default:
+		return nextActionStaticSpec{
+			State:   "unknown",
+			Label:   "Next Action Unknown",
+			Message: "Next action state is unavailable.",
+			Links:   []nextActionLinkKind{nextActionLinkRunHistory},
+		}
 	}
 }
 
@@ -4895,16 +4967,16 @@ func firstNextActionTask(summary taskQueueSummary, status string) *taskQueueItem
 
 func taskNextAction(state, label, message string, task taskQueueItem) nextActionSummary {
 	task = sanitizeNextActionTask(task)
-	links := []nextActionLink{{Label: "Open TASK.md", URL: taskDocDashboardURL()}}
+	linkKinds := []nextActionLinkKind{nextActionLinkTaskDoc}
 	if task.Status == "pending" {
-		links = append(links, nextActionLink{Label: "Start Web Run", URL: "/run/new"})
+		linkKinds = append(linkKinds, nextActionLinkWebRun)
 	}
 	return nextActionSummary{
 		State:   state,
 		Label:   label,
 		Message: message,
 		Task:    &task,
-		Links:   nextActionLinks(links...),
+		Links:   nextActionLinksForKinds(latestRunSummary{}, linkKinds...),
 	}
 }
 
@@ -4924,10 +4996,10 @@ func latestRunNextAction(latest latestRunSummary) nextActionSummary {
 		Label:   "Review Latest Run",
 		Message: message,
 		RunID:   runID,
-		Links: nextActionLinks(
-			nextActionLink{Label: "Run Detail", URL: latest.DetailURL},
-			nextActionLink{Label: "Run History", URL: latest.HistoryURL},
-			nextActionLink{Label: "Audit Export", URL: latest.AuditURL},
+		Links: nextActionLinksForKinds(latest,
+			nextActionLinkRunDetail,
+			nextActionLinkRunHistory,
+			nextActionLinkAuditExport,
 		),
 	}
 }
@@ -4981,6 +5053,31 @@ func nextActionDisplayText(value, fallback string) string {
 		return fallback
 	}
 	return text
+}
+
+func nextActionLinksForKinds(latest latestRunSummary, kinds ...nextActionLinkKind) []nextActionLink {
+	links := make([]nextActionLink, 0, len(kinds))
+	for _, kind := range kinds {
+		links = append(links, nextActionLinkForKind(latest, kind))
+	}
+	return nextActionLinks(links...)
+}
+
+func nextActionLinkForKind(latest latestRunSummary, kind nextActionLinkKind) nextActionLink {
+	switch kind {
+	case nextActionLinkTaskDoc:
+		return nextActionLink{Label: "Open TASK.md", URL: taskDocDashboardURL()}
+	case nextActionLinkWebRun:
+		return nextActionLink{Label: "Start Web Run", URL: "/run/new"}
+	case nextActionLinkRunDetail:
+		return nextActionLink{Label: "Run Detail", URL: latest.DetailURL}
+	case nextActionLinkRunHistory:
+		return nextActionLink{Label: "Run History", URL: latest.HistoryURL}
+	case nextActionLinkAuditExport:
+		return nextActionLink{Label: "Audit Export", URL: latest.AuditURL}
+	default:
+		return nextActionLink{}
+	}
 }
 
 func nextActionLinks(links ...nextActionLink) []nextActionLink {
