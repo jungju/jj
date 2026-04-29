@@ -2511,6 +2511,34 @@
       "updated_at": "2026-04-29T06:37:15Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Inspect internal/serve dashboard-root TASK summary construction and identify duplicated branching, label, link, or fallback construction that can be simplified safely.",
+        "Extract only identical behavior into narrow unexported helper logic that consumes existing sanitized TASK summary DTO/helper output, guarded URL decisions, fixed safe labels, and already-safe state metadata.",
+        "Preserve dashboard TASK summary labels, ordering, visibility, spacing, fallback messages, guarded URLs, denied, unavailable, unknown, none, hostile-label, token-like, malformed, and partial metadata behavior exactly.",
+        "Do not change exported types, routes, templates, DTO contracts, CLI flags, schema fields, config behavior, redaction policy, path-boundary policy, visual design, or user-facing semantics.",
+        "Do not introduce raw manifest, artifact body, raw path, command text, environment value, diff body, validation payload, planner handoff payload, raw TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, unsafe file read, scanner, upload, or raw export behavior.",
+        "Preserve or strengthen focused internal/serve tests for every touched TASK summary state, with exact rendered output and guarded-link visibility asserted where practical.",
+        "Run gofmt on touched Go files and validate with focused TASK summary serve tests, go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and ./scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t69",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T06:38:47Z",
+      "created_by_run": "autopilot-20260428-160202-t69",
+      "created_by_turn": null,
+      "id": "TASK-0090",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent explicitly asks for code refactoring and simplification. There is no current blocker, failing validation, CI, disclosure, or boundary evidence that would justify bugfix or security work. This small behavior-preserving refactor continues the sanitized presentation cleanup without reopening completed TASK-0086 through TASK-0089 work.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard TASK summary presentation construction",
+      "updated_at": "2026-04-29T06:50:08Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

@@ -5360,27 +5360,30 @@ func nextActionURL(raw string) string {
 
 func dashboardTaskSummary(summary taskQueueSummary) dashboardTaskSummaryView {
 	decision := dashboardTaskSummaryDecisionFor(summary)
+	return dashboardTaskSummaryViewForDecision(summary, decision)
+}
+
+func dashboardTaskSummaryViewForDecision(summary taskQueueSummary, decision dashboardTaskSummaryDecision) dashboardTaskSummaryView {
 	next := dashboardTaskSummaryNextForDecision(summary.Next, decision)
-	view := dashboardTaskSummaryView{
+	return dashboardTaskSummaryView{
 		Message:      dashboardTaskSummaryMessage(summary.Message, decision.MessageFallback),
 		MessageMuted: decision.MessageMuted,
 		Next:         next,
 		EmptyMessage: dashboardTaskSummaryEmptyMessage(decision, next),
 	}
-	return view
 }
 
 func dashboardTaskSummaryDecisionFor(summary taskQueueSummary) dashboardTaskSummaryDecision {
 	switch dashboardTaskSummaryState(summary) {
 	case "available":
 		return dashboardTaskSummaryDecision{
-			MessageFallback: "TASK.md task summary unknown.",
+			MessageFallback: taskQueueUnknownMessage,
 			AllowNext:       true,
-			EmptyMessage:    "No runnable tasks.",
+			EmptyMessage:    taskQueueNoRunnableMessage,
 		}
 	default:
 		return dashboardTaskSummaryDecision{
-			MessageFallback: "TASK.md unavailable.",
+			MessageFallback: taskQueueUnavailableMessage,
 			MessageMuted:    true,
 		}
 	}

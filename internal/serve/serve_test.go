@@ -133,6 +133,14 @@ Authorization: Bearer `+secret+`
 			t.Fatalf("TASK summary changed, missing %q:\n%s", want, taskSection)
 		}
 	}
+	assertSubstringsInOrder(t, taskSection, []string{
+		"<h2>Current TASK</h2>",
+		"<p>TASK.md: 1 total, 0 done, 1 in progress, 0 pending, 0 blocked.</p>",
+		`<p>Next: <strong>TASK-0045</strong> <span class="muted">feature · in-progress</span> Show guarded project document shortcuts</p>`,
+	})
+	if strings.Contains(taskSection, "<a ") {
+		t.Fatalf("TASK summary should not render guarded action links:\n%s", taskSection)
+	}
 	latest := htmlSection(body, "Latest Run", "Risks And Failures")
 	for _, want := range []string{"20260429-120000-docs", "complete", "provider/result codex", "evaluation passed (recorded)"} {
 		if !strings.Contains(latest, want) {
@@ -2045,7 +2053,7 @@ func TestDashboardTaskSummaryPreservesNormalAndFallbackStates(t *testing.T) {
 		Available: true,
 		Message:   "TASK.md: 1 total, 0 done, 0 in progress, 0 pending, 1 blocked. No pending or in-progress tasks.",
 	})
-	if empty.MessageMuted || empty.EmptyMessage != "No runnable tasks." || empty.Next != nil {
+	if empty.MessageMuted || empty.Message != "TASK.md: 1 total, 0 done, 0 in progress, 0 pending, 1 blocked. No pending or in-progress tasks." || empty.EmptyMessage != "No runnable tasks." || empty.Next != nil {
 		t.Fatalf("empty task summary fallback changed: %#v", empty)
 	}
 
@@ -2058,7 +2066,7 @@ func TestDashboardTaskSummaryPreservesNormalAndFallbackStates(t *testing.T) {
 			Title:  "partial metadata",
 		},
 	})
-	if partial.Message != "TASK.md task summary unknown." || partial.Next != nil || partial.EmptyMessage != "No runnable tasks." {
+	if partial.MessageMuted || partial.Message != "TASK.md task summary unknown." || partial.Next != nil || partial.EmptyMessage != "No runnable tasks." {
 		t.Fatalf("partial task summary fallback changed: %#v", partial)
 	}
 
@@ -2074,7 +2082,7 @@ func TestDashboardTaskSummaryPreservesNormalAndFallbackStates(t *testing.T) {
 			Title:    "raw artifact body token=" + secret,
 		},
 	})
-	if hostile.Message != "TASK.md task summary unknown." || hostile.Next == nil {
+	if hostile.MessageMuted || hostile.Message != "TASK.md task summary unknown." || hostile.Next == nil || hostile.EmptyMessage != "" {
 		t.Fatalf("hostile task summary fallback changed: %#v", hostile)
 	}
 	if hostile.Next.Category != "unknown" || hostile.Next.Status != "in-progress" || hostile.Next.Title != "unsafe value removed" {

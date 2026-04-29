@@ -9,7 +9,14 @@ import (
 	"github.com/jungju/jj/internal/security"
 )
 
-const workspaceTaskMarkdownPath = "docs/TASK.md"
+const (
+	workspaceTaskMarkdownPath = "docs/TASK.md"
+
+	taskQueueUnavailableMessage = "TASK.md unavailable."
+	taskQueueUnknownMessage     = "TASK.md task summary unknown."
+	taskQueueNoRunnableMessage  = "No runnable tasks."
+	taskQueueNoPendingMessage   = "No pending or in-progress tasks."
+)
 
 var taskMarkdownIDPattern = regexp.MustCompile(`\bTASK-\d{1,6}\b`)
 
@@ -57,14 +64,14 @@ func unavailableTaskQueueSummary(state string) taskQueueSummary {
 	state = taskQueueState(state, "unavailable")
 	return taskQueueSummary{
 		State:   state,
-		Message: "TASK.md unavailable.",
+		Message: taskQueueUnavailableMessage,
 	}
 }
 
 func unknownTaskQueueSummary() taskQueueSummary {
 	return taskQueueSummary{
 		State:   "unknown",
-		Message: "TASK.md task summary unknown.",
+		Message: taskQueueUnknownMessage,
 	}
 }
 
@@ -116,9 +123,9 @@ func parseTaskQueueSummary(markdown string, roots ...security.CommandPathRoot) t
 	)
 	if summary.Next == nil {
 		if summary.Counts.Total > 0 && summary.Counts.Done == summary.Counts.Total {
-			summary.Message += " All TASK.md tasks are done. No runnable tasks."
+			summary.Message += " All TASK.md tasks are done. " + taskQueueNoRunnableMessage
 		} else {
-			summary.Message += " No pending or in-progress tasks."
+			summary.Message += " " + taskQueueNoPendingMessage
 		}
 	}
 	return summary

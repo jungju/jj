@@ -270,9 +270,15 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		t.Fatalf("handleIndex must build dashboard TASK summary data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
 	taskSummaryCalls := serveFunctionCalls(t, funcs, "dashboardTaskSummary")
-	for _, requiredCall := range []string{"dashboardTaskSummaryDecisionFor", "dashboardTaskSummaryMessage", "dashboardTaskSummaryNextForDecision", "dashboardTaskSummaryEmptyMessage"} {
+	for _, requiredCall := range []string{"dashboardTaskSummaryDecisionFor", "dashboardTaskSummaryViewForDecision"} {
 		if !taskSummaryCalls[requiredCall] {
 			t.Fatalf("dashboardTaskSummary must centralize %s; calls=%v", requiredCall, sortedCallNames(taskSummaryCalls))
+		}
+	}
+	taskSummaryViewCalls := serveFunctionCalls(t, funcs, "dashboardTaskSummaryViewForDecision")
+	for _, requiredCall := range []string{"dashboardTaskSummaryMessage", "dashboardTaskSummaryNextForDecision", "dashboardTaskSummaryEmptyMessage"} {
+		if !taskSummaryViewCalls[requiredCall] {
+			t.Fatalf("dashboardTaskSummaryViewForDecision must centralize %s; calls=%v", requiredCall, sortedCallNames(taskSummaryViewCalls))
 		}
 	}
 	taskSummaryDecisionCalls := serveFunctionCalls(t, funcs, "dashboardTaskSummaryDecisionFor")
@@ -454,6 +460,7 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"validationStatusMetadataForRun",
 		"dashboardLatestRunActions",
 		"dashboardTaskSummary",
+		"dashboardTaskSummaryViewForDecision",
 		"dashboardTaskSummaryDecisionFor",
 		"dashboardTaskSummaryState",
 		"dashboardTaskSummaryMessage",
