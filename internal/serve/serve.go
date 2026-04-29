@@ -4504,65 +4504,53 @@ func nextActionSummaryFromSummaries(taskQueue taskQueueSummary, latest latestRun
 	if latestRunNeedsReview(latest) {
 		return latestRunNextAction(latest)
 	}
-	if taskQueue.Available {
-		if taskQueue.Counts.Total > 0 && taskQueue.Counts.Done == taskQueue.Counts.Total {
-			return nextActionSummary{
-				State:   "all_done",
-				Label:   "All Done",
-				Message: "All TASK.md tasks are done.",
-				Links:   nextActionLinks(nextActionLink{Label: "Open TASK.md", URL: taskDocDashboardURL()}),
-			}
-		}
-		if latest.State == "none" {
-			return nextActionSummary{
-				State:   "no_run",
-				Label:   "No Runs",
-				Message: "No runnable TASK.md tasks and no jj runs are available for review.",
-				Links: nextActionLinks(
-					nextActionLink{Label: "Start Web Run", URL: "/run/new"},
-					nextActionLink{Label: "Run History", URL: latest.HistoryURL},
-				),
-			}
-		}
-		return nextActionSummary{
-			State:   "none",
-			Label:   "No Action",
-			Message: "No runnable TASK.md tasks require action.",
-			Links: nextActionLinks(
-				nextActionLink{Label: "Open TASK.md", URL: taskDocDashboardURL()},
-				nextActionLink{Label: "Run History", URL: latest.HistoryURL},
-			),
-		}
+	if !taskQueue.Available {
+		return taskQueueUnavailableNextAction(taskQueue.State, latest)
 	}
-	switch taskQueue.State {
+	if taskQueue.Counts.Total > 0 && taskQueue.Counts.Done == taskQueue.Counts.Total {
+		return staticNextAction("all_done", "All Done", "All TASK.md tasks are done.",
+			nextActionLink{Label: "Open TASK.md", URL: taskDocDashboardURL()},
+		)
+	}
+	if latest.State == "none" {
+		return staticNextAction("no_run", "No Runs", "No runnable TASK.md tasks and no jj runs are available for review.",
+			nextActionLink{Label: "Start Web Run", URL: "/run/new"},
+			nextActionLink{Label: "Run History", URL: latest.HistoryURL},
+		)
+	}
+	return staticNextAction("none", "No Action", "No runnable TASK.md tasks require action.",
+		nextActionLink{Label: "Open TASK.md", URL: taskDocDashboardURL()},
+		nextActionLink{Label: "Run History", URL: latest.HistoryURL},
+	)
+}
+
+func taskQueueUnavailableNextAction(state string, latest latestRunSummary) nextActionSummary {
+	switch state {
 	case "missing":
-		return nextActionSummary{
-			State:   "task_missing",
-			Label:   "TASK.md Missing",
-			Message: "docs/TASK.md is unavailable.",
-			Links:   nextActionLinks(nextActionLink{Label: "Start Web Run", URL: "/run/new"}),
-		}
+		return staticNextAction("task_missing", "TASK.md Missing", "docs/TASK.md is unavailable.",
+			nextActionLink{Label: "Start Web Run", URL: "/run/new"},
+		)
 	case "denied", "unavailable":
-		return nextActionSummary{
-			State:   "task_unavailable",
-			Label:   "TASK.md Unavailable",
-			Message: "TASK.md cannot be read through the workspace guard.",
-			Links:   nextActionLinks(nextActionLink{Label: "Start Web Run", URL: "/run/new"}),
-		}
+		return staticNextAction("task_unavailable", "TASK.md Unavailable", "TASK.md cannot be read through the workspace guard.",
+			nextActionLink{Label: "Start Web Run", URL: "/run/new"},
+		)
 	case "unknown":
-		return nextActionSummary{
-			State:   "task_unknown",
-			Label:   "TASK.md Unknown",
-			Message: "TASK.md does not contain a recognized runnable task summary.",
-			Links:   nextActionLinks(nextActionLink{Label: "Open TASK.md", URL: taskDocDashboardURL()}),
-		}
+		return staticNextAction("task_unknown", "TASK.md Unknown", "TASK.md does not contain a recognized runnable task summary.",
+			nextActionLink{Label: "Open TASK.md", URL: taskDocDashboardURL()},
+		)
 	default:
-		return nextActionSummary{
-			State:   "unknown",
-			Label:   "Next Action Unknown",
-			Message: "Next action state is unavailable.",
-			Links:   nextActionLinks(nextActionLink{Label: "Run History", URL: latest.HistoryURL}),
-		}
+		return staticNextAction("unknown", "Next Action Unknown", "Next action state is unavailable.",
+			nextActionLink{Label: "Run History", URL: latest.HistoryURL},
+		)
+	}
+}
+
+func staticNextAction(state, label, message string, links ...nextActionLink) nextActionSummary {
+	return nextActionSummary{
+		State:   state,
+		Label:   label,
+		Message: message,
+		Links:   nextActionLinks(links...),
 	}
 }
 

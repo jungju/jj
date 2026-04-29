@@ -1830,6 +1830,34 @@
       "updated_at": "2026-04-29T01:24:11Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Reduce duplicated or unnecessarily nested dashboard-root next-action presentation logic in one narrow area.",
+        "Consume only existing sanitized dashboard DTO/helper output, guarded URL decisions, or already-safe labels.",
+        "Preserve dashboard-root next-action summary behavior, including labels, ordering, guarded links, empty states, denied states, unavailable states, and unknown states.",
+        "Preserve surrounding dashboard-root TASK summary, Latest Run, Project Docs, Recent Runs, Evaluation Findings, Active Run, and Validation Status behavior where touched.",
+        "Do not read or render raw manifests, artifact bodies, commands, environment values, diffs, validation output, planner handoff payloads, TASK.md bodies, EVAL.md bodies, document bodies, arbitrary file paths, unsafe paths, configured secrets, token-like values, or omission placeholders.",
+        "Do not introduce new CLI flags, dashboard pages, routes, manifest schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw export behavior, visual redesign, or user-facing output semantics.",
+        "Pass focused dashboard next-action serve tests where available or newly added, go test ./internal/serve, go test ./internal/cli ./internal/serve, git diff --check, go test ./..., and ./scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t44",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T01:26:39Z",
+      "created_by_run": "autopilot-20260428-160202-t44",
+      "created_by_turn": null,
+      "id": "TASK-0065",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active .jj/next-intent.md asks for code refactoring and simplification. A narrow dashboard-root next-action presentation cleanup is the best next refactor because it targets remaining sanitized presentation complexity without reopening completed security or bugfix work and can be completed in one implementation turn.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard next-action presentation logic",
+      "updated_at": "2026-04-29T01:33:57Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
