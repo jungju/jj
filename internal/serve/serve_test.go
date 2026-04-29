@@ -1601,6 +1601,52 @@ func TestDashboardValidationStatusUnavailableUnknownDeniedAndNoneStatesAreSafe(t
 	}
 }
 
+func TestDashboardValidationStatusVisibleItemGuardedActionsAreDeterministic(t *testing.T) {
+	labels, ok := runSummaryLabelsFor(runLink{
+		ID:        "20260429-120000-validation",
+		Status:    "complete",
+		StartedAt: "not-a-time",
+	})
+	if !ok {
+		t.Fatal("expected safe validation-status labels")
+	}
+	labels.DetailURL = "/runs/../../secret"
+	labels.AuditURL = "/runs/audit?run=../../secret"
+	item := validationStatusVisibleItem(validationStatusDisplayData{
+		RunLabels:       labels,
+		ValidationState: "passed",
+		CountsLabel:     "commands 2 · passed 1 · failed 1",
+	})
+	if item.RunID != "20260429-120000-validation" ||
+		item.ValidationState != "passed" ||
+		item.CountsLabel != "commands 2 · passed 1 · failed 1" ||
+		item.TimestampLabel != "unknown" {
+		t.Fatalf("validation-status visible item labels changed: %#v", item)
+	}
+	if item.DetailURL != "/runs/20260429-120000-validation" || item.AuditURL != "/runs/audit?run=20260429-120000-validation" {
+		t.Fatalf("validation-status visible item links were not guarded from the run ID: %#v", item)
+	}
+	requireDashboardRunActions(t, item.Actions,
+		dashboardRunActionLink{Label: "Run detail", URL: "/runs/20260429-120000-validation"},
+		dashboardRunActionLink{Label: "Audit export", URL: "/runs/audit?run=20260429-120000-validation"},
+	)
+
+	unsafe := validationStatusVisibleItem(validationStatusDisplayData{
+		RunLabels:       runSummaryLabels{RunID: "sk-proj-validationvisible1234567890", TimestampLabel: "token=sk-proj-validationvisible1234567890"},
+		ValidationState: "token=sk-proj-validationvisible1234567890",
+		CountsLabel:     "token=sk-proj-validationvisible1234567890",
+	})
+	if unsafe.RunID != "" ||
+		unsafe.ValidationState != "unknown" ||
+		unsafe.CountsLabel != "unsafe value removed" ||
+		unsafe.TimestampLabel != "unsafe value removed" ||
+		unsafe.DetailURL != "" ||
+		unsafe.AuditURL != "" ||
+		len(unsafe.Actions) != 0 {
+		t.Fatalf("unsafe validation-status visible item should render deterministic safe labels: %#v", unsafe)
+	}
+}
+
 func TestSanitizedInvalidRunPresentationStateUsesFixedLabels(t *testing.T) {
 	secret := "sk-proj-invalidrunstate1234567890"
 	cases := []struct {

@@ -419,6 +419,12 @@ type dashboardRunActionLink struct {
 	URL   string
 }
 
+type dashboardRunLinks struct {
+	RunID     string
+	DetailURL string
+	AuditURL  string
+}
+
 type dashboardRunActionKind string
 
 const (
@@ -3798,18 +3804,16 @@ func activeRunDisplayDataForRun(run runLink) (activeRunDisplayData, bool) {
 }
 
 func activeRunVisibleItem(data activeRunDisplayData) activeRunItem {
-	runID := latestRunIDLabel(data.RunLabels.RunID)
-	detailURL := guardedRunDetailURL(runID)
-	auditURL := guardedRunAuditURL(runID)
+	links := dashboardGuardedRunLinks(data.RunLabels.RunID)
 	return activeRunItem{
-		RunID:            runID,
+		RunID:            links.RunID,
 		Status:           activeRunSafeStatusToken(data.Status),
 		ProviderOrResult: activeRunProviderOrResultLabel(data.ProviderOrResult),
 		EvaluationState:  activeRunEvaluationLabel(data.EvaluationState),
 		TimestampLabel:   activeRunTimestampLabel(data.RunLabels.TimestampLabel),
-		DetailURL:        detailURL,
-		AuditURL:         auditURL,
-		Actions:          activeRunActions(detailURL, auditURL),
+		DetailURL:        links.DetailURL,
+		AuditURL:         links.AuditURL,
+		Actions:          activeRunActions(links.DetailURL, links.AuditURL),
 	}
 }
 
@@ -4027,17 +4031,15 @@ func validationStatusItemFromRun(run runLink) (validationStatusItem, bool) {
 }
 
 func validationStatusVisibleItem(data validationStatusDisplayData) validationStatusItem {
-	runID := latestRunIDLabel(data.RunLabels.RunID)
-	detailURL := guardedRunDetailURL(runID)
-	auditURL := guardedRunAuditURL(runID)
+	links := dashboardGuardedRunLinks(data.RunLabels.RunID)
 	return validationStatusItem{
-		RunID:           runID,
+		RunID:           links.RunID,
 		ValidationState: validationStatusSummaryState(data.ValidationState),
 		CountsLabel:     validationStatusSafeCountsLabel(data.CountsLabel),
 		TimestampLabel:  validationStatusTimestampLabel(data.RunLabels.TimestampLabel),
-		DetailURL:       detailURL,
-		AuditURL:        auditURL,
-		Actions:         validationStatusActions(detailURL, auditURL),
+		DetailURL:       links.DetailURL,
+		AuditURL:        links.AuditURL,
+		Actions:         validationStatusActions(links.DetailURL, links.AuditURL),
 	}
 }
 
@@ -5229,6 +5231,18 @@ func guardedRunAuditURL(runID string) string {
 		return ""
 	}
 	return "/runs/audit?run=" + template.URLQueryEscaper(runID)
+}
+
+func dashboardGuardedRunLinks(runID string) dashboardRunLinks {
+	runID = latestRunIDLabel(runID)
+	if runID == "" {
+		return dashboardRunLinks{}
+	}
+	return dashboardRunLinks{
+		RunID:     runID,
+		DetailURL: guardedRunDetailURL(runID),
+		AuditURL:  guardedRunAuditURL(runID),
+	}
 }
 
 func nextActionSummaryFromSummaries(taskQueue taskQueueSummary, latest latestRunSummary) nextActionSummary {
