@@ -2539,6 +2539,33 @@
       "updated_at": "2026-04-29T06:50:08Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Dashboard-root Recent Runs item and fallback presentation construction is centralized or simplified through narrow unexported helper logic only where behavior is identical.",
+        "The helper consumes only existing sanitized run summary DTO/helper output, guarded URL decisions, fixed safe labels, timestamps already normalized by existing code, and already-safe state metadata.",
+        "Dashboard Recent Runs labels, ordering, visibility, spacing, guarded URLs, empty fallback, denied, unavailable, unknown, none, malformed, partial, hostile-label, token-like, tied timestamp, and missing timestamp behavior remain unchanged.",
+        "No raw manifest, artifact body, raw path, command text, environment value, diff body, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, unsafe file read, new route, CLI flag, schema field, config behavior, pagination, scanner, upload, raw export, visual redesign, or user-facing semantic change is introduced.",
+        "Focused serve coverage for Recent Runs ordering, fallback, guarded-link, and sanitized invalid metadata behavior is preserved or strengthened.",
+        "Validation passes: gofmt on touched Go files, focused Recent Runs serve tests, go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t70",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T06:52:15Z",
+      "created_by_run": "autopilot-20260428-160202-t70",
+      "created_by_turn": null,
+      "id": "TASK-0091",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent override asks for code refactoring and simplification. Recent Runs is the next small sanitized presentation surface not covered by recent completed helper refactors, and there is no current blocker, failing validation, CI issue, disclosure, or boundary evidence requiring bugfix or security work.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard Recent Runs presentation construction",
+      "updated_at": "2026-04-29T07:04:24Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

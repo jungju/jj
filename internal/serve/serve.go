@@ -192,6 +192,27 @@ type recentRunsSummary struct {
 	Items      []recentRunItem
 }
 
+type dashboardRecentRunsView struct {
+	State         string
+	Items         []dashboardRecentRunItem
+	HistoryAction *dashboardRunActionLink
+	Fallback      dashboardRecentRunsFallbackView
+}
+
+type dashboardRecentRunItem struct {
+	RunID        string
+	DetailURL    string
+	StateLine    string
+	ProviderLine string
+	Actions      []dashboardRunActionLink
+	Message      string
+}
+
+type dashboardRecentRunsFallbackView struct {
+	Message       string
+	HistoryAction *dashboardRunActionLink
+}
+
 type activeRunsSummary struct {
 	State   string
 	Message string
@@ -761,7 +782,7 @@ type pageData struct {
 	SelectedRun        string
 	TaskSummary        dashboardTaskSummaryView
 	LatestRun          latestRunSummary
-	RecentRuns         recentRunsSummary
+	RecentRuns         dashboardRecentRunsView
 	EvaluationFindings evaluationFindingsSummary
 	ValidationStatus   validationStatusSummary
 	NextAction         nextActionSummary
@@ -954,7 +975,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	runs = s.sanitizeRunHistoryLinks(runs)
 	latestRun := latestRunSummaryFromRuns(runs)
-	recentRuns := recentRunsSummaryFromRuns(runs)
+	recentRuns := dashboardRecentRuns(recentRunsSummaryFromRuns(runs))
 	evaluationFindings := evaluationFindingsSummaryFromRuns(runs)
 	validationStatus := validationStatusSummaryFromRuns(runs)
 	readiness := s.workspaceReadiness()
@@ -3479,6 +3500,64 @@ func recentRunsStateMessage(state string) string {
 		return fmt.Sprintf("Showing up to %d recent guarded runs.", dashboardRecentRunsLimit)
 	}
 	return "No jj runs found."
+}
+
+// dashboardRecentRuns expects the shared sanitized Recent Runs summary used by
+// the dashboard and CLI and only combines already-safe presentation labels.
+func dashboardRecentRuns(summary recentRunsSummary) dashboardRecentRunsView {
+	historyAction := dashboardRecentRunHistoryAction(summary.HistoryURL)
+	return dashboardRecentRunsView{
+		State:         summary.State,
+		Items:         dashboardRecentRunItems(summary.Items),
+		HistoryAction: historyAction,
+		Fallback:      dashboardRecentRunsFallback(summary, historyAction),
+	}
+}
+
+func dashboardRecentRunItems(items []recentRunItem) []dashboardRecentRunItem {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]dashboardRecentRunItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, dashboardRecentRunItemView(item))
+	}
+	return out
+}
+
+func dashboardRecentRunItemView(item recentRunItem) dashboardRecentRunItem {
+	return dashboardRecentRunItem{
+		RunID:        item.RunID,
+		DetailURL:    item.DetailURL,
+		StateLine:    dashboardRecentRunStateLine(item),
+		ProviderLine: dashboardRecentRunProviderLine(item),
+		Actions:      item.Actions,
+		Message:      item.Message,
+	}
+}
+
+func dashboardRecentRunsFallback(summary recentRunsSummary, historyAction *dashboardRunActionLink) dashboardRecentRunsFallbackView {
+	return dashboardRecentRunsFallbackView{
+		Message:       summary.Message,
+		HistoryAction: historyAction,
+	}
+}
+
+func dashboardRecentRunStateLine(item recentRunItem) string {
+	return item.State + " · " + item.Status + " · " + item.TimestampLabel
+}
+
+func dashboardRecentRunProviderLine(item recentRunItem) string {
+	return "provider/result " + item.ProviderOrResult + " · evaluation " + item.EvaluationState
+}
+
+func dashboardRecentRunHistoryAction(historyURL string) *dashboardRunActionLink {
+	links := dashboardRunActionLinks(dashboardRunAction(dashboardRunActionHistory, historyURL))
+	if len(links) == 0 {
+		return nil
+	}
+	link := links[0]
+	return &link
 }
 
 func recentRunItemFromRun(run runLink) (recentRunItem, bool) {
@@ -7509,17 +7588,17 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          <ul>
 	          {{range .RecentRuns.Items}}
 	            <li>
-	              {{if .DetailURL}}<a href="{{.DetailURL}}">{{.RunID}}</a>{{else}}<strong>{{.RunID}}</strong>{{end}} <span class="muted">{{.State}} · {{.Status}} · {{.TimestampLabel}}</span>
-	              <div class="muted">provider/result {{.ProviderOrResult}} · evaluation {{.EvaluationState}}</div>
+	              {{if .DetailURL}}<a href="{{.DetailURL}}">{{.RunID}}</a>{{else}}<strong>{{.RunID}}</strong>{{end}} <span class="muted">{{.StateLine}}</span>
+	              <div class="muted">{{.ProviderLine}}</div>
 	              <div>{{range $i, $link := .Actions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
 	              {{if .Message}}<div class="error">{{.Message}}</div>{{end}}
 	            </li>
 	          {{end}}
 	          </ul>
-	          <p><a href="{{.RecentRuns.HistoryURL}}">Run history</a></p>
+	          {{with .RecentRuns.HistoryAction}}<p><a href="{{.URL}}">{{.Label}}</a></p>{{end}}
 	        {{else}}
-	          <p class="muted">{{.RecentRuns.Message}}</p>
-	          <p><a href="{{.RecentRuns.HistoryURL}}">Run history</a></p>
+	          <p class="muted">{{.RecentRuns.Fallback.Message}}</p>
+	          {{with .RecentRuns.Fallback.HistoryAction}}<p><a href="{{.URL}}">{{.Label}}</a></p>{{end}}
 	        {{end}}
 	      </section>
 	      <section>

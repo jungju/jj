@@ -263,6 +263,31 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !indexCalls["recentRunsSummaryFromRuns"] {
 		t.Fatalf("handleIndex must build recent-runs data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
+	if !indexCalls["dashboardRecentRuns"] {
+		t.Fatalf("handleIndex must build dashboard Recent Runs presentation through the centralized helper; calls=%v", sortedCallNames(indexCalls))
+	}
+	recentRunsCalls := serveFunctionCalls(t, funcs, "dashboardRecentRuns")
+	for _, requiredCall := range []string{"dashboardRecentRunItems", "dashboardRecentRunsFallback", "dashboardRecentRunHistoryAction"} {
+		if !recentRunsCalls[requiredCall] {
+			t.Fatalf("dashboardRecentRuns must centralize Recent Runs presentation through %s; calls=%v", requiredCall, sortedCallNames(recentRunsCalls))
+		}
+	}
+	recentRunsItemCalls := serveFunctionCalls(t, funcs, "dashboardRecentRunItems")
+	if !recentRunsItemCalls["dashboardRecentRunItemView"] {
+		t.Fatalf("dashboardRecentRunItems must build Recent Runs items through the item view helper; calls=%v", sortedCallNames(recentRunsItemCalls))
+	}
+	recentRunItemViewCalls := serveFunctionCalls(t, funcs, "dashboardRecentRunItemView")
+	for _, requiredCall := range []string{"dashboardRecentRunStateLine", "dashboardRecentRunProviderLine"} {
+		if !recentRunItemViewCalls[requiredCall] {
+			t.Fatalf("dashboardRecentRunItemView must centralize %s; calls=%v", requiredCall, sortedCallNames(recentRunItemViewCalls))
+		}
+	}
+	recentRunHistoryActionCalls := serveFunctionCalls(t, funcs, "dashboardRecentRunHistoryAction")
+	for _, requiredCall := range []string{"dashboardRunAction", "dashboardRunActionLinks"} {
+		if !recentRunHistoryActionCalls[requiredCall] {
+			t.Fatalf("dashboardRecentRunHistoryAction must guard Recent Runs history links through %s; calls=%v", requiredCall, sortedCallNames(recentRunHistoryActionCalls))
+		}
+	}
 	if !indexCalls["evaluationFindingsSummaryFromRuns"] {
 		t.Fatalf("handleIndex must build evaluation-findings data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
@@ -424,6 +449,13 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"handleRunsIndex",
 		"latestRunSummaryFromRuns",
 		"recentRunsSummaryFromRuns",
+		"dashboardRecentRuns",
+		"dashboardRecentRunItems",
+		"dashboardRecentRunItemView",
+		"dashboardRecentRunsFallback",
+		"dashboardRecentRunStateLine",
+		"dashboardRecentRunProviderLine",
+		"dashboardRecentRunHistoryAction",
 		"recentRunItemFromRun",
 		"evaluationFindingsSummaryFromRuns",
 		"evaluationFindingsSummaryForRun",

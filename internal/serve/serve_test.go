@@ -712,6 +712,10 @@ func TestDashboardRecentRunsSummaryDisplayDataAndActionsAreDeterministic(t *test
 	if summary.State != "available" || summary.Message != "Showing up to 5 recent guarded runs." {
 		t.Fatalf("recent runs summary state changed: %#v", summary)
 	}
+	view := dashboardRecentRuns(summary)
+	if view.State != "available" || len(view.Items) != 5 || view.HistoryAction == nil || *view.HistoryAction != (dashboardRunActionLink{Label: "Run history", URL: "/runs"}) {
+		t.Fatalf("recent runs dashboard view changed: %#v", view)
+	}
 	gotIDs := make([]string, 0, len(summary.Items))
 	for _, item := range summary.Items {
 		gotIDs = append(gotIDs, item.RunID)
@@ -742,6 +746,9 @@ func TestDashboardRecentRunsSummaryDisplayDataAndActionsAreDeterministic(t *test
 	if tied.RunID != "20260429-120000-tie-b" || tied.TimestampLabel != "2026-04-29T12:00:00Z" || tied.ProviderOrResult != "codex" {
 		t.Fatalf("tied recent run display changed: %#v", tied)
 	}
+	if view.Items[1].StateLine != "available · complete · 2026-04-29T12:00:00Z" || view.Items[1].ProviderLine != "provider/result codex · evaluation passed" {
+		t.Fatalf("tied recent run presentation changed: %#v", view.Items[1])
+	}
 	requireDashboardRunActions(t, tied.Actions,
 		dashboardRunActionLink{Label: "Run detail", URL: "/runs/20260429-120000-tie-b"},
 		dashboardRunActionLink{Label: "Audit export", URL: "/runs/audit?run=20260429-120000-tie-b"},
@@ -763,6 +770,11 @@ func TestDashboardRecentRunsSummaryDisplayDataAndActionsAreDeterministic(t *test
 	requireDashboardRunActions(t, denied.Items[0].Actions,
 		dashboardRunActionLink{Label: "Run detail", URL: "/runs/20260429-140000-denied"},
 	)
+
+	empty := dashboardRecentRuns(recentRunsSummaryFromRuns(nil))
+	if len(empty.Items) != 0 || empty.Fallback.Message != "No jj runs found." || empty.Fallback.HistoryAction == nil || *empty.Fallback.HistoryAction != (dashboardRunActionLink{Label: "Run history", URL: "/runs"}) {
+		t.Fatalf("recent runs empty fallback changed: %#v", empty)
+	}
 }
 
 func TestDashboardActiveRunShowsSanitizedNonTerminalRunsAndPreservesSections(t *testing.T) {
