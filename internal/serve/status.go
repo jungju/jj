@@ -174,7 +174,7 @@ func (s *Server) StatusSummary() StatusSummary {
 			taskQueue,
 			latest,
 			nextActionSummaryFromSummaries(taskQueue, latest),
-			activeRunsSummary{State: state},
+			activeRunsStateSummary(state),
 			validation,
 		)
 	}

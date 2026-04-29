@@ -2023,6 +2023,33 @@
       "updated_at": "2026-04-29T02:55:41Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Centralize dashboard-root Active Run item construction, state messages, safe labels, timestamp labels, deterministic display data, and guarded link decisions in a narrow helper or equivalent simplified structure.",
+        "Consume only existing sanitized dashboard DTO/helper output, guarded URL decisions, or already-safe labels.",
+        "Preserve existing Active Run labels, ordering, visibility, guarded links, no-active states, unavailable states, unknown states, denied states, malformed metadata handling, partial metadata handling, stale metadata handling, hostile-label handling, token-like handling, missing timestamp behavior, tied timestamp behavior, and surrounding dashboard-root behavior.",
+        "Do not read or render raw manifests, artifact bodies, raw paths, command text, environment values, diffs, validation payloads, planner handoff payloads, TASK.md bodies, EVAL.md bodies, document bodies, configured secrets, token-like values, omission placeholders, arbitrary files, or unsafe paths.",
+        "Do not introduce new dashboard pages, routes, CLI flags, schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw exports, visual redesign, or user-facing output semantic changes.",
+        "Add or preserve focused serve tests for Active Run normal, no-active, unavailable, unknown, denied, malformed or partial metadata, stale metadata, hostile-label, token-like, missing timestamp, and tied timestamp states where practical."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t51",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T02:58:05Z",
+      "created_by_run": "autopilot-20260428-160202-t51",
+      "created_by_turn": null,
+      "id": "TASK-0072",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent override explicitly requests code refactoring, removal of unnecessary code, and simplification of complex structure. No current CI, validation, blocker, disclosure, or boundary evidence justifies security or bugfix work, so the next smallest useful slice is behavior-preserving cleanup of the remaining sanitized dashboard-root Active Run presentation path.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard Active Run presentation logic",
+      "updated_at": "2026-04-29T03:06:05Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

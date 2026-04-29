@@ -188,8 +188,9 @@ type recentRunsSummary struct {
 }
 
 type activeRunsSummary struct {
-	State string
-	Items []activeRunItem
+	State   string
+	Message string
+	Items   []activeRunItem
 }
 
 type validationStatusSummary struct {
@@ -229,6 +230,7 @@ type activeRunItem struct {
 	TimestampLabel   string
 	DetailURL        string
 	AuditURL         string
+	Actions          []dashboardRunActionLink
 }
 
 type validationStatusItem struct {
@@ -3385,8 +3387,48 @@ func recentRunValidationState(run runLink) string {
 	return state
 }
 
+func activeRunsStateSummary(state string) activeRunsSummary {
+	state = activeRunsStateLabel(state)
+	return activeRunsSummary{
+		State:   state,
+		Message: activeRunsStateMessage(state),
+	}
+}
+
+func activeRunsStateLabel(state string) string {
+	switch dashboardCategory(state, "none") {
+	case "available":
+		return "available"
+	case "denied":
+		return "denied"
+	case "unavailable":
+		return "unavailable"
+	case "unknown":
+		return "unknown"
+	case "none":
+		return "none"
+	default:
+		return "unknown"
+	}
+}
+
+func activeRunsStateMessage(state string) string {
+	switch state {
+	case "available":
+		return "Showing active guarded runs."
+	case "denied":
+		return "Active run metadata denied."
+	case "unavailable":
+		return "Active run metadata unavailable."
+	case "unknown":
+		return "Active run metadata unknown."
+	default:
+		return "No active jj runs found."
+	}
+}
+
 func activeRunsSummaryFromRuns(runs []runLink) activeRunsSummary {
-	summary := activeRunsSummary{State: "none"}
+	summary := activeRunsStateSummary("none")
 	candidates := sortedLatestRunCandidates(runs)
 	for _, run := range candidates {
 		item, ok := activeRunItemFromRun(run)
@@ -3396,7 +3438,11 @@ func activeRunsSummaryFromRuns(runs []runLink) activeRunsSummary {
 		summary.Items = append(summary.Items, item)
 	}
 	if len(summary.Items) > 0 {
-		summary.State = "available"
+		summary = activeRunsSummary{
+			State:   "available",
+			Message: activeRunsStateMessage("available"),
+			Items:   summary.Items,
+		}
 	}
 	return summary
 }
@@ -3410,15 +3456,24 @@ func activeRunItemFromRun(run runLink) (activeRunItem, bool) {
 	if status == "" {
 		return activeRunItem{}, false
 	}
+	return activeRunItemFromLabels(labels, status, activeRunProviderOrResult(run, status), activeRunEvaluationState(run)), true
+}
+
+func activeRunItemFromLabels(labels runSummaryLabels, status, providerOrResult, evaluationState string) activeRunItem {
 	return activeRunItem{
 		RunID:            labels.RunID,
 		Status:           status,
-		ProviderOrResult: activeRunProviderOrResult(run, status),
-		EvaluationState:  activeRunEvaluationState(run),
+		ProviderOrResult: providerOrResult,
+		EvaluationState:  evaluationState,
 		TimestampLabel:   labels.TimestampLabel,
 		DetailURL:        labels.DetailURL,
 		AuditURL:         labels.AuditURL,
-	}, true
+		Actions:          activeRunActions(labels),
+	}
+}
+
+func activeRunActions(labels runSummaryLabels) []dashboardRunActionLink {
+	return dashboardRunActions(labels.DetailURL, labels.AuditURL)
 }
 
 func activeRunMetadataConsistent(run runLink) bool {
@@ -6995,7 +7050,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
           <li>
             <a href="{{.DetailURL}}">{{.RunID}}</a> <span class="muted">{{.Status}} · {{.TimestampLabel}}</span>
             <div class="muted">provider/result {{.ProviderOrResult}}{{if .EvaluationState}} · evaluation {{.EvaluationState}}{{end}}</div>
-            <div>{{range $i, $link := dashboardRunActions .DetailURL .AuditURL}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
+            <div>{{range $i, $link := .Actions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
           </li>
         {{end}}
         </ul>

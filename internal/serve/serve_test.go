@@ -864,6 +864,9 @@ func TestDashboardActiveRunNoActiveState(t *testing.T) {
 	if summary.State != "none" || len(summary.Items) != 0 {
 		t.Fatalf("no-active helper state should be deterministic none, got %#v", summary)
 	}
+	if summary.Message != "No active jj runs found." {
+		t.Fatalf("no-active helper message = %q", summary.Message)
+	}
 }
 
 func TestDashboardActiveRunUnsafeMetadataStatesAreSafe(t *testing.T) {
@@ -979,6 +982,16 @@ func TestActiveRunSelectionIsDeterministicForTimestampFallbacksAndTies(t *testin
 	if summary.State != "available" {
 		t.Fatalf("active summary state = %q, want available", summary.State)
 	}
+	if summary.Message != "Showing active guarded runs." {
+		t.Fatalf("active summary message = %q", summary.Message)
+	}
+	requireDashboardRunActions(t, summary.Items[0].Actions,
+		dashboardRunActionLink{Label: "Run detail", URL: "/runs/20260429-160000-id-fallback"},
+		dashboardRunActionLink{Label: "Audit export", URL: "/runs/audit?run=20260429-160000-id-fallback"},
+	)
+	if summary.Items[1].TimestampLabel != "unknown" {
+		t.Fatalf("active run missing timestamp label = %q, want unknown", summary.Items[1].TimestampLabel)
+	}
 
 	unsafe := activeRunsSummaryFromRuns([]runLink{
 		{ID: "sk-proj-activehelper1234567890", Status: "planning"},
@@ -988,6 +1001,9 @@ func TestActiveRunSelectionIsDeterministicForTimestampFallbacksAndTies(t *testin
 	})
 	if unsafe.State != "none" || len(unsafe.Items) != 0 {
 		t.Fatalf("unsafe active metadata should produce deterministic none state: %#v", unsafe)
+	}
+	if unsafe.Message != "No active jj runs found." {
+		t.Fatalf("unsafe active metadata message = %q", unsafe.Message)
 	}
 
 	staleEvaluation := activeRunsSummaryFromRuns([]runLink{
