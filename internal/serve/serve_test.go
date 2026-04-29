@@ -681,6 +681,57 @@ func TestDashboardActiveRunShowsSanitizedNonTerminalRunsAndPreservesSections(t *
 	}
 }
 
+func TestDashboardRootRunSummaryActionsUseGuardedLinks(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "plan.md", "# Plan\n")
+	writeFile(t, dir, "README.md", "# README\n")
+	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n")
+	writeFile(t, dir, "docs/EVAL.md", "# Eval\n")
+	writeFile(t, dir, "docs/TASK.md", "# Tasks\n\n- [ ] TASK-0058 [quality] Simplify dashboard run summaries\n")
+	writeFile(t, dir, ".jj/runs/20260429-130000-complete/manifest.json", `{
+		"run_id":"20260429-130000-complete",
+		"status":"complete",
+		"started_at":"2026-04-29T13:00:00Z",
+		"planner_provider":"openai",
+		"artifacts":{"manifest":"manifest.json"},
+		"validation":{"ran":true,"status":"passed","evidence_status":"recorded","command_count":1,"passed_count":1}
+	}`)
+	writeFile(t, dir, ".jj/runs/20260429-120000-active/manifest.json", `{
+		"run_id":"20260429-120000-active",
+		"status":"planning",
+		"started_at":"2026-04-29T12:00:00Z",
+		"planner_provider":"codex",
+		"artifacts":{"manifest":"manifest.json"},
+		"validation":{"status":"passed","evidence_status":"recorded"}
+	}`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+
+	validation := dashboardValidationStatusSection(t, body)
+	assertDashboardRunActions(t, validation, "20260429-130000-complete")
+	recent := htmlSection(body, "Recent Runs", "Next Action")
+	assertDashboardRunActions(t, recent, "20260429-130000-complete")
+	assertDashboardRunActions(t, recent, "20260429-120000-active")
+	active := dashboardActiveRunSection(t, body)
+	assertDashboardRunActions(t, active, "20260429-120000-active")
+	for name, section := range map[string]string{
+		"validation": validation,
+		"recent":     recent,
+		"active":     active,
+	} {
+		if strings.Contains(section, `href=""`) || strings.Contains(section, "manifest.json") {
+			t.Fatalf("%s run-summary actions rendered unsafe data:\n%s", name, section)
+		}
+	}
+}
+
 func TestDashboardActiveRunNoActiveState(t *testing.T) {
 	dir := newTestWorkspace(t)
 	server := newTestServer(t, dir, "")
@@ -5131,6 +5182,14 @@ func dashboardActiveRunSection(t *testing.T, body string) string {
 		t.Fatalf("dashboard missing Active Run section:\n%s", body)
 	}
 	return htmlSection(body, "Active Run", "State Files")
+}
+
+func assertDashboardRunActions(t *testing.T, section, runID string) {
+	t.Helper()
+	want := `<a href="/runs/` + runID + `">Run detail</a> · <a href="/runs/audit?run=` + runID + `">Audit export</a>`
+	if !strings.Contains(section, want) {
+		t.Fatalf("dashboard run-summary actions missing %q:\n%s", want, section)
+	}
 }
 
 func runDetailValidationEvidenceSection(t *testing.T, body string) string {

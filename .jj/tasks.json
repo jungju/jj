@@ -1639,6 +1639,34 @@
       "updated_at": "2026-04-29T00:11:31Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Reduce duplicated or unnecessarily nested sanitized dashboard-root run-summary presentation logic in one narrow area only.",
+        "Preserve dashboard root behavior for Latest Run, Recent Runs, Active Run, Validation Status, TASK summary, next action, Project Docs, and Evaluation Findings where touched, including labels, ordering, guarded links, empty states, and denied, unknown, or unavailable states.",
+        "Consume only existing sanitized DTO/helper output or already-safe labels.",
+        "Do not introduce raw manifest, artifact, command, environment, diff, validation output, planner handoff, TASK.md, EVAL.md, document body, arbitrary file, unsafe path, configured secret, token-like value, or omission placeholder reads or rendering.",
+        "Do not introduce new CLI flags, dashboard pages, routes, manifest schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw export behavior, visual redesign, or user-facing output semantics.",
+        "Keep malformed, denied, hostile-label, token-like, stale, partial, missing timestamp, tied timestamp, and internally inconsistent metadata states deterministic and sanitized in the touched area.",
+        "Validate with focused dashboard-root serve tests for the touched area, go test ./internal/serve, go test ./internal/cli ./internal/serve, git diff --check, go test ./..., and scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t37",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T00:13:13Z",
+      "created_by_run": "autopilot-20260428-160202-t37",
+      "created_by_turn": null,
+      "id": "TASK-0058",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent explicitly asks for code refactoring that removes unnecessary code and simplifies complex structure. Current evidence shows no failing validation, blocker, CI failure, or security regression, and recent completed work already simplified CLI and run-detail paths. The next useful narrow refactor is dashboard-root sanitized run-summary presentation logic, preserving all user-facing behavior and security boundaries.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard root presentation logic",
+      "updated_at": "2026-04-29T00:22:29Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

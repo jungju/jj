@@ -300,6 +300,11 @@ type nextActionLink struct {
 	URL   string
 }
 
+type dashboardRunActionLink struct {
+	Label string
+	URL   string
+}
+
 type dashboardManifest struct {
 	RunID                    string `json:"run_id"`
 	Status                   string `json:"status"`
@@ -4667,6 +4672,41 @@ func nextActionURL(raw string) string {
 	}
 }
 
+func dashboardRunActions(detailURL, auditURL string) []dashboardRunActionLink {
+	links := make([]dashboardRunActionLink, 0, 2)
+	if url := dashboardRunDetailActionURL(detailURL); url != "" {
+		links = append(links, dashboardRunActionLink{Label: "Run detail", URL: url})
+	}
+	if url := dashboardRunAuditActionURL(auditURL); url != "" {
+		links = append(links, dashboardRunActionLink{Label: "Audit export", URL: url})
+	}
+	return links
+}
+
+func dashboardRunDetailActionURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "/runs/") || strings.HasPrefix(raw, "/runs/audit?run=") {
+		return ""
+	}
+	runID := strings.TrimPrefix(raw, "/runs/")
+	if latestRunIDLabel(runID) == "" {
+		return ""
+	}
+	return raw
+}
+
+func dashboardRunAuditActionURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "/runs/audit?run=") {
+		return ""
+	}
+	runID := strings.TrimPrefix(raw, "/runs/audit?run=")
+	if latestRunIDLabel(runID) == "" {
+		return ""
+	}
+	return raw
+}
+
 func taskDocDashboardURL() string {
 	return "/doc?path=" + workspaceTaskMarkdownPath
 }
@@ -5996,7 +6036,8 @@ func renderMarkdown(content string) template.HTML {
 }
 
 var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
-	"q": func(s string) string { return template.URLQueryEscaper(s) },
+	"dashboardRunActions": dashboardRunActions,
+	"q":                   func(s string) string { return template.URLQueryEscaper(s) },
 }).Parse(`<!doctype html>
 <html lang="ko">
 <head>
@@ -6498,7 +6539,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 		          <li>
 		            <a href="{{.DetailURL}}">{{.RunID}}</a> <span class="muted">validation {{.ValidationState}} · {{.TimestampLabel}}</span>
 		            {{if .CountsLabel}}<div class="muted">{{.CountsLabel}}</div>{{end}}
-		            <div><a href="{{.DetailURL}}">Run detail</a>{{if .AuditURL}} · <a href="{{.AuditURL}}">Audit export</a>{{end}}</div>
+		            <div>{{range $i, $link := dashboardRunActions .DetailURL .AuditURL}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
 		          </li>
 		        {{end}}
 		        </ul>
@@ -6533,7 +6574,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	            <li>
 	              {{if .DetailURL}}<a href="{{.DetailURL}}">{{.RunID}}</a>{{else}}<strong>{{.RunID}}</strong>{{end}} <span class="muted">{{.State}} · {{.Status}} · {{.TimestampLabel}}</span>
 	              <div class="muted">provider/result {{.ProviderOrResult}} · evaluation {{.EvaluationState}}</div>
-	              <div><a href="{{.DetailURL}}">Run detail</a>{{if .AuditURL}} · <a href="{{.AuditURL}}">Audit export</a>{{end}}</div>
+	              <div>{{range $i, $link := dashboardRunActions .DetailURL .AuditURL}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
 	              {{if .Message}}<div class="error">{{.Message}}</div>{{end}}
 	            </li>
 	          {{end}}
@@ -6598,7 +6639,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
           <li>
             <a href="{{.DetailURL}}">{{.RunID}}</a> <span class="muted">{{.Status}} · {{.TimestampLabel}}</span>
             <div class="muted">provider/result {{.ProviderOrResult}}{{if .EvaluationState}} · evaluation {{.EvaluationState}}{{end}}</div>
-            <div><a href="{{.DetailURL}}">Run detail</a>{{if .AuditURL}} · <a href="{{.AuditURL}}">Audit export</a>{{end}}</div>
+            <div>{{range $i, $link := dashboardRunActions .DetailURL .AuditURL}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
           </li>
         {{end}}
         </ul>
