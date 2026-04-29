@@ -344,6 +344,13 @@ type dashboardTaskSummaryView struct {
 	EmptyMessage string
 }
 
+type dashboardTaskSummaryDecision struct {
+	MessageFallback string
+	MessageMuted    bool
+	AllowNext       bool
+	EmptyMessage    string
+}
+
 type dashboardRunActionLink struct {
 	Label string
 	URL   string
@@ -720,7 +727,7 @@ type pageData struct {
 	Title              string
 	CWD                string
 	SelectedRun        string
-	TaskQueue          taskQueueSummary
+	TaskSummary        dashboardTaskSummaryView
 	LatestRun          latestRunSummary
 	RecentRuns         recentRunsSummary
 	EvaluationFindings evaluationFindingsSummary
@@ -920,13 +927,14 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	validationStatus := validationStatusSummaryFromRuns(runs)
 	readiness := s.workspaceReadiness()
 	taskQueue := s.taskQueueSummary()
+	taskSummary := dashboardTaskSummary(taskQueue)
 	nextAction := nextActionSummaryFromSummaries(taskQueue, latestRun)
 	projectDocs := s.projectDocShortcuts()
 	s.render(w, pageData{
 		Title:              "jj dashboard",
 		CWD:                displayWorkspace,
 		SelectedRun:        s.runID,
-		TaskQueue:          taskQueue,
+		TaskSummary:        taskSummary,
 		LatestRun:          latestRun,
 		RecentRuns:         recentRuns,
 		EvaluationFindings: evaluationFindings,
@@ -5130,20 +5138,42 @@ func nextActionURL(raw string) string {
 }
 
 func dashboardTaskSummary(summary taskQueueSummary) dashboardTaskSummaryView {
+	decision := dashboardTaskSummaryDecisionFor(summary)
+	next := dashboardTaskSummaryNextForDecision(summary.Next, decision)
 	view := dashboardTaskSummaryView{
-		Message:      dashboardTaskSummaryMessage(summary.Message, "TASK.md unavailable."),
-		MessageMuted: !summary.Available,
+		Message:      dashboardTaskSummaryMessage(summary.Message, decision.MessageFallback),
+		MessageMuted: decision.MessageMuted,
+		Next:         next,
+		EmptyMessage: dashboardTaskSummaryEmptyMessage(decision, next),
 	}
-	if !summary.Available {
-		return view
-	}
-	view.Message = dashboardTaskSummaryMessage(summary.Message, "TASK.md task summary unknown.")
-	if task := dashboardTaskSummaryNext(summary.Next); task != nil {
-		view.Next = task
-		return view
-	}
-	view.EmptyMessage = "No runnable tasks."
 	return view
+}
+
+func dashboardTaskSummaryDecisionFor(summary taskQueueSummary) dashboardTaskSummaryDecision {
+	switch dashboardTaskSummaryState(summary) {
+	case "available":
+		return dashboardTaskSummaryDecision{
+			MessageFallback: "TASK.md task summary unknown.",
+			AllowNext:       true,
+			EmptyMessage:    "No runnable tasks.",
+		}
+	default:
+		return dashboardTaskSummaryDecision{
+			MessageFallback: "TASK.md unavailable.",
+			MessageMuted:    true,
+		}
+	}
+}
+
+func dashboardTaskSummaryState(summary taskQueueSummary) string {
+	if summary.Available {
+		return "available"
+	}
+	state := taskQueueState(summary.State, "unavailable")
+	if state == "available" {
+		return "unavailable"
+	}
+	return state
 }
 
 func dashboardTaskSummaryMessage(message, fallback string) string {
@@ -5155,6 +5185,13 @@ func dashboardTaskSummaryMessage(message, fallback string) string {
 	return text
 }
 
+func dashboardTaskSummaryNextForDecision(task *taskQueueItem, decision dashboardTaskSummaryDecision) *taskQueueItem {
+	if !decision.AllowNext {
+		return nil
+	}
+	return dashboardTaskSummaryNext(task)
+}
+
 func dashboardTaskSummaryNext(task *taskQueueItem) *taskQueueItem {
 	if task == nil {
 		return nil
@@ -5164,6 +5201,13 @@ func dashboardTaskSummaryNext(task *taskQueueItem) *taskQueueItem {
 		return nil
 	}
 	return &safe
+}
+
+func dashboardTaskSummaryEmptyMessage(decision dashboardTaskSummaryDecision, next *taskQueueItem) string {
+	if decision.EmptyMessage == "" || next != nil {
+		return ""
+	}
+	return decision.EmptyMessage
 }
 
 func dashboardRunActions(detailURL, auditURL string) []dashboardRunActionLink {
@@ -6696,7 +6740,6 @@ func renderMarkdown(content string) template.HTML {
 var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	"dashboardLatestRunActions": dashboardLatestRunActions,
 	"dashboardRunActions":       dashboardRunActions,
-	"dashboardTaskSummary":      dashboardTaskSummary,
 	"q":                         func(s string) string { return template.URLQueryEscaper(s) },
 }).Parse(`<!doctype html>
 <html lang="ko">
@@ -7157,7 +7200,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	    {{else}}
 	      <section>
 	        <h2>Current TASK</h2>
-	        {{$taskSummary := dashboardTaskSummary .TaskQueue}}
+	        {{$taskSummary := .TaskSummary}}
 	        {{if $taskSummary.MessageMuted}}<p class="muted">{{$taskSummary.Message}}</p>{{else}}<p>{{$taskSummary.Message}}</p>{{end}}
 	        {{with $taskSummary.Next}}
 	          <p>Next: <strong>{{.ID}}</strong> <span class="muted">{{.Category}} · {{.Status}}</span> {{.Title}}</p>

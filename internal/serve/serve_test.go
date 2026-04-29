@@ -1671,6 +1671,21 @@ func TestDashboardTaskSummaryPreservesNormalAndFallbackStates(t *testing.T) {
 		t.Fatalf("denied task summary fallback changed: %#v", denied)
 	}
 
+	unavailable := dashboardTaskSummary(unavailableTaskQueueSummary("unavailable"))
+	if !unavailable.MessageMuted || unavailable.Message != "TASK.md unavailable." || unavailable.Next != nil || unavailable.EmptyMessage != "" {
+		t.Fatalf("unavailable task summary fallback changed: %#v", unavailable)
+	}
+
+	unknown := dashboardTaskSummary(unknownTaskQueueSummary())
+	if !unknown.MessageMuted || unknown.Message != "TASK.md task summary unknown." || unknown.Next != nil || unknown.EmptyMessage != "" {
+		t.Fatalf("unknown task summary fallback changed: %#v", unknown)
+	}
+
+	inconsistent := dashboardTaskSummary(taskQueueSummary{State: "available"})
+	if !inconsistent.MessageMuted || inconsistent.Message != "TASK.md unavailable." || inconsistent.Next != nil || inconsistent.EmptyMessage != "" {
+		t.Fatalf("inconsistent task summary fallback changed: %#v", inconsistent)
+	}
+
 	empty := dashboardTaskSummary(taskQueueSummary{
 		State:     "available",
 		Available: true,
@@ -1678,6 +1693,19 @@ func TestDashboardTaskSummaryPreservesNormalAndFallbackStates(t *testing.T) {
 	})
 	if empty.MessageMuted || empty.EmptyMessage != "No runnable tasks." || empty.Next != nil {
 		t.Fatalf("empty task summary fallback changed: %#v", empty)
+	}
+
+	partial := dashboardTaskSummary(taskQueueSummary{
+		State:     "available",
+		Available: true,
+		Next: &taskQueueItem{
+			ID:     "invalid task id",
+			Status: "maybe",
+			Title:  "partial metadata",
+		},
+	})
+	if partial.Message != "TASK.md task summary unknown." || partial.Next != nil || partial.EmptyMessage != "No runnable tasks." {
+		t.Fatalf("partial task summary fallback changed: %#v", partial)
 	}
 
 	secret := "sk-proj-tasksummaryhelper1234567890"
@@ -1754,6 +1782,29 @@ func TestDashboardTaskMarkdownMissingMalformedAndDeniedStatesAreSafe(t *testing.
 		taskSection := htmlSection(body, "Current TASK", "Latest Run")
 		if !strings.Contains(taskSection, "TASK.md unavailable.") {
 			t.Fatalf("missing TASK.md state not shown:\n%s", taskSection)
+		}
+	})
+
+	t.Run("unavailable", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "docs", "TASK.md"), 0o755); err != nil {
+			t.Fatalf("mkdir TASK dir: %v", err)
+		}
+		server := newTestServer(t, dir, "")
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		server.Handler().ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, body)
+		}
+		taskSection := htmlSection(body, "Current TASK", "Latest Run")
+		if !strings.Contains(taskSection, "TASK.md unavailable.") {
+			t.Fatalf("unavailable TASK.md state not shown:\n%s", taskSection)
+		}
+		if strings.Contains(taskSection, `href="/doc?path=docs/TASK.md"`) {
+			t.Fatalf("unavailable TASK.md state should not render a task-summary document link:\n%s", taskSection)
 		}
 	})
 

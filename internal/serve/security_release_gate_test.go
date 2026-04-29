@@ -260,6 +260,23 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !indexCalls["evaluationFindingsSummaryFromRuns"] {
 		t.Fatalf("handleIndex must build evaluation-findings data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
+	if !indexCalls["dashboardTaskSummary"] {
+		t.Fatalf("handleIndex must build dashboard TASK summary data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
+	}
+	taskSummaryCalls := serveFunctionCalls(t, funcs, "dashboardTaskSummary")
+	for _, requiredCall := range []string{"dashboardTaskSummaryDecisionFor", "dashboardTaskSummaryMessage", "dashboardTaskSummaryNextForDecision", "dashboardTaskSummaryEmptyMessage"} {
+		if !taskSummaryCalls[requiredCall] {
+			t.Fatalf("dashboardTaskSummary must centralize %s; calls=%v", requiredCall, sortedCallNames(taskSummaryCalls))
+		}
+	}
+	taskSummaryDecisionCalls := serveFunctionCalls(t, funcs, "dashboardTaskSummaryDecisionFor")
+	if !taskSummaryDecisionCalls["dashboardTaskSummaryState"] {
+		t.Fatalf("dashboardTaskSummaryDecisionFor must centralize TASK summary state decisions; calls=%v", sortedCallNames(taskSummaryDecisionCalls))
+	}
+	taskSummaryNextCalls := serveFunctionCalls(t, funcs, "dashboardTaskSummaryNextForDecision")
+	if !taskSummaryNextCalls["dashboardTaskSummaryNext"] {
+		t.Fatalf("dashboardTaskSummaryNextForDecision must route next-task sanitization through dashboardTaskSummaryNext; calls=%v", sortedCallNames(taskSummaryNextCalls))
+	}
 	evaluationFindingsCalls := serveFunctionCalls(t, funcs, "evaluationFindingsSummaryForRun")
 	for _, requiredCall := range []string{"evaluationFindingsVisibleSummary", "evaluationFindingsUnavailableState", "evaluationFindingsStateForRun", "evaluationFindingItems"} {
 		if !evaluationFindingsCalls[requiredCall] {
@@ -374,6 +391,13 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"validationStatusTimestampLabel",
 		"validationStatusActions",
 		"validationStatusMetadataForRun",
+		"dashboardTaskSummary",
+		"dashboardTaskSummaryDecisionFor",
+		"dashboardTaskSummaryState",
+		"dashboardTaskSummaryMessage",
+		"dashboardTaskSummaryNextForDecision",
+		"dashboardTaskSummaryNext",
+		"dashboardTaskSummaryEmptyMessage",
 		"nextActionSummaryFromSummaries",
 		"staticNextActionKindFromSummaries",
 		"taskQueueUnavailableNextActionKind",

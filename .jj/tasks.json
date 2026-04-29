@@ -2157,6 +2157,33 @@
       "updated_at": "2026-04-29T03:56:17Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Dashboard-root TASK summary construction is centralized in narrow helper logic or an equivalent simplified structure.",
+        "The helper consumes only existing sanitized dashboard DTO/helper output, guarded URL decisions, fixed safe labels, or already-safe labels.",
+        "Existing TASK summary labels, ordering, visibility, guarded links, fallback messages, empty states, denied states, unavailable states, unknown states, malformed or partial metadata handling, hostile-label handling, token-like handling, and surrounding dashboard-root behavior remain unchanged.",
+        "No raw TASK.md body, document body, manifest body, artifact body, raw path, command text, environment value, diff body, validation payload, planner handoff payload, configured secret, token-like value, omission placeholder, arbitrary file read, unsafe path read, new route, CLI flag, schema field, config behavior, pagination, scanner, upload, broad file browsing, raw export, visual redesign, or user-facing semantic change is introduced.",
+        "Focused serve coverage is added or preserved for TASK summary normal, empty or none, unavailable, unknown, denied, malformed or partial, hostile-label, token-like, and guarded-link states where practical.",
+        "Validation passes focused TASK summary serve tests, go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t56",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T03:59:13Z",
+      "created_by_run": "autopilot-20260428-160202-t56",
+      "created_by_turn": null,
+      "id": "TASK-0077",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent explicitly asks for code refactoring and simplification. The best remaining narrow, behavior-preserving refactor in the current SPEC is dashboard-root TASK summary presentation logic; there is no current blocker, failing validation, CI regression, disclosure, or boundary evidence requiring bugfix or security work.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard TASK summary presentation logic",
+      "updated_at": "2026-04-29T04:10:59Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
