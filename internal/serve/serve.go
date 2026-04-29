@@ -3625,52 +3625,106 @@ func activeRunsStateMessage(state string) string {
 }
 
 func activeRunsSummaryFromRuns(runs []runLink) activeRunsSummary {
-	summary := activeRunsStateSummary("none")
+	return activeRunsSummaryFromItems(activeRunItemsFromRuns(runs))
+}
+
+func activeRunItemsFromRuns(runs []runLink) []activeRunItem {
+	items := []activeRunItem{}
 	candidates := sortedLatestRunCandidates(runs)
 	for _, run := range candidates {
 		item, ok := activeRunItemFromRun(run)
 		if !ok {
 			continue
 		}
-		summary.Items = append(summary.Items, item)
+		items = append(items, item)
 	}
-	if len(summary.Items) > 0 {
-		summary = activeRunsSummary{
-			State:   "available",
-			Message: activeRunsStateMessage("available"),
-			Items:   summary.Items,
-		}
+	return items
+}
+
+func activeRunsSummaryFromItems(items []activeRunItem) activeRunsSummary {
+	if len(items) == 0 {
+		return activeRunsStateSummary("none")
 	}
-	return summary
+	return activeRunsSummary{
+		State:   activeRunsStateLabel("available"),
+		Message: activeRunsStateMessage("available"),
+		Items:   items,
+	}
+}
+
+type activeRunDisplayData struct {
+	RunLabels        runSummaryLabels
+	Status           string
+	ProviderOrResult string
+	EvaluationState  string
 }
 
 func activeRunItemFromRun(run runLink) (activeRunItem, bool) {
+	data, ok := activeRunDisplayDataForRun(run)
+	if !ok {
+		return activeRunItem{}, false
+	}
+	return activeRunVisibleItem(data), true
+}
+
+func activeRunDisplayDataForRun(run runLink) (activeRunDisplayData, bool) {
 	labels, ok := runSummaryLabelsFor(run)
 	if !ok || run.Invalid || !activeRunMetadataConsistent(run) {
-		return activeRunItem{}, false
+		return activeRunDisplayData{}, false
 	}
 	status := activeRunStatusToken(run.Status)
 	if status == "" {
-		return activeRunItem{}, false
+		return activeRunDisplayData{}, false
 	}
-	return activeRunItemFromLabels(labels, status, activeRunProviderOrResult(run, status), activeRunEvaluationState(run)), true
-}
-
-func activeRunItemFromLabels(labels runSummaryLabels, status, providerOrResult, evaluationState string) activeRunItem {
-	return activeRunItem{
-		RunID:            labels.RunID,
+	return activeRunDisplayData{
+		RunLabels:        labels,
 		Status:           status,
-		ProviderOrResult: providerOrResult,
-		EvaluationState:  evaluationState,
-		TimestampLabel:   labels.TimestampLabel,
-		DetailURL:        labels.DetailURL,
-		AuditURL:         labels.AuditURL,
-		Actions:          activeRunActions(labels),
+		ProviderOrResult: activeRunProviderOrResult(run, status),
+		EvaluationState:  activeRunEvaluationState(run),
+	}, true
+}
+
+func activeRunVisibleItem(data activeRunDisplayData) activeRunItem {
+	runID := latestRunIDLabel(data.RunLabels.RunID)
+	detailURL := guardedRunDetailURL(runID)
+	auditURL := guardedRunAuditURL(runID)
+	return activeRunItem{
+		RunID:            runID,
+		Status:           activeRunSafeStatusToken(data.Status),
+		ProviderOrResult: activeRunProviderOrResultLabel(data.ProviderOrResult),
+		EvaluationState:  activeRunEvaluationLabel(data.EvaluationState),
+		TimestampLabel:   activeRunTimestampLabel(data.RunLabels.TimestampLabel),
+		DetailURL:        detailURL,
+		AuditURL:         auditURL,
+		Actions:          activeRunActions(detailURL, auditURL),
 	}
 }
 
-func activeRunActions(labels runSummaryLabels) []dashboardRunActionLink {
-	return dashboardRunActions(labels.DetailURL, labels.AuditURL)
+func activeRunSafeStatusToken(status string) string {
+	if token := activeRunStatusToken(status); token != "" {
+		return token
+	}
+	return "unknown"
+}
+
+func activeRunProviderOrResultLabel(label string) string {
+	return activeRunSafeDisplayText(label, "unknown")
+}
+
+func activeRunEvaluationLabel(label string) string {
+	return activeRunSafeDisplayText(label, "unknown")
+}
+
+func activeRunTimestampLabel(label string) string {
+	return activeRunSafeDisplayText(label, "unknown")
+}
+
+func activeRunSafeDisplayText(value, fallback string) string {
+	return latestRunDisplayText(value, fallback)
+}
+
+func activeRunActions(detailURL, auditURL string) []dashboardRunActionLink {
+	return dashboardRunActions(detailURL, auditURL)
 }
 
 func activeRunMetadataConsistent(run runLink) bool {

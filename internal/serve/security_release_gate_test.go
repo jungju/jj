@@ -328,6 +328,43 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 			t.Fatalf("validationStatusVisibleItem must centralize %s; calls=%v", requiredCall, sortedCallNames(validationStatusItemCalls))
 		}
 	}
+	if !indexCalls["activeRunsSummaryFromRuns"] {
+		t.Fatalf("handleIndex must build active-run data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
+	}
+	activeRunsStateCalls := serveFunctionCalls(t, funcs, "activeRunsStateSummary")
+	for _, requiredCall := range []string{"activeRunsStateLabel", "activeRunsStateMessage"} {
+		if !activeRunsStateCalls[requiredCall] {
+			t.Fatalf("activeRunsStateSummary must centralize active-run state data through %s; calls=%v", requiredCall, sortedCallNames(activeRunsStateCalls))
+		}
+	}
+	activeRunsCalls := serveFunctionCalls(t, funcs, "activeRunsSummaryFromRuns")
+	for _, requiredCall := range []string{"activeRunItemsFromRuns", "activeRunsSummaryFromItems"} {
+		if !activeRunsCalls[requiredCall] {
+			t.Fatalf("activeRunsSummaryFromRuns must centralize active-run construction through %s; calls=%v", requiredCall, sortedCallNames(activeRunsCalls))
+		}
+	}
+	activeRunItemCalls := serveFunctionCalls(t, funcs, "activeRunItemFromRun")
+	for _, requiredCall := range []string{"activeRunDisplayDataForRun", "activeRunVisibleItem"} {
+		if !activeRunItemCalls[requiredCall] {
+			t.Fatalf("activeRunItemFromRun must build dashboard active-run items through %s; calls=%v", requiredCall, sortedCallNames(activeRunItemCalls))
+		}
+	}
+	activeRunVisibleCalls := serveFunctionCalls(t, funcs, "activeRunVisibleItem")
+	for _, requiredCall := range []string{"activeRunSafeStatusToken", "activeRunProviderOrResultLabel", "activeRunEvaluationLabel", "activeRunTimestampLabel", "activeRunActions"} {
+		if !activeRunVisibleCalls[requiredCall] {
+			t.Fatalf("activeRunVisibleItem must centralize %s; calls=%v", requiredCall, sortedCallNames(activeRunVisibleCalls))
+		}
+	}
+	activeRunStatusCalls := serveFunctionCalls(t, funcs, "activeRunSafeStatusToken")
+	if !activeRunStatusCalls["activeRunStatusToken"] {
+		t.Fatalf("activeRunSafeStatusToken must use the active-run status allowlist; calls=%v", sortedCallNames(activeRunStatusCalls))
+	}
+	for _, fn := range []string{"activeRunProviderOrResultLabel", "activeRunEvaluationLabel", "activeRunTimestampLabel"} {
+		calls := serveFunctionCalls(t, funcs, fn)
+		if !calls["activeRunSafeDisplayText"] {
+			t.Fatalf("%s must use the active-run safe display helper; calls=%v", fn, sortedCallNames(calls))
+		}
+	}
 	if !indexCalls["nextActionSummaryFromSummaries"] {
 		t.Fatalf("handleIndex must build next-action data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
@@ -392,6 +429,21 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"evaluationFindingsDecisionWithMetadata",
 		"evaluationFindingItems",
 		"sanitizeEvaluationFindingsSummary",
+		"activeRunsStateSummary",
+		"activeRunsStateLabel",
+		"activeRunsStateMessage",
+		"activeRunsSummaryFromRuns",
+		"activeRunItemsFromRuns",
+		"activeRunsSummaryFromItems",
+		"activeRunItemFromRun",
+		"activeRunDisplayDataForRun",
+		"activeRunVisibleItem",
+		"activeRunSafeStatusToken",
+		"activeRunProviderOrResultLabel",
+		"activeRunEvaluationLabel",
+		"activeRunTimestampLabel",
+		"activeRunSafeDisplayText",
+		"activeRunActions",
 		"validationStatusSummaryFromRuns",
 		"validationStatusItemFromRun",
 		"validationStatusUnavailableItemFromRun",

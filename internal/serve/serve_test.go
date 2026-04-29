@@ -1042,6 +1042,72 @@ func TestDashboardActiveRunNoActiveState(t *testing.T) {
 	}
 }
 
+func TestDashboardActiveRunStateDataAndGuardedActionsAreDeterministic(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		rawState    string
+		wantState   string
+		wantMessage string
+	}{
+		{name: "none", rawState: "none", wantState: "none", wantMessage: "No active jj runs found."},
+		{name: "unavailable", rawState: "unavailable", wantState: "unavailable", wantMessage: "Active run metadata unavailable."},
+		{name: "denied", rawState: "denied", wantState: "denied", wantMessage: "Active run metadata denied."},
+		{name: "unknown", rawState: "unknown", wantState: "unknown", wantMessage: "Active run metadata unknown."},
+		{name: "malformed", rawState: "malformed", wantState: "unknown", wantMessage: "Active run metadata unknown."},
+		{name: "token-like", rawState: "token=sk-proj-active-state1234567890", wantState: "none", wantMessage: "No active jj runs found."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			summary := activeRunsStateSummary(tc.rawState)
+			if summary.State != tc.wantState || summary.Message != tc.wantMessage || len(summary.Items) != 0 {
+				t.Fatalf("active-run state summary = %#v, want state=%q message=%q", summary, tc.wantState, tc.wantMessage)
+			}
+		})
+	}
+
+	labels, ok := runSummaryLabelsFor(runLink{
+		ID:         "20260429-120000-visible",
+		Status:     "planning",
+		StartedAt:  "not-a-time",
+		Validation: "passed",
+	})
+	if !ok {
+		t.Fatal("expected safe active-run labels")
+	}
+	labels.DetailURL = "/runs/../../secret"
+	labels.AuditURL = "/runs/audit?run=../../secret"
+	item := activeRunVisibleItem(activeRunDisplayData{
+		RunLabels:        labels,
+		Status:           "planning",
+		ProviderOrResult: "codex",
+		EvaluationState:  "passed",
+	})
+	if item.RunID != "20260429-120000-visible" || item.Status != "planning" || item.ProviderOrResult != "codex" || item.EvaluationState != "passed" || item.TimestampLabel != "unknown" {
+		t.Fatalf("active-run visible item labels changed: %#v", item)
+	}
+	if item.DetailURL != "/runs/20260429-120000-visible" || item.AuditURL != "/runs/audit?run=20260429-120000-visible" {
+		t.Fatalf("active-run visible item links were not guarded from the run ID: %#v", item)
+	}
+	requireDashboardRunActions(t, item.Actions,
+		dashboardRunActionLink{Label: "Run detail", URL: "/runs/20260429-120000-visible"},
+		dashboardRunActionLink{Label: "Audit export", URL: "/runs/audit?run=20260429-120000-visible"},
+	)
+
+	unsafe := activeRunVisibleItem(activeRunDisplayData{
+		RunLabels:        runSummaryLabels{RunID: "sk-proj-activevisible1234567890", TimestampLabel: "token=sk-proj-activevisible1234567890"},
+		Status:           "token=sk-proj-activevisible1234567890",
+		ProviderOrResult: "token=sk-proj-activevisible1234567890",
+		EvaluationState:  "token=sk-proj-activevisible1234567890",
+	})
+	if unsafe.RunID != "" ||
+		unsafe.Status != "unknown" ||
+		unsafe.ProviderOrResult != "unsafe value removed" ||
+		unsafe.EvaluationState != "unsafe value removed" ||
+		unsafe.TimestampLabel != "unsafe value removed" ||
+		len(unsafe.Actions) != 0 {
+		t.Fatalf("unsafe active-run visible item should render deterministic safe labels: %#v", unsafe)
+	}
+}
+
 func TestDashboardActiveRunUnsafeMetadataStatesAreSafe(t *testing.T) {
 	dir := t.TempDir()
 	outside := t.TempDir()
