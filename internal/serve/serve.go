@@ -259,6 +259,18 @@ type recentRunItem struct {
 	TimestampLabel   string
 	DetailURL        string
 	AuditURL         string
+	Actions          []dashboardRunActionLink
+}
+
+type recentRunDisplayData struct {
+	RunID            string
+	Status           string
+	ProviderOrResult string
+	EvaluationState  string
+	ValidationState  string
+	TimestampLabel   string
+	DetailURL        string
+	AuditURL         string
 }
 
 type runEvaluationMetadata struct {
@@ -3371,72 +3383,154 @@ func latestRunSummaryFromRuns(runs []runLink) latestRunSummary {
 }
 
 func recentRunsSummaryFromRuns(runs []runLink) recentRunsSummary {
-	summary := recentRunsSummary{
-		State:      "none",
-		Message:    "No jj runs found.",
-		HistoryURL: "/runs",
+	return recentRunsSummaryFromItems(recentRunItemsFromRuns(runs, dashboardRecentRunsLimit))
+}
+
+func recentRunItemsFromRuns(runs []runLink, limit int) []recentRunItem {
+	if limit <= 0 {
+		return nil
 	}
+	items := make([]recentRunItem, 0, minInt(limit, len(runs)))
 	candidates := sortedLatestRunCandidates(runs)
 	for _, run := range candidates {
-		if len(summary.Items) >= dashboardRecentRunsLimit {
+		if len(items) >= limit {
 			break
 		}
 		item, ok := recentRunItemFromRun(run)
 		if !ok {
 			continue
 		}
-		summary.Items = append(summary.Items, item)
+		items = append(items, item)
 	}
-	if len(summary.Items) == 0 {
-		return summary
+	return items
+}
+
+func recentRunsSummaryFromItems(items []recentRunItem) recentRunsSummary {
+	state := "none"
+	if len(items) > 0 {
+		state = "available"
 	}
-	summary.State = "available"
-	summary.Message = fmt.Sprintf("Showing up to %d recent guarded runs.", dashboardRecentRunsLimit)
-	return summary
+	return recentRunsStateSummary(state, items)
+}
+
+func recentRunsStateSummary(state string, items []recentRunItem) recentRunsSummary {
+	state = recentRunsStateLabel(state)
+	return recentRunsSummary{
+		State:      state,
+		Message:    recentRunsStateMessage(state),
+		HistoryURL: "/runs",
+		Items:      items,
+	}
+}
+
+func recentRunsStateLabel(state string) string {
+	if dashboardCategory(state, "none") == "available" {
+		return "available"
+	}
+	return "none"
+}
+
+func recentRunsStateMessage(state string) string {
+	if recentRunsStateLabel(state) == "available" {
+		return fmt.Sprintf("Showing up to %d recent guarded runs.", dashboardRecentRunsLimit)
+	}
+	return "No jj runs found."
 }
 
 func recentRunItemFromRun(run runLink) (recentRunItem, bool) {
-	labels, ok := runSummaryLabelsFor(run)
+	data, ok := recentRunDisplayDataForRun(run)
 	if !ok {
 		return recentRunItem{}, false
 	}
-	item := recentRunItem{
-		State:           "available",
+	if evaluationInconsistent(run, validationStatusMetadataForRun(run)) {
+		return recentRunUnknownItem(data), true
+	}
+	if run.Invalid {
+		return recentRunUnavailableItem(data, run), true
+	}
+	return recentRunAvailableItem(data, run), true
+}
+
+func recentRunDisplayDataForRun(run runLink) (recentRunDisplayData, bool) {
+	labels, ok := runSummaryLabelsFor(run)
+	if !ok {
+		return recentRunDisplayData{}, false
+	}
+	return recentRunDisplayData{
 		RunID:           labels.RunID,
 		Status:          labels.Status,
 		EvaluationState: labels.EvaluationState,
 		ValidationState: recentRunValidationState(run),
-		TimestampLabel:  labels.TimestampLabel,
+		TimestampLabel:  recentRunTimestampLabel(labels),
 		DetailURL:       labels.DetailURL,
+		AuditURL:        labels.AuditURL,
+	}, true
+}
+
+func recentRunTimestampLabel(labels runSummaryLabels) string {
+	return latestRunDisplayText(labels.TimestampLabel, "unknown")
+}
+
+func recentRunAvailableItem(data recentRunDisplayData, run runLink) recentRunItem {
+	data.ProviderOrResult = latestProviderOrResult(run)
+	item := recentRunItemFromDisplayData(data, "available")
+	item.AuditURL = data.AuditURL
+	return recentRunItemWithActions(item)
+}
+
+func recentRunUnknownItem(data recentRunDisplayData) recentRunItem {
+	item := recentRunItemFromDisplayData(data, "unknown")
+	item.Status = "unknown"
+	item.ProviderOrResult = "unknown"
+	item.EvaluationState = "unknown"
+	item.ValidationState = "unknown"
+	return recentRunItemWithActions(item)
+}
+
+func recentRunUnavailableItem(data recentRunDisplayData, run runLink) recentRunItem {
+	state := recentRunUnavailableState(run)
+	item := recentRunItemFromDisplayData(data, state)
+	item.Status = state
+	item.ProviderOrResult = state
+	item.ValidationState = state
+	if item.EvaluationState == "unknown" {
+		item.EvaluationState = item.Status
 	}
-	if evaluationInconsistent(run, validationStatusMetadataForRun(run)) {
-		item.State = "unknown"
-		item.Status = "unknown"
-		item.EvaluationState = "unknown"
-		item.ValidationState = "unknown"
-		item.ProviderOrResult = "unknown"
-		return item, true
+	item.Message = recentRunUnavailableMessage(run)
+	return recentRunItemWithActions(item)
+}
+
+func recentRunUnavailableState(run runLink) string {
+	if strings.Contains(dashboardCategory(run.ErrorSummary, ""), "denied") {
+		return "denied"
 	}
-	if run.Invalid {
-		item.State = "unavailable"
-		item.Status = "unavailable"
-		item.ProviderOrResult = "unavailable"
-		item.ValidationState = "unavailable"
-		if strings.Contains(dashboardCategory(run.ErrorSummary, ""), "denied") {
-			item.State = "denied"
-			item.Status = "denied"
-			item.ProviderOrResult = "denied"
-			item.ValidationState = "denied"
-		}
-		if item.EvaluationState == "unknown" {
-			item.EvaluationState = item.Status
-		}
-		item.Message = latestRunDisplayText(firstNonEmpty(run.ErrorSummary, "Run metadata unavailable."), "Run metadata unavailable.")
-		return item, true
+	return "unavailable"
+}
+
+func recentRunUnavailableMessage(run runLink) string {
+	return latestRunDisplayText(firstNonEmpty(run.ErrorSummary, "Run metadata unavailable."), "Run metadata unavailable.")
+}
+
+func recentRunItemFromDisplayData(data recentRunDisplayData, state string) recentRunItem {
+	return recentRunItem{
+		State:            state,
+		RunID:            data.RunID,
+		Status:           data.Status,
+		ProviderOrResult: data.ProviderOrResult,
+		EvaluationState:  data.EvaluationState,
+		ValidationState:  data.ValidationState,
+		TimestampLabel:   data.TimestampLabel,
+		DetailURL:        data.DetailURL,
 	}
-	item.ProviderOrResult = latestProviderOrResult(run)
-	item.AuditURL = labels.AuditURL
-	return item, true
+}
+
+func recentRunItemWithActions(item recentRunItem) recentRunItem {
+	item.Actions = recentRunActions(item.DetailURL, item.AuditURL)
+	return item
+}
+
+func recentRunActions(detailURL, auditURL string) []dashboardRunActionLink {
+	return dashboardRunActions(detailURL, auditURL)
 }
 
 func recentRunValidationState(run runLink) string {
@@ -7260,7 +7354,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	            <li>
 	              {{if .DetailURL}}<a href="{{.DetailURL}}">{{.RunID}}</a>{{else}}<strong>{{.RunID}}</strong>{{end}} <span class="muted">{{.State}} · {{.Status}} · {{.TimestampLabel}}</span>
 	              <div class="muted">provider/result {{.ProviderOrResult}} · evaluation {{.EvaluationState}}</div>
-	              <div>{{range $i, $link := dashboardRunActions .DetailURL .AuditURL}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
+	              <div>{{range $i, $link := .Actions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
 	              {{if .Message}}<div class="error">{{.Message}}</div>{{end}}
 	            </li>
 	          {{end}}

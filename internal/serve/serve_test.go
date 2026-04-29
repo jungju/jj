@@ -628,6 +628,81 @@ func TestDashboardRecentRunsSummaryInvalidMetadataAndHostileIDsAreSafe(t *testin
 	}
 }
 
+func TestDashboardRecentRunsSummaryDisplayDataAndActionsAreDeterministic(t *testing.T) {
+	summary := recentRunsSummaryFromRuns([]runLink{
+		{
+			ID:         "20260429-130000-inconsistent",
+			Status:     "complete",
+			StartedAt:  "2026-04-29T13:00:00Z",
+			Validation: "passed",
+			Evaluation: runEvaluationMetadata{
+				Status:       "passed",
+				CommandCount: 1,
+				FailedCount:  1,
+			},
+		},
+		{ID: "20260429-120000-tie-b", Status: "complete", StartedAt: "2026-04-29T12:00:00Z", PlannerProvider: "codex", Validation: "passed"},
+		{ID: "20260429-110000-tie-a", Status: "complete", StartedAt: "2026-04-29T12:00:00Z", PlannerProvider: "openai", Validation: "passed"},
+		{ID: "20260429-100000-no-time", Status: "complete", PlannerProvider: "local", Validation: "passed"},
+		{ID: "20260429-090000-stale", Status: "stale", StartedAt: "2026-04-29T09:00:00Z", Validation: "stale"},
+		{ID: "sk-proj-recentdisplay1234567890", Status: "complete"},
+	})
+	if summary.State != "available" || summary.Message != "Showing up to 5 recent guarded runs." {
+		t.Fatalf("recent runs summary state changed: %#v", summary)
+	}
+	gotIDs := make([]string, 0, len(summary.Items))
+	for _, item := range summary.Items {
+		gotIDs = append(gotIDs, item.RunID)
+	}
+	wantIDs := []string{
+		"20260429-130000-inconsistent",
+		"20260429-120000-tie-b",
+		"20260429-110000-tie-a",
+		"20260429-100000-no-time",
+		"20260429-090000-stale",
+	}
+	if strings.Join(gotIDs, ",") != strings.Join(wantIDs, ",") {
+		t.Fatalf("recent runs order = %v, want %v", gotIDs, wantIDs)
+	}
+
+	inconsistent := summary.Items[0]
+	if inconsistent.State != "unknown" || inconsistent.Status != "unknown" || inconsistent.ProviderOrResult != "unknown" || inconsistent.EvaluationState != "unknown" || inconsistent.ValidationState != "unknown" {
+		t.Fatalf("inconsistent recent run display changed: %#v", inconsistent)
+	}
+	requireDashboardRunActions(t, inconsistent.Actions,
+		dashboardRunActionLink{Label: "Run detail", URL: "/runs/20260429-130000-inconsistent"},
+	)
+	if inconsistent.AuditURL != "" {
+		t.Fatalf("inconsistent recent run should not expose audit link: %#v", inconsistent)
+	}
+
+	tied := summary.Items[1]
+	if tied.RunID != "20260429-120000-tie-b" || tied.TimestampLabel != "2026-04-29T12:00:00Z" || tied.ProviderOrResult != "codex" {
+		t.Fatalf("tied recent run display changed: %#v", tied)
+	}
+	requireDashboardRunActions(t, tied.Actions,
+		dashboardRunActionLink{Label: "Run detail", URL: "/runs/20260429-120000-tie-b"},
+		dashboardRunActionLink{Label: "Audit export", URL: "/runs/audit?run=20260429-120000-tie-b"},
+	)
+
+	noTime := summary.Items[3]
+	if noTime.TimestampLabel != "unknown" || noTime.ProviderOrResult != "local" {
+		t.Fatalf("missing timestamp recent run display changed: %#v", noTime)
+	}
+	stale := summary.Items[4]
+	if stale.State != "available" || stale.Status != "stale" || stale.ProviderOrResult != "result stale" || stale.EvaluationState != "stale" || stale.ValidationState != "unavailable" {
+		t.Fatalf("stale recent run display changed: %#v", stale)
+	}
+
+	denied := recentRunsSummaryFromRuns([]runLink{{ID: "20260429-140000-denied", Invalid: true, ErrorSummary: "run id denied"}})
+	if denied.State != "available" || len(denied.Items) != 1 || denied.Items[0].State != "denied" {
+		t.Fatalf("denied recent run display changed: %#v", denied)
+	}
+	requireDashboardRunActions(t, denied.Items[0].Actions,
+		dashboardRunActionLink{Label: "Run detail", URL: "/runs/20260429-140000-denied"},
+	)
+}
+
 func TestDashboardActiveRunShowsSanitizedNonTerminalRunsAndPreservesSections(t *testing.T) {
 	dir := t.TempDir()
 	secret := "sk-proj-activerun1234567890"
