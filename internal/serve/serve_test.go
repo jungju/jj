@@ -356,9 +356,42 @@ func TestDashboardLatestRunSummaryUnavailableAndNoneStatesAreSafe(t *testing.T) 
 				t.Fatalf("latest unavailable state missing %q:\n%s", want, latest)
 			}
 		}
+		assertSubstringsInOrder(t, latest, []string{
+			`href="/runs">Run history</a>`,
+			`href="/runs/20260429-120000-badjson">Run detail</a>`,
+		})
 		for _, leaked := range []string{secret, security.RedactionMarker, "Raw manifest", "Validation artifact"} {
 			if strings.Contains(latest, leaked) {
 				t.Fatalf("latest unavailable state leaked %q:\n%s", leaked, latest)
+			}
+		}
+	})
+
+	t.Run("partial", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, ".jj/runs/20260429-121000-partial/manifest.json", `{"run_id":"20260429-121000-partial","status":"complete"}`)
+		server := newTestServer(t, dir, "")
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		server.Handler().ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, body)
+		}
+		latest := htmlSection(body, "Latest Run", "Risks And Failures")
+		for _, want := range []string{"20260429-121000-partial", "unavailable", "manifest is incomplete: missing artifacts", "Run history", "Run detail"} {
+			if !strings.Contains(latest, want) {
+				t.Fatalf("latest partial state missing %q:\n%s", want, latest)
+			}
+		}
+		assertSubstringsInOrder(t, latest, []string{
+			`href="/runs">Run history</a>`,
+			`href="/runs/20260429-121000-partial">Run detail</a>`,
+		})
+		for _, leaked := range []string{"Raw manifest", "Validation artifact", `href="/runs/audit?run=20260429-121000-partial"`} {
+			if strings.Contains(latest, leaked) {
+				t.Fatalf("latest partial state leaked %q:\n%s", leaked, latest)
 			}
 		}
 	})
@@ -807,6 +840,45 @@ func TestDashboardLatestRunActionsPreserveStateOrderingAndGuardURLs(t *testing.T
 			},
 		},
 		{
+			name: "malformed metadata history then detail",
+			summary: latestRunSummary{
+				State:      "malformed",
+				HistoryURL: "/runs",
+				DetailURL:  "/runs/20260429-130000-malformed",
+				AuditURL:   "/runs/audit?run=20260429-130000-malformed",
+			},
+			want: []dashboardRunActionLink{
+				{Label: "Run history", URL: "/runs"},
+				{Label: "Run detail", URL: "/runs/20260429-130000-malformed"},
+			},
+		},
+		{
+			name: "partial metadata history then detail",
+			summary: latestRunSummary{
+				State:      "partial",
+				HistoryURL: "/runs",
+				DetailURL:  "/runs/20260429-130000-partial",
+				AuditURL:   "/runs/audit?run=20260429-130000-partial",
+			},
+			want: []dashboardRunActionLink{
+				{Label: "Run history", URL: "/runs"},
+				{Label: "Run detail", URL: "/runs/20260429-130000-partial"},
+			},
+		},
+		{
+			name: "stale metadata history then detail",
+			summary: latestRunSummary{
+				State:      "stale",
+				HistoryURL: "/runs",
+				DetailURL:  "/runs/20260429-130000-stale",
+				AuditURL:   "/runs/audit?run=20260429-130000-stale",
+			},
+			want: []dashboardRunActionLink{
+				{Label: "Run history", URL: "/runs"},
+				{Label: "Run detail", URL: "/runs/20260429-130000-stale"},
+			},
+		},
+		{
 			name: "denied hostile detail falls back to history",
 			summary: latestRunSummary{
 				State:      "denied",
@@ -819,6 +891,19 @@ func TestDashboardLatestRunActionsPreserveStateOrderingAndGuardURLs(t *testing.T
 			},
 		},
 		{
+			name: "hostile state label uses fixed action labels",
+			summary: latestRunSummary{
+				State:      "raw artifact body token=sk-proj-dashboardlatest1234567890",
+				HistoryURL: "/runs",
+				DetailURL:  "/runs/20260429-130000-hostile",
+				AuditURL:   "/runs/audit?run=20260429-130000-hostile",
+			},
+			want: []dashboardRunActionLink{
+				{Label: "Run history", URL: "/runs"},
+				{Label: "Run detail", URL: "/runs/20260429-130000-hostile"},
+			},
+		},
+		{
 			name: "unknown token like detail falls back to history",
 			summary: latestRunSummary{
 				State:      "unknown",
@@ -828,6 +913,19 @@ func TestDashboardLatestRunActionsPreserveStateOrderingAndGuardURLs(t *testing.T
 			},
 			want: []dashboardRunActionLink{
 				{Label: "Run history", URL: "/runs"},
+			},
+		},
+		{
+			name: "available guarded links survive unsafe detail",
+			summary: latestRunSummary{
+				State:      "available",
+				HistoryURL: "/runs",
+				DetailURL:  "/runs/../../secret",
+				AuditURL:   "/runs/audit?run=20260429-130000-complete",
+			},
+			want: []dashboardRunActionLink{
+				{Label: "Run history", URL: "/runs"},
+				{Label: "Audit export", URL: "/runs/audit?run=20260429-130000-complete"},
 			},
 		},
 		{

@@ -254,6 +254,12 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !indexCalls["latestRunSummaryFromRuns"] {
 		t.Fatalf("handleIndex must build latest-run data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
+	latestRunActionCalls := serveFunctionCalls(t, funcs, "dashboardLatestRunActions")
+	for _, requiredCall := range []string{"dashboardRunAction", "dashboardRunActionLinks"} {
+		if !latestRunActionCalls[requiredCall] {
+			t.Fatalf("dashboardLatestRunActions must centralize Latest Run action construction through %s; calls=%v", requiredCall, sortedCallNames(latestRunActionCalls))
+		}
+	}
 	if !indexCalls["recentRunsSummaryFromRuns"] {
 		t.Fatalf("handleIndex must build recent-runs data through the sanitized summary helper; calls=%v", sortedCallNames(indexCalls))
 	}
@@ -391,6 +397,7 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"validationStatusTimestampLabel",
 		"validationStatusActions",
 		"validationStatusMetadataForRun",
+		"dashboardLatestRunActions",
 		"dashboardTaskSummary",
 		"dashboardTaskSummaryDecisionFor",
 		"dashboardTaskSummaryState",

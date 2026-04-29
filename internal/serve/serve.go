@@ -5218,35 +5218,22 @@ func dashboardRunActions(detailURL, auditURL string) []dashboardRunActionLink {
 }
 
 func dashboardLatestRunActions(summary latestRunSummary) []dashboardRunActionLink {
-	kinds := dashboardLatestRunActionKinds(summary.State)
-	links := make([]dashboardRunActionLink, 0, len(kinds))
-	for _, kind := range kinds {
-		links = append(links, dashboardRunAction(kind, dashboardLatestRunActionURL(summary, kind)))
-	}
-	return dashboardRunActionLinks(links...)
-}
-
-func dashboardLatestRunActionKinds(state string) []dashboardRunActionKind {
-	switch state {
+	switch summary.State {
 	case "available":
-		return []dashboardRunActionKind{dashboardRunActionDetail, dashboardRunActionHistory, dashboardRunActionAudit}
+		return dashboardRunActionLinks(
+			dashboardRunAction(dashboardRunActionDetail, summary.DetailURL),
+			dashboardRunAction(dashboardRunActionHistory, summary.HistoryURL),
+			dashboardRunAction(dashboardRunActionAudit, summary.AuditURL),
+		)
 	case "none":
-		return []dashboardRunActionKind{dashboardRunActionHistory}
+		return dashboardRunActionLinks(
+			dashboardRunAction(dashboardRunActionHistory, summary.HistoryURL),
+		)
 	default:
-		return []dashboardRunActionKind{dashboardRunActionHistory, dashboardRunActionDetail}
-	}
-}
-
-func dashboardLatestRunActionURL(summary latestRunSummary, kind dashboardRunActionKind) string {
-	switch kind {
-	case dashboardRunActionDetail:
-		return summary.DetailURL
-	case dashboardRunActionHistory:
-		return summary.HistoryURL
-	case dashboardRunActionAudit:
-		return summary.AuditURL
-	default:
-		return ""
+		return dashboardRunActionLinks(
+			dashboardRunAction(dashboardRunActionHistory, summary.HistoryURL),
+			dashboardRunAction(dashboardRunActionDetail, summary.DetailURL),
+		)
 	}
 }
 
@@ -7214,15 +7201,13 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	        {{if eq .LatestRun.State "available"}}
 	          <p><a href="{{.LatestRun.DetailURL}}">{{.LatestRun.RunID}}</a> <span class="muted">{{.LatestRun.Status}} · {{.LatestRun.TimestampLabel}}</span></p>
 	          <p class="muted">provider/result {{.LatestRun.ProviderOrResult}} · evaluation {{.LatestRun.EvaluationState}}</p>
-	          <p>{{range $i, $link := $latestRunActions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</p>
 	        {{else if eq .LatestRun.State "none"}}
 	          <p class="muted">{{.LatestRun.Message}}</p>
-	          <p>{{range $i, $link := $latestRunActions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</p>
 	        {{else}}
 	          <p><strong>{{.LatestRun.RunID}}</strong> <span class="muted">{{.LatestRun.State}} · {{.LatestRun.TimestampLabel}}</span></p>
 	          <p class="error">{{.LatestRun.Message}}</p>
-	          <p>{{range $i, $link := $latestRunActions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</p>
 	        {{end}}
+	        <p>{{range $i, $link := $latestRunActions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</p>
 	      </section>
 		      <section>
 		        <h2>Risks And Failures</h2>
