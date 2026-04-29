@@ -1996,6 +1996,33 @@
       "updated_at": "2026-04-29T02:42:56Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Centralize run-detail Compare Previous visible-summary labels, none/unavailable/denied/unknown messages, deterministic previous-run display data, and guarded comparison URL decisions in a narrow helper or equivalent simplified structure.",
+        "Consume only existing sanitized run DTO/helper output, guarded URL decisions, or already-safe labels.",
+        "Preserve existing Compare Previous labels, ordering, visibility, guarded links, deterministic previous-run selection, none states, unavailable states, unknown states, denied states, malformed or partial metadata behavior, hostile-label behavior, token-like behavior, missing timestamp behavior, tied timestamp behavior, unsafe URL behavior, and surrounding run-detail behavior touched by the refactor.",
+        "Do not read or render raw manifests, artifact bodies, raw paths, command text, environment values, diffs, validation payloads, planner handoff payloads, TASK.md bodies, EVAL.md bodies, document bodies, configured secrets, token-like values, or omission placeholders.",
+        "Do not introduce new dashboard pages, routes, CLI flags, schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw exports, visual redesign, or user-facing output semantics.",
+        "Add or update focused serve tests covering normal comparable runs, no previous run, unavailable or unknown states, denied states, malformed or partial metadata, hostile labels, token-like values, missing timestamps, tied timestamps, and unsafe comparison URLs where applicable."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t50",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T02:45:21Z",
+      "created_by_run": "autopilot-20260428-160202-t50",
+      "created_by_turn": null,
+      "id": "TASK-0071",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent asks for code refactoring and simplification. Completed TASK-0061 through TASK-0070 already handled nearby sanitized presentation simplifications, while Compare Previous remains an allowed narrow refactor area in the source-of-truth spec and no current validation, CI, blocker, disclosure, or boundary evidence requires bugfix or security priority.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized run-detail Compare Previous presentation logic",
+      "updated_at": "2026-04-29T02:55:41Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

@@ -2901,62 +2901,127 @@ func runCompareURL(left, right string) string {
 	return "/runs/compare?left=" + template.URLQueryEscaper(left) + "&right=" + template.URLQueryEscaper(right)
 }
 
+const (
+	comparePreviousStateAvailable   = "available"
+	comparePreviousStateNone        = "none"
+	comparePreviousStateUnavailable = "unavailable"
+	comparePreviousStateDenied      = "denied"
+	comparePreviousStateUnknown     = "unknown"
+)
+
+type comparePreviousDisplayData struct {
+	State         string
+	CurrentRunID  string
+	PreviousRunID string
+}
+
 func (s *Server) comparePreviousForInspection(inspection runInspection) comparePreviousSummary {
 	currentID := latestRunIDLabel(inspection.ID)
 	if currentID == "" {
 		currentID = latestRunIDLabel(inspection.rawID)
 	}
 	if currentID == "" {
-		return comparePreviousPresentation("unavailable", "", "")
+		return comparePreviousSummaryFromDisplay(comparePreviousDisplayData{State: comparePreviousStateUnavailable})
 	}
 	if inspection.State != "available" || !inspection.TrustedManifest {
-		return comparePreviousPresentation("unavailable", currentID, "")
+		return comparePreviousSummaryFromDisplay(comparePreviousDisplayData{State: comparePreviousStateUnavailable, CurrentRunID: currentID})
 	}
 	runs, err := s.discoverRuns()
 	if err != nil {
-		return comparePreviousPresentation("unavailable", currentID, "")
+		return comparePreviousSummaryFromDisplay(comparePreviousDisplayData{State: comparePreviousStateUnavailable, CurrentRunID: currentID})
 	}
-	runs = s.sanitizeRunHistoryLinks(runs)
+	return comparePreviousSummaryFromDisplay(comparePreviousDisplayDataFromSanitizedRuns(currentID, s.sanitizeRunHistoryLinks(runs)))
+}
+
+// comparePreviousDisplayDataFromSanitizedRuns expects shared sanitized run DTOs.
+func comparePreviousDisplayDataFromSanitizedRuns(currentID string, runs []runLink) comparePreviousDisplayData {
+	currentID = latestRunIDLabel(currentID)
+	if currentID == "" {
+		return comparePreviousDisplayData{State: comparePreviousStateUnavailable}
+	}
 	previousID, foundCurrent := previousComparableRunID(currentID, runs)
 	if !foundCurrent {
-		return comparePreviousPresentation("unavailable", currentID, "")
+		return comparePreviousDisplayData{State: comparePreviousStateUnavailable, CurrentRunID: currentID}
 	}
 	if previousID == "" {
-		return comparePreviousPresentation("none", currentID, "")
+		return comparePreviousDisplayData{State: comparePreviousStateNone, CurrentRunID: currentID}
 	}
-	return comparePreviousPresentation("available", currentID, previousID)
+	return comparePreviousDisplayData{State: comparePreviousStateAvailable, CurrentRunID: currentID, PreviousRunID: previousID}
 }
 
 func comparePreviousPresentation(state, currentID, previousID string) comparePreviousSummary {
-	currentID = latestRunIDLabel(currentID)
-	if currentID == "" {
-		return comparePreviousSummary{}
-	}
+	return comparePreviousSummaryFromDisplay(comparePreviousDisplayData{State: state, CurrentRunID: currentID, PreviousRunID: previousID})
+}
+
+func comparePreviousSummaryFromDisplay(display comparePreviousDisplayData) comparePreviousSummary {
+	currentID := latestRunIDLabel(display.CurrentRunID)
+	state := comparePreviousStateToken(display.State)
 	summary := comparePreviousSummary{
 		Visible:      true,
 		State:        state,
 		CurrentRunID: currentID,
 	}
+	if currentID == "" {
+		return comparePreviousSummary{}
+	}
 	switch state {
-	case "available":
-		previousID = latestRunIDLabel(previousID)
-		if previousID == "" {
-			summary.State = "unavailable"
-			summary.Message = "Compare previous: unavailable."
+	case comparePreviousStateAvailable:
+		previousID := latestRunIDLabel(display.PreviousRunID)
+		url := guardedRunCompareURL(currentID, previousID)
+		if previousID == "" || url == "" {
+			summary.State = comparePreviousStateUnavailable
+			summary.Message = comparePreviousMessage(comparePreviousStateUnavailable)
 			return summary
 		}
 		summary.PreviousRunID = previousID
 		summary.Message = "Compare " + currentID + " to " + previousID
-		summary.URL = runCompareURL(currentID, previousID)
-	case "none":
-		summary.Message = "Compare previous: none."
-	case "unavailable":
-		summary.Message = "Compare previous: unavailable."
+		summary.URL = url
+	case comparePreviousStateNone, comparePreviousStateUnavailable, comparePreviousStateDenied, comparePreviousStateUnknown:
+		summary.Message = comparePreviousMessage(state)
 	default:
-		summary.State = "unavailable"
-		summary.Message = "Compare previous: unavailable."
+		summary.State = comparePreviousStateUnavailable
+		summary.Message = comparePreviousMessage(comparePreviousStateUnavailable)
 	}
 	return summary
+}
+
+func comparePreviousStateToken(state string) string {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case comparePreviousStateAvailable:
+		return comparePreviousStateAvailable
+	case comparePreviousStateNone:
+		return comparePreviousStateNone
+	case comparePreviousStateDenied:
+		return comparePreviousStateDenied
+	case comparePreviousStateUnknown:
+		return comparePreviousStateUnknown
+	case comparePreviousStateUnavailable:
+		return comparePreviousStateUnavailable
+	default:
+		return comparePreviousStateUnavailable
+	}
+}
+
+func comparePreviousMessage(state string) string {
+	switch comparePreviousStateToken(state) {
+	case comparePreviousStateNone:
+		return "Compare previous: none."
+	case comparePreviousStateDenied:
+		return "Compare previous: denied."
+	case comparePreviousStateUnknown:
+		return "Compare previous: unknown."
+	default:
+		return "Compare previous: unavailable."
+	}
+}
+
+func guardedRunCompareURL(left, right string) string {
+	left = latestRunIDLabel(left)
+	right = latestRunIDLabel(right)
+	if left == "" || right == "" || left == right {
+		return ""
+	}
+	return runCompareURL(left, right)
 }
 
 func previousComparableRunID(currentID string, runs []runLink) (string, bool) {

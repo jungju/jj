@@ -3462,6 +3462,26 @@ func TestRunDetailComparePreviousSafeStatesForAbsentMalformedAndDeniedRuns(t *te
 		}
 	})
 
+	t.Run("missing current metadata", func(t *testing.T) {
+		dir := t.TempDir()
+		runID := "20260429-150500-missing"
+		if err := os.MkdirAll(filepath.Join(dir, ".jj/runs", runID), 0o755); err != nil {
+			t.Fatalf("mkdir run: %v", err)
+		}
+		writeRunManifest(t, dir, "20260429-150000-previous", "complete", "2026-04-29T15:00:00Z")
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
+		newTestServer(t, dir, "").Handler().ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("detail status = %d body=%s", rec.Code, body)
+		}
+		section := runDetailComparePreviousSection(t, body)
+		if !strings.Contains(section, "Compare previous: unavailable.") || strings.Contains(section, "/runs/compare?") {
+			t.Fatalf("missing metadata did not render deterministic unavailable state:\n%s", section)
+		}
+	})
+
 	t.Run("malformed current metadata", func(t *testing.T) {
 		dir := t.TempDir()
 		runID := "20260429-151000-malformed"
@@ -3481,6 +3501,29 @@ func TestRunDetailComparePreviousSafeStatesForAbsentMalformedAndDeniedRuns(t *te
 		for _, leaked := range []string{secret, "sk-proj", security.RedactionMarker, dir, filepath.ToSlash(dir)} {
 			if strings.Contains(body, leaked) {
 				t.Fatalf("malformed compare previous leaked %q:\n%s", leaked, body)
+			}
+		}
+	})
+
+	t.Run("partial current metadata", func(t *testing.T) {
+		dir := t.TempDir()
+		runID := "20260429-151500-partial"
+		writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete"}`)
+		writeRunManifest(t, dir, "20260429-150000-previous", "complete", "2026-04-29T15:00:00Z")
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
+		newTestServer(t, dir, "").Handler().ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("detail status = %d body=%s", rec.Code, body)
+		}
+		section := runDetailComparePreviousSection(t, body)
+		if !strings.Contains(section, "Compare previous: unavailable.") || strings.Contains(section, "/runs/compare?") {
+			t.Fatalf("partial metadata did not render deterministic unavailable state:\n%s", section)
+		}
+		for _, leaked := range []string{secret, "sk-proj", security.RedactionMarker, dir, filepath.ToSlash(dir), "manifest.json"} {
+			if strings.Contains(section, leaked) {
+				t.Fatalf("partial compare previous leaked %q:\n%s", leaked, section)
 			}
 		}
 	})
@@ -3513,6 +3556,7 @@ func TestRunDetailComparePreviousSafeStatesForAbsentMalformedAndDeniedRuns(t *te
 }
 
 func TestRunDetailComparePreviousSelectionIsDeterministic(t *testing.T) {
+	secret := "sk-proj-comparepreviousselect1234567890"
 	cases := []struct {
 		name     string
 		current  string
@@ -3548,6 +3592,19 @@ func TestRunDetailComparePreviousSelectionIsDeterministic(t *testing.T) {
 				{id: "20260429-160000-clockless-prev", startedAt: ""},
 			},
 		},
+		{
+			name:     "hostile and token-like timestamp labels fall back to safe id order",
+			current:  "20260429-164000-hostile-current",
+			previous: "20260429-163000-hostile-prev",
+			runs: []struct {
+				id        string
+				startedAt string
+			}{
+				{id: "20260429-164000-hostile-current", startedAt: "Authorization: Bearer " + secret},
+				{id: "20260429-163000-hostile-prev", startedAt: "/tmp/" + secret},
+				{id: "sk-proj-comparepreviousselectrun1234567890", startedAt: "2026-04-29T16:35:00Z"},
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3567,6 +3624,11 @@ func TestRunDetailComparePreviousSelectionIsDeterministic(t *testing.T) {
 			if !strings.Contains(section, wantURL) || !strings.Contains(section, "Compare "+tc.current+" to "+tc.previous) {
 				t.Fatalf("compare previous did not use deterministic previous %q:\n%s", tc.previous, section)
 			}
+			for _, leaked := range []string{secret, "sk-proj", "/tmp/", filepath.ToSlash(dir), dir, security.RedactionMarker} {
+				if strings.Contains(section, leaked) {
+					t.Fatalf("compare previous leaked deterministic selection fixture %q:\n%s", leaked, section)
+				}
+			}
 		})
 	}
 }
@@ -3585,6 +3647,21 @@ func TestComparePreviousPresentationBuildsGuardedVisibleSummary(t *testing.T) {
 		t.Fatalf("available compare previous URL = %q", summary.URL)
 	}
 
+	none := comparePreviousPresentation("none", current, "")
+	if !none.Visible || none.State != "none" || none.URL != "" || none.Message != "Compare previous: none." {
+		t.Fatalf("none compare previous summary mismatch: %#v", none)
+	}
+
+	denied := comparePreviousPresentation("denied", current, "")
+	if !denied.Visible || denied.State != "denied" || denied.URL != "" || denied.Message != "Compare previous: denied." {
+		t.Fatalf("denied compare previous summary mismatch: %#v", denied)
+	}
+
+	unknown := comparePreviousPresentation("unknown", current, "")
+	if !unknown.Visible || unknown.State != "unknown" || unknown.URL != "" || unknown.Message != "Compare previous: unknown." {
+		t.Fatalf("unknown compare previous summary mismatch: %#v", unknown)
+	}
+
 	unsafePrevious := comparePreviousPresentation("available", current, "sk-proj-comparepreviousguarded1234567890")
 	if !unsafePrevious.Visible || unsafePrevious.State != "unavailable" || unsafePrevious.URL != "" || unsafePrevious.PreviousRunID != "" {
 		t.Fatalf("unsafe previous run should produce unavailable state without a link: %#v", unsafePrevious)
@@ -3596,6 +3673,22 @@ func TestComparePreviousPresentationBuildsGuardedVisibleSummary(t *testing.T) {
 	unsafeCurrent := comparePreviousPresentation("none", "sk-proj-comparepreviouscurrent1234567890", "")
 	if unsafeCurrent.Visible || unsafeCurrent.Message != "" || unsafeCurrent.URL != "" {
 		t.Fatalf("unsafe current run should not render compare previous: %#v", unsafeCurrent)
+	}
+
+	sameRun := comparePreviousPresentation("available", current, current)
+	if !sameRun.Visible || sameRun.State != "unavailable" || sameRun.URL != "" {
+		t.Fatalf("same-run compare previous should be unavailable without a link: %#v", sameRun)
+	}
+
+	for _, pair := range [][2]string{
+		{current, "../20260429-162000-previous"},
+		{current, "sk-proj-comparepreviousguarded1234567890"},
+		{"", previous},
+		{current, current},
+	} {
+		if url := guardedRunCompareURL(pair[0], pair[1]); url != "" {
+			t.Fatalf("unsafe compare URL for %q/%q = %q", pair[0], pair[1], url)
+		}
 	}
 }
 
