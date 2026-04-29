@@ -3828,77 +3828,109 @@ func validationEvidenceCommandState(status string) string {
 }
 
 func evaluationFindingsSummaryFromRuns(runs []runLink) evaluationFindingsSummary {
-	summary := evaluationFindingsNoneSummary("No jj runs found.")
 	selected, ok := selectLatestRun(runs)
 	if !ok {
-		return summary
+		return evaluationFindingsNoneSummary("No jj runs found.")
 	}
-	runID := latestRunIDLabel(selected.ID)
+	return evaluationFindingsSummaryForRun(selected)
+}
+
+func evaluationFindingsSummaryForRun(run runLink) evaluationFindingsSummary {
+	runID := latestRunIDLabel(run.ID)
 	if runID == "" {
-		return summary
+		return evaluationFindingsNoneSummary("No jj runs found.")
 	}
 
-	summary.RunID = runID
-	summary.TimestampLabel = latestRunTimestampLabel(selected)
-	summary.DetailURL = guardedRunDetailURL(runID)
-	summary.HistoryURL = "/runs"
-	selected.Evaluation = evaluationMetadataForRun(selected)
+	run.Evaluation = evaluationMetadataForRun(run)
+	summary := evaluationFindingsBaseSummary(run, runID)
 
-	if selected.Invalid {
-		summary.State = "unavailable"
-		summary.EvaluationState = "unavailable"
-		summary.SummaryLabel = "evaluation unavailable"
-		summary.Message = evaluationFindingsMessage("unavailable")
-		if evaluationRunDenied(selected) {
-			summary.State = "denied"
-			summary.EvaluationState = "denied"
-			summary.SummaryLabel = "evaluation denied"
-			summary.Message = evaluationFindingsMessage("denied")
-		}
+	if run.Invalid {
+		summary.applyState(evaluationFindingsUnavailableState(run))
 		return sanitizeEvaluationFindingsSummary(summary)
 	}
 
-	evaluation := selected.Evaluation
+	evaluation := run.Evaluation
 	summary.EvaluationState = evaluation.Status
 	summary.SummaryLabel = evaluation.SummaryLabel
-	summary.IssueCount = evaluationIssueCount(selected, evaluation)
-	summary.RiskCount = len(selected.Risks)
-	summary.WarningCount = evaluationWarningCount(selected)
-	summary.Findings = evaluationFindingItems(selected, evaluation, summary.IssueCount, summary.RiskCount, summary.WarningCount)
+	summary.IssueCount = evaluationIssueCount(run, evaluation)
+	summary.RiskCount = len(run.Risks)
+	summary.WarningCount = evaluationWarningCount(run)
+	summary.Findings = evaluationFindingItems(run, evaluation, summary.IssueCount, summary.RiskCount, summary.WarningCount)
 	summary.AuditURL = guardedRunAuditURL(runID)
+	summary.applyState(evaluationFindingsStateForRun(run, evaluation, summary.IssueCount, summary.RiskCount, summary.WarningCount))
+	return sanitizeEvaluationFindingsSummary(summary)
+}
 
+func evaluationFindingsBaseSummary(run runLink, runID string) evaluationFindingsSummary {
+	return evaluationFindingsSummary{
+		RunID:          runID,
+		TimestampLabel: latestRunTimestampLabel(run),
+		DetailURL:      guardedRunDetailURL(runID),
+		HistoryURL:     "/runs",
+	}
+}
+
+type evaluationFindingsStateDecision struct {
+	State           string
+	Message         string
+	EvaluationState string
+	SummaryLabel    string
+}
+
+func (summary *evaluationFindingsSummary) applyState(state evaluationFindingsStateDecision) {
+	summary.State = state.State
+	summary.Message = state.Message
+	if state.EvaluationState != "" {
+		summary.EvaluationState = state.EvaluationState
+	}
+	if state.SummaryLabel != "" {
+		summary.SummaryLabel = state.SummaryLabel
+	}
+}
+
+func evaluationFindingsUnavailableState(run runLink) evaluationFindingsStateDecision {
+	state := "unavailable"
+	if evaluationRunDenied(run) {
+		state = "denied"
+	}
+	return evaluationFindingsStateDecision{
+		State:           state,
+		Message:         evaluationFindingsMessage(state),
+		EvaluationState: state,
+		SummaryLabel:    "evaluation " + state,
+	}
+}
+
+func evaluationFindingsStateForRun(run runLink, evaluation runEvaluationMetadata, issueCount, riskCount, warningCount int) evaluationFindingsStateDecision {
+	if evaluationInconsistent(run, evaluation) {
+		return evaluationFindingsStateDecision{
+			State:           "unknown",
+			Message:         evaluationFindingsMessage("unknown"),
+			EvaluationState: "unknown",
+			SummaryLabel:    "evaluation unknown",
+		}
+	}
 	switch {
 	case evaluation.State == "none":
-		summary.State = "none"
-		summary.Message = "No evaluation metadata recorded for latest run."
-		summary.EvaluationState = "none"
-		summary.SummaryLabel = "evaluation none"
+		return evaluationFindingsStateDecision{
+			State:           "none",
+			Message:         "No evaluation metadata recorded for latest run.",
+			EvaluationState: "none",
+			SummaryLabel:    "evaluation none",
+		}
 	case evaluation.State == "unavailable":
-		summary.State = "unavailable"
-		summary.Message = evaluationFindingsMessage("unavailable")
+		return evaluationFindingsStateDecision{State: "unavailable", Message: evaluationFindingsMessage("unavailable")}
 	case evaluation.State == "unknown":
-		summary.State = "unknown"
-		summary.Message = evaluationFindingsMessage("unknown")
-	case evaluation.State == "all-clear" && summary.IssueCount == 0 && summary.RiskCount == 0 && summary.WarningCount == 0:
-		summary.State = "all-clear"
-		summary.Message = "Latest evaluation is all clear."
+		return evaluationFindingsStateDecision{State: "unknown", Message: evaluationFindingsMessage("unknown")}
+	case evaluation.State == "all-clear" && issueCount == 0 && riskCount == 0 && warningCount == 0:
+		return evaluationFindingsStateDecision{State: "all-clear", Message: "Latest evaluation is all clear."}
 	case evaluation.State == "all-clear":
-		summary.State = "findings"
-		summary.Message = "Latest evaluation has findings."
-	case summary.IssueCount > 0 || summary.RiskCount > 0 || summary.WarningCount > 0:
-		summary.State = "findings"
-		summary.Message = "Latest evaluation has findings."
+		return evaluationFindingsStateDecision{State: "findings", Message: "Latest evaluation has findings."}
+	case issueCount > 0 || riskCount > 0 || warningCount > 0:
+		return evaluationFindingsStateDecision{State: "findings", Message: "Latest evaluation has findings."}
 	default:
-		summary.State = "unknown"
-		summary.Message = evaluationFindingsMessage("unknown")
+		return evaluationFindingsStateDecision{State: "unknown", Message: evaluationFindingsMessage("unknown")}
 	}
-	if evaluationInconsistent(selected, evaluation) {
-		summary.State = "unknown"
-		summary.Message = evaluationFindingsMessage("unknown")
-		summary.EvaluationState = "unknown"
-		summary.SummaryLabel = "evaluation unknown"
-	}
-	return sanitizeEvaluationFindingsSummary(summary)
 }
 
 func evaluationFindingsNoneSummary(message string) evaluationFindingsSummary {

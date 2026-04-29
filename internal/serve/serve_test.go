@@ -1337,6 +1337,16 @@ func TestDashboardEvaluationFindingsShowsLatestFindingsAndPreservesSections(t *t
 			t.Fatalf("evaluation findings missing %q:\n%s", want, findings)
 		}
 	}
+	assertSubstringsInOrder(t, findings, []string{
+		`<li><span class="muted">issue</span> validation failed in safe package</li>`,
+		`<li><span class="muted">risk</span> review required</li>`,
+		`<li><span class="muted">warning</span> git metadata unavailable</li>`,
+	})
+	assertSubstringsInOrder(t, findings, []string{
+		`href="/runs/20260429-120000-findings">Run detail</a>`,
+		`href="/runs">Run history</a>`,
+		`href="/runs/audit?run=20260429-120000-findings">Audit export</a>`,
+	})
 	for _, leaked := range []string{secret, "Raw manifest", "Validation summary", security.RedactionMarker, "[omitted]"} {
 		if strings.Contains(findings, leaked) {
 			t.Fatalf("evaluation findings leaked %q:\n%s", leaked, findings)
@@ -1473,7 +1483,8 @@ func TestDashboardEvaluationFindingsUnavailableDeniedUnknownAndNeedsWorkStates(t
 					t.Skipf("symlink unavailable: %v", err)
 				}
 			},
-			want: []string{"20260429-124000-denied", "denied", "evaluation denied", "Evaluation metadata denied."},
+			want:      []string{"20260429-124000-denied", "denied", "evaluation denied", "Evaluation metadata denied.", `href="/runs/20260429-124000-denied"`},
+			forbidden: []string{`href="/runs/audit?run=20260429-124000-denied"`},
 		},
 		{
 			name:  "hostile token-like metadata",
@@ -1491,7 +1502,7 @@ func TestDashboardEvaluationFindingsUnavailableDeniedUnknownAndNeedsWorkStates(t
 					"git":{"warnings":["../outside/`+secret+`"]}
 				}`)
 			},
-			want:      []string{"20260429-125000-hostile", "unknown", "evaluation unknown", "issues 1 · risks 1 · warnings 1"},
+			want:      []string{"20260429-125000-hostile", "unknown", "evaluation unknown", "issues 1 · risks 1 · warnings 1", `href="/runs/20260429-125000-hostile"`, `href="/runs/audit?run=20260429-125000-hostile"`, `>issue</span> issue`, `>risk</span> risk`, `>warning</span> warning`},
 			forbidden: []string{secret, "raw artifact body", "Authorization: Bearer", "../outside"},
 		},
 		{
