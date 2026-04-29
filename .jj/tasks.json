@@ -2321,6 +2321,33 @@
       "updated_at": "2026-04-29T05:13:56Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Run-detail Compare Previous visible-summary labels, none/unavailable/denied/unknown messages, deterministic previous-run display data, and guarded comparison URL decisions are centralized in narrow helper logic or an equivalent simplified structure.",
+        "The implementation consumes only existing sanitized DTO/helper output, guarded URL decisions, fixed safe labels, timestamp labels, or already-safe labels.",
+        "Existing Compare Previous labels, ordering, visibility, guarded URLs, deterministic previous-run selection, no-previous behavior, unavailable/unknown/denied states, malformed or partial metadata handling, hostile-label handling, token-like handling, missing timestamp behavior, tied timestamp behavior, unsafe-link behavior, and surrounding run-detail behavior remain unchanged.",
+        "No raw manifest, artifact body, raw path, command text, environment value, diff body, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, arbitrary file read, unsafe path read, route, CLI flag, schema field, config behavior, pagination, scanner, upload, broad file browsing, raw export, visual redesign, or user-facing semantic change is introduced.",
+        "Focused serve coverage is added or preserved for Compare Previous normal, no previous run, denied, unavailable, unknown, malformed or partial metadata, hostile-label, token-like, missing timestamp, tied timestamp, and unsafe guarded-link states where practical.",
+        "Validation passes focused Compare Previous serve tests, go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t62",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T05:17:27Z",
+      "created_by_run": "autopilot-20260428-160202-t62",
+      "created_by_turn": null,
+      "id": "TASK-0083",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent explicitly asks for code refactoring and simplification. Compare Previous presentation logic is an uncompleted, narrow, behavior-preserving refactor already allowed by the current spec and adjacent to the recently completed run-detail presentation cleanup. No current CI, validation, blocker, disclosure, or boundary evidence justifies bugfix or security work.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized run-detail Compare Previous presentation logic",
+      "updated_at": "2026-04-29T05:24:22Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

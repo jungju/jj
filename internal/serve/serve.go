@@ -3009,6 +3009,13 @@ type comparePreviousDisplayData struct {
 	PreviousRunID string
 }
 
+type comparePreviousPresentationDecision struct {
+	State         string
+	Message       string
+	PreviousRunID string
+	URL           string
+}
+
 func (s *Server) comparePreviousForInspection(inspection runInspection) comparePreviousSummary {
 	currentID := latestRunIDLabel(inspection.ID)
 	if currentID == "" {
@@ -3034,13 +3041,20 @@ func comparePreviousDisplayDataFromSanitizedRuns(currentID string, runs []runLin
 		return comparePreviousDisplayData{State: comparePreviousStateUnavailable}
 	}
 	previousID, foundCurrent := previousComparableRunID(currentID, runs)
-	if !foundCurrent {
+	return comparePreviousDisplayDataFromSelection(currentID, previousID, foundCurrent)
+}
+
+func comparePreviousDisplayDataFromSelection(currentID, previousID string, foundCurrent bool) comparePreviousDisplayData {
+	switch {
+	case currentID == "":
+		return comparePreviousDisplayData{State: comparePreviousStateUnavailable}
+	case !foundCurrent:
 		return comparePreviousDisplayData{State: comparePreviousStateUnavailable, CurrentRunID: currentID}
-	}
-	if previousID == "" {
+	case previousID == "":
 		return comparePreviousDisplayData{State: comparePreviousStateNone, CurrentRunID: currentID}
+	default:
+		return comparePreviousDisplayData{State: comparePreviousStateAvailable, CurrentRunID: currentID, PreviousRunID: previousID}
 	}
-	return comparePreviousDisplayData{State: comparePreviousStateAvailable, CurrentRunID: currentID, PreviousRunID: previousID}
 }
 
 func comparePreviousPresentation(state, currentID, previousID string) comparePreviousSummary {
@@ -3058,25 +3072,30 @@ func comparePreviousSummaryFromDisplay(display comparePreviousDisplayData) compa
 	if currentID == "" {
 		return comparePreviousSummary{}
 	}
-	switch state {
-	case comparePreviousStateAvailable:
-		previousID := latestRunIDLabel(display.PreviousRunID)
-		url := guardedRunCompareURL(currentID, previousID)
-		if previousID == "" || url == "" {
-			summary.State = comparePreviousStateUnavailable
-			summary.Message = comparePreviousMessage(comparePreviousStateUnavailable)
-			return summary
-		}
-		summary.PreviousRunID = previousID
-		summary.Message = "Compare " + currentID + " to " + previousID
-		summary.URL = url
-	case comparePreviousStateNone, comparePreviousStateUnavailable, comparePreviousStateDenied, comparePreviousStateUnknown:
-		summary.Message = comparePreviousMessage(state)
-	default:
-		summary.State = comparePreviousStateUnavailable
-		summary.Message = comparePreviousMessage(comparePreviousStateUnavailable)
-	}
+	decision := comparePreviousPresentationDecisionFor(state, currentID, display.PreviousRunID)
+	summary.State = decision.State
+	summary.Message = decision.Message
+	summary.PreviousRunID = decision.PreviousRunID
+	summary.URL = decision.URL
 	return summary
+}
+
+func comparePreviousPresentationDecisionFor(state, currentID, previousID string) comparePreviousPresentationDecision {
+	state = comparePreviousStateToken(state)
+	if state != comparePreviousStateAvailable {
+		return comparePreviousPresentationDecision{State: state, Message: comparePreviousMessage(state)}
+	}
+	previousID = latestRunIDLabel(previousID)
+	url := guardedRunCompareURL(currentID, previousID)
+	if previousID == "" || url == "" {
+		return comparePreviousPresentationDecision{State: comparePreviousStateUnavailable, Message: comparePreviousMessage(comparePreviousStateUnavailable)}
+	}
+	return comparePreviousPresentationDecision{
+		State:         comparePreviousStateAvailable,
+		Message:       comparePreviousAvailableMessage(currentID, previousID),
+		PreviousRunID: previousID,
+		URL:           url,
+	}
 }
 
 func comparePreviousStateToken(state string) string {
@@ -3094,6 +3113,10 @@ func comparePreviousStateToken(state string) string {
 	default:
 		return comparePreviousStateUnavailable
 	}
+}
+
+func comparePreviousAvailableMessage(currentID, previousID string) string {
+	return "Compare " + currentID + " to " + previousID
 }
 
 func comparePreviousMessage(state string) string {
