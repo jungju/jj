@@ -319,6 +319,89 @@ func TestProjectDocShortcutPresentationHelperPreservesGuardedURLs(t *testing.T) 
 	}
 }
 
+func TestDashboardRootSectionsHelperPreservesSanitizedSectionWiring(t *testing.T) {
+	task := &taskQueueItem{
+		ID:       "TASK-0098",
+		Category: "quality",
+		Status:   "in-progress",
+		Title:    "Simplify sanitized dashboard root section assembly",
+	}
+	taskQueue := taskQueueSummary{
+		State:      "available",
+		Available:  true,
+		Message:    "TASK.md: 1 total, 0 done, 1 in progress, 0 pending, 0 blocked.",
+		Counts:     taskQueueCounts{Total: 1, InProgress: 1},
+		Next:       task,
+		InProgress: task,
+	}
+	projectDocs := []projectDocShortcut{
+		{Label: "docs/TASK.md", State: "available", URL: docURL("docs/TASK.md")},
+		{Label: "Project doc", State: "denied"},
+	}
+	runs := []runLink{
+		{
+			ID:              "20260429-140000-complete",
+			Status:          "complete",
+			StartedAt:       "2026-04-29T14:00:00Z",
+			PlannerProvider: "openai",
+			Validation:      "passed (recorded)",
+			Evaluation: runEvaluationMetadata{
+				State:          "all-clear",
+				Status:         "passed",
+				EvidenceStatus: "recorded",
+				SummaryLabel:   "evaluation passed (recorded)",
+				CommandCount:   2,
+				PassedCount:    2,
+			},
+		},
+		{
+			ID:              "20260429-130000-active",
+			Status:          "running",
+			StartedAt:       "2026-04-29T13:00:00Z",
+			PlannerProvider: "codex",
+			Validation:      "passed (recorded)",
+			Evaluation: runEvaluationMetadata{
+				State:          "all-clear",
+				Status:         "passed",
+				EvidenceStatus: "recorded",
+				SummaryLabel:   "evaluation passed (recorded)",
+			},
+		},
+	}
+
+	sections := dashboardRootSectionsFrom(runs, taskQueue, projectDocs)
+
+	if sections.TaskSummary.Message != taskQueue.Message || sections.TaskSummary.Next == nil || sections.TaskSummary.Next.ID != "TASK-0098" {
+		t.Fatalf("root TASK summary wiring changed: %#v", sections.TaskSummary)
+	}
+	if sections.LatestRun.State != "available" || sections.LatestRun.Primary == nil || sections.LatestRun.Primary.RunID != "20260429-140000-complete" || sections.LatestRun.Secondary != "provider/result openai · evaluation passed (recorded)" {
+		t.Fatalf("root latest-run wiring changed: %#v", sections.LatestRun)
+	}
+	requireDashboardRunActions(t, sections.LatestRun.Actions,
+		dashboardRunActionLink{Label: "Run detail", URL: "/runs/20260429-140000-complete"},
+		dashboardRunActionLink{Label: "Run history", URL: "/runs"},
+		dashboardRunActionLink{Label: "Audit export", URL: "/runs/audit?run=20260429-140000-complete"},
+	)
+	if sections.RecentRuns.State != "available" || len(sections.RecentRuns.Items) != 2 || sections.RecentRuns.Items[0].RunID != "20260429-140000-complete" || sections.RecentRuns.Items[1].RunID != "20260429-130000-active" {
+		t.Fatalf("root recent-runs wiring changed: %#v", sections.RecentRuns)
+	}
+	if sections.EvaluationFindings.RunID != "20260429-140000-complete" || sections.EvaluationFindings.State != "all-clear" || !sections.EvaluationFindings.ShowAllClear || sections.EvaluationFindings.SummaryLine != "evaluation passed (recorded) · issues 0 · risks 0 · warnings 0" {
+		t.Fatalf("root evaluation-findings wiring changed: %#v", sections.EvaluationFindings)
+	}
+	if sections.ValidationStatus.State != "passed" || len(sections.ValidationStatus.Items) != 1 || sections.ValidationStatus.Items[0].RunID != "20260429-140000-complete" || sections.ValidationStatus.Items[0].CountsLabel != "commands 2 · passed 2 · failed 0" {
+		t.Fatalf("root validation-status wiring changed: %#v", sections.ValidationStatus)
+	}
+	if sections.NextAction.State != "continue_task" || sections.NextAction.Task == nil || sections.NextAction.Task.ID != "TASK-0098" {
+		t.Fatalf("root next-action wiring changed: %#v", sections.NextAction)
+	}
+	if len(sections.ProjectDocs) != 2 || sections.ProjectDocs[0] != (projectDocShortcut{Label: "docs/TASK.md", State: "available", URL: docURL("docs/TASK.md")}) || sections.ProjectDocs[1].State != "denied" {
+		t.Fatalf("root project-docs wiring changed: %#v", sections.ProjectDocs)
+	}
+	if sections.ActiveRuns.State != "available" || len(sections.ActiveRuns.Items) != 1 || sections.ActiveRuns.Items[0].RunID != "20260429-130000-active" || sections.ActiveRuns.Items[0].Status != "running" {
+		t.Fatalf("root active-run wiring changed: %#v", sections.ActiveRuns)
+	}
+}
+
 func TestDashboardLatestRunSummaryIsCompactSanitizedAndTimestampSelected(t *testing.T) {
 	dir := newTestWorkspace(t)
 	secret := "sk-proj-latestrun1234567890"

@@ -857,6 +857,17 @@ type pageData struct {
 	Error              string
 }
 
+type dashboardRootSections struct {
+	TaskSummary        dashboardTaskSummaryView
+	LatestRun          dashboardLatestRunView
+	RecentRuns         dashboardRecentRunsView
+	EvaluationFindings dashboardEvaluationFindingsView
+	ValidationStatus   validationStatusSummary
+	NextAction         nextActionSummary
+	ProjectDocs        []projectDocShortcut
+	ActiveRuns         activeRunsSummary
+}
+
 func Execute(ctx context.Context, cfg Config) error {
 	var err error
 	cfg, err = ResolveConfig(cfg)
@@ -1023,33 +1034,39 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runs = s.sanitizeRunHistoryLinks(runs)
-	latestRun := latestRunSummaryFromRuns(runs)
-	latestRunView := dashboardLatestRun(latestRun)
-	recentRuns := dashboardRecentRuns(recentRunsSummaryFromRuns(runs))
-	evaluationFindings := dashboardEvaluationFindings(evaluationFindingsSummaryFromRuns(runs))
-	validationStatus := validationStatusSummaryFromRuns(runs)
 	readiness := s.workspaceReadiness()
-	taskQueue := s.taskQueueSummary()
-	taskSummary := dashboardTaskSummary(taskQueue)
-	nextAction := nextActionSummaryFromSummaries(taskQueue, latestRun)
-	projectDocs := s.projectDocShortcuts()
+	sections := dashboardRootSectionsFrom(runs, s.taskQueueSummary(), s.projectDocShortcuts())
 	s.render(w, pageData{
 		Title:              "jj dashboard",
 		CWD:                displayWorkspace,
 		SelectedRun:        s.runID,
-		TaskSummary:        taskSummary,
-		LatestRun:          latestRunView,
-		RecentRuns:         recentRuns,
-		EvaluationFindings: evaluationFindings,
-		ValidationStatus:   validationStatus,
-		NextAction:         nextAction,
+		TaskSummary:        sections.TaskSummary,
+		LatestRun:          sections.LatestRun,
+		RecentRuns:         sections.RecentRuns,
+		EvaluationFindings: sections.EvaluationFindings,
+		ValidationStatus:   sections.ValidationStatus,
+		NextAction:         sections.NextAction,
 		Docs:               docs,
-		ProjectDocs:        projectDocs,
+		ProjectDocs:        sections.ProjectDocs,
 		Runs:               runs,
 		Readiness:          readiness,
 		DefaultPlan:        firstReadyPath(readiness, "Plan"),
-		ActiveRuns:         activeRunsSummaryFromRuns(runs),
+		ActiveRuns:         sections.ActiveRuns,
 	})
+}
+
+func dashboardRootSectionsFrom(runs []runLink, taskQueue taskQueueSummary, projectDocs []projectDocShortcut) dashboardRootSections {
+	latestRun := latestRunSummaryFromRuns(runs)
+	return dashboardRootSections{
+		TaskSummary:        dashboardTaskSummary(taskQueue),
+		LatestRun:          dashboardLatestRun(latestRun),
+		RecentRuns:         dashboardRecentRuns(recentRunsSummaryFromRuns(runs)),
+		EvaluationFindings: dashboardEvaluationFindings(evaluationFindingsSummaryFromRuns(runs)),
+		ValidationStatus:   validationStatusSummaryFromRuns(runs),
+		NextAction:         nextActionSummaryFromSummaries(taskQueue, latestRun),
+		ProjectDocs:        projectDocs,
+		ActiveRuns:         activeRunsSummaryFromRuns(runs),
+	}
 }
 
 func (s *Server) handleRunNew(w http.ResponseWriter, r *http.Request) {

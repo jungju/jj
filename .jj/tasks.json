@@ -2728,6 +2728,32 @@
       "updated_at": "2026-04-29T08:28:12Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Introduce narrow unexported internal/serve helper logic for dashboard root section assembly only where it removes real duplication or deeply nested wiring.",
+        "Touched dashboard root TASK summary, Latest Run, next-action, Project Docs, Recent Runs, Evaluation Findings, Active Run, and Validation Status behavior remains byte-for-byte or behaviorally identical for valid, empty, denied, unavailable, unknown, malformed, partial, stale, hostile-label, token-like, tied timestamp, missing timestamp, internally inconsistent, no-link, and fallback states where applicable.",
+        "All touched helpers consume only existing sanitized DTO/helper output, guarded URL decisions, fixed safe labels, normalized values, safe timestamps or counts, and already-safe state metadata.",
+        "No raw manifest, artifact body, raw path, command text, environment value, diff body, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, arbitrary file read, route, CLI flag, schema field, config behavior, scanner, upload, raw export, visual redesign, redaction policy change, path-boundary policy change, or user-facing semantic change is introduced.",
+        "Focused serve coverage is preserved or strengthened for every touched dashboard root section, then go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t77",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T08:29:36Z",
+      "created_by_run": "autopilot-20260428-160202-t77",
+      "created_by_turn": null,
+      "id": "TASK-0098",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent override asks for code refactoring and simplification. Current evidence shows all prior tasks are done and no failing validation, CI, disclosure, path-boundary, or test regression, so the next runnable work is a narrow behavior-preserving internal/serve quality refactor rather than security or bugfix work.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard root section assembly",
+      "updated_at": "2026-04-29T08:41:38Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
