@@ -1912,6 +1912,34 @@
       "updated_at": "2026-04-29T02:02:31Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Dashboard-root Latest Run Run detail, Run history, and Audit export action links are constructed through a narrow shared helper or equivalent simplified structure.",
+        "The helper consumes only existing sanitized dashboard DTO/helper output, guarded URL decisions, and fixed already-safe labels.",
+        "Existing Latest Run labels, action ordering, visibility, guarded URLs, none states, unavailable states, unknown states, denied states, and surrounding dashboard-root behavior are preserved.",
+        "Normal, none, unavailable, unknown, denied, malformed, hostile-label, token-like, partial, stale, missing timestamp, and tied timestamp behavior touched by the refactor remains deterministic and safe.",
+        "No raw manifests, artifact bodies, raw paths, command text, environment values, diffs, validation payloads, planner handoff payloads, TASK/EVAL/document bodies, secrets, token-like values, or omission placeholders are read or rendered.",
+        "No new dashboard pages, routes, CLI flags, schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw exports, visual redesign, or user-facing output semantics are introduced.",
+        "Focused serve tests cover normal Latest Run action links, unavailable or none state, denied or hostile-label fallback, and deterministic action ordering."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t47",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T02:08:32Z",
+      "created_by_run": "autopilot-20260428-160202-t47",
+      "created_by_turn": null,
+      "id": "TASK-0068",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent requests code refactoring and simplification. All existing tasks are complete, no current blocker or security regression evidence is present, and dashboard-root Latest Run guarded action-link construction remains a narrow maintainability target that can be simplified without changing user-facing behavior.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard Latest Run action-link presentation logic",
+      "updated_at": "2026-04-29T02:16:58Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

@@ -807,6 +807,30 @@ func TestDashboardLatestRunActionsPreserveStateOrderingAndGuardURLs(t *testing.T
 			},
 		},
 		{
+			name: "denied hostile detail falls back to history",
+			summary: latestRunSummary{
+				State:      "denied",
+				HistoryURL: "/runs",
+				DetailURL:  "/runs/../../secret",
+				AuditURL:   "/runs/audit?run=20260429-130000-complete",
+			},
+			want: []dashboardRunActionLink{
+				{Label: "Run history", URL: "/runs"},
+			},
+		},
+		{
+			name: "unknown token like detail falls back to history",
+			summary: latestRunSummary{
+				State:      "unknown",
+				HistoryURL: "/runs",
+				DetailURL:  "/runs/sk-proj-dashboardlatest1234567890",
+				AuditURL:   "/runs/audit?run=sk-proj-dashboardlatest1234567890",
+			},
+			want: []dashboardRunActionLink{
+				{Label: "Run history", URL: "/runs"},
+			},
+		},
+		{
 			name: "unsafe urls omitted",
 			summary: latestRunSummary{
 				State:      "available",
