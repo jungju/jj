@@ -3984,45 +3984,55 @@ func validationEvidenceFromRun(run runLink) validationEvidenceSummary {
 }
 
 type validationEvidenceVisibleInput struct {
-	RunLabels   runSummaryLabels
-	State       string
-	CountsLabel string
-	Labels      []string
+	RunLabels  runSummaryLabels
+	State      string
+	Metadata   runEvaluationMetadata
+	SafeLabels []string
 }
 
 func validationEvidenceVisibleSummaryForRun(run runLink) (validationEvidenceSummary, bool) {
-	runLabels, ok := runSummaryLabelsFor(run)
+	input, ok := validationEvidenceVisibleInputForRun(run)
 	if !ok {
 		return validationEvidenceSummary{}, false
 	}
+	return validationEvidenceVisibleSummary(input), true
+}
+
+func validationEvidenceVisibleInputForRun(run runLink) (validationEvidenceVisibleInput, bool) {
+	runLabels, ok := runSummaryLabelsFor(run)
+	if !ok {
+		return validationEvidenceVisibleInput{}, false
+	}
 	if run.Invalid {
 		state := validationEvidenceUnavailableState(run)
-		return validationEvidenceVisibleSummary(validationEvidenceVisibleInput{
+		return validationEvidenceVisibleInput{
 			RunLabels: runLabels,
 			State:     state,
-			Labels:    []string{"category " + state},
-		}), true
+			SafeLabels: []string{
+				"category " + state,
+			},
+		}, true
 	}
 	if !validationRunCompleted(run.Status) {
-		return validationEvidenceSummary{}, false
+		return validationEvidenceVisibleInput{}, false
 	}
 	metadata := validationStatusMetadataForRun(run)
 	if !validationMetadataRecorded(run, metadata) {
-		return validationEvidenceSummary{}, false
+		return validationEvidenceVisibleInput{}, false
 	}
 	if evaluationInconsistent(run, metadata) {
 		metadata = validationEvidenceUnknownMetadata(metadata)
 	}
 	state := validationStatusState(metadata)
 	if state == "" || state == "none" {
-		return validationEvidenceSummary{}, false
+		return validationEvidenceVisibleInput{}, false
 	}
-	return validationEvidenceVisibleSummary(validationEvidenceVisibleInput{
-		RunLabels:   runLabels,
-		State:       state,
-		CountsLabel: validationEvidenceCountsLabel(metadata),
-		Labels:      validationEvidenceLabelsForRun(run, metadata, state),
-	}), true
+	return validationEvidenceVisibleInput{
+		RunLabels:  runLabels,
+		State:      state,
+		Metadata:   metadata,
+		SafeLabels: validationEvidenceLabelsForRun(run, metadata, state),
+	}, true
 }
 
 func validationEvidenceUnavailableState(run runLink) string {
@@ -4047,9 +4057,9 @@ func validationEvidenceVisibleSummary(input validationEvidenceVisibleInput) vali
 		Message:         validationEvidenceMessage(input.State),
 		RunID:           input.RunLabels.RunID,
 		ValidationState: input.State,
-		CountsLabel:     input.CountsLabel,
+		CountsLabel:     validationEvidenceCountsLabel(input.Metadata),
 		TimestampLabel:  input.RunLabels.TimestampLabel,
-		Labels:          append([]string(nil), input.Labels...),
+		Labels:          append([]string(nil), input.SafeLabels...),
 		DetailURL:       input.RunLabels.DetailURL,
 		AuditURL:        input.RunLabels.AuditURL,
 	}

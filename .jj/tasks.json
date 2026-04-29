@@ -2294,6 +2294,33 @@
       "updated_at": "2026-04-29T05:01:51Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Run-detail Validation Evidence visible-summary labels, count labels, state messages, guarded links, and none, unavailable, unknown, or denied decisions are centralized in narrow helper logic or an equivalent simplified structure.",
+        "The refactor consumes only existing sanitized DTO/helper output, guarded URL decisions, safe count labels, timestamp labels, validation states, sanitized validation step or category labels, fixed safe labels, or already-safe labels.",
+        "Rendered Validation Evidence labels, ordering, visibility, count labels, timestamp behavior, guarded links, normal states, none states, unavailable states, unknown states, denied states, malformed or partial metadata handling, stale metadata handling, hostile-label handling, token-like handling, and surrounding run-detail behavior remain unchanged.",
+        "No raw validation payload, raw manifest, artifact body, raw path, command text, environment value, diff body, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, arbitrary file read, unsafe path read, route, CLI flag, schema field, config behavior, pagination, scanner, upload, broad file browsing, raw export, visual redesign, or user-facing semantic change is introduced.",
+        "Focused serve coverage is added or preserved for Validation Evidence normal, none, unavailable, denied, unknown, malformed or partial metadata, stale metadata, hostile-label, token-like, missing timestamp, count-label, timestamp, and guarded-link states where practical.",
+        "Validation passes focused Validation Evidence serve tests, go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t61",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T05:06:03Z",
+      "created_by_run": "autopilot-20260428-160202-t61",
+      "created_by_turn": null,
+      "id": "TASK-0082",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active .jj/next-intent.md asks for code refactoring and simplification. All 81 existing tasks are done and current evidence shows no blocker, test failure, CI failure, disclosure, release-gate failure, or boundary regression, so the next one-turn task should simplify a remaining narrow presentation path while preserving behavior.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized run-detail Validation Evidence presentation logic",
+      "updated_at": "2026-04-29T05:13:56Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
