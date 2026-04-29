@@ -2484,6 +2484,33 @@
       "updated_at": "2026-04-29T06:27:16Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Common sanitized CLI run-summary field construction shared by jj status and jj runs is centralized through narrow unexported helper logic only where behavior is identical.",
+        "jj status and jj runs continue to consume only existing sanitized DTO/helper output, fixed safe labels, or already-safe labels.",
+        "Exact output labels, ordering, spacing, fallback states, timestamp handling, active-run behavior, validation-status behavior, next-action behavior, and deterministic recent-run ordering remain unchanged.",
+        "Malformed, denied, stale, hostile-label, token-like, partial, tied timestamp, missing timestamp, and internally inconsistent metadata render deterministic none, unavailable, unknown, or denied states without panic or unsafe reflection.",
+        "No raw manifest, artifact body, raw path, command text, environment value, diff body, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, unsafe file read, new route, CLI flag, schema field, config behavior, scanner, upload, raw export, redaction policy change, path-boundary policy change, or user-facing semantic change is introduced.",
+        "Focused CLI tests cover touched jj status and jj runs sanitized output states, and validation passes go test ./internal/cli, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t68",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T06:28:41Z",
+      "created_by_run": "autopilot-20260428-160202-t68",
+      "created_by_turn": null,
+      "id": "TASK-0089",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent asks to refactor code and simplify unnecessary complexity. Current evidence shows no security, bugfix, CI, validation, disclosure, or boundary regression, and the strongest small next refactor is centralizing duplicated sanitized CLI run-summary field construction shared by jj status and jj runs while preserving exact output semantics.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify shared sanitized CLI run-summary construction",
+      "updated_at": "2026-04-29T06:37:15Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

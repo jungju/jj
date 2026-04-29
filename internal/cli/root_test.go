@@ -653,6 +653,14 @@ func TestCLIRunSummaryLineUsesOrderedFieldsAndFallbacks(t *testing.T) {
 		t.Fatalf("latest-run summary line changed:\nwant %q\ngot  %q", want, got)
 	}
 
+	var active bytes.Buffer
+	writeCLIRunSummaryLine(&active, "Active Run", cliActiveRunSummaryFields(serve.StatusActiveRunItem{
+		RunID: "20260429-130000-active",
+	}))
+	if got, want := active.String(), "Active Run: state=available run=20260429-130000-active status=unknown provider_or_result=unknown evaluation=unknown timestamp=unknown\n"; got != want {
+		t.Fatalf("active-run summary line changed:\nwant %q\ngot  %q", want, got)
+	}
+
 	var recent bytes.Buffer
 	writeCLIRunSummaryLine(&recent, "Run", cliRecentRunSummaryFields(serve.RecentRunItem{
 		State:            "denied",
