@@ -1584,6 +1584,34 @@
       "updated_at": "2026-04-28T23:52:51Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Duplicated or unnecessarily nested sanitized CLI run-summary presentation logic is reduced in one narrow area.",
+        "jj status output remains unchanged for covered normal, no-run, active-run, validation, malformed, denied, hostile-label, token-like, deterministic-label, stale, partial, tied timestamp, missing timestamp, and internally inconsistent metadata cases.",
+        "jj runs output remains unchanged for covered normal, no-run, malformed, denied, hostile-label, token-like, validation, evaluation, tied timestamp, missing timestamp, stale, partial, and internally inconsistent metadata cases.",
+        "Any shared CLI formatting helper consumes only existing sanitized DTO/helper output or already-safe labels.",
+        "No raw manifest, artifact, command, environment, diff, validation output, planner handoff, TASK.md, EVAL.md, document body, arbitrary file, unsafe path, secret, or token-like value reads are introduced.",
+        "No new CLI flags, dashboard pages, routes, manifest schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw export behavior, or user-facing output semantics are introduced.",
+        "Dashboard Recent Runs, Active Run, Validation Status, Validation Evidence, Compare Previous, and Run Artifacts behavior remains unchanged if any shared helper touch is required."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t35",
+      "completed_by_turn": null,
+      "created_at": "2026-04-28T23:54:24Z",
+      "created_by_run": "autopilot-20260428-160202-t35",
+      "created_by_turn": null,
+      "id": "TASK-0056",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next intent explicitly asks for code refactoring and simplification. All prior tasks are complete and there is no concrete failing validation, blocker, CI failure, disclosure, or boundary evidence that would justify bugfix or security work. The smallest useful next step is to remove remaining duplicated or unnecessarily nested jj status and jj runs presentation logic while preserving exact sanitized output behavior.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized CLI run-summary formatting",
+      "updated_at": "2026-04-29T00:01:51Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

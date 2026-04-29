@@ -475,14 +475,15 @@ func writeStatusSummary(w io.Writer, summary serve.StatusSummary) {
 	}
 
 	latest := summary.LatestRun
-	fmt.Fprintf(w, "Latest Run: state=%s run=%s status=%s provider_or_result=%s evaluation=%s timestamp=%s\n",
-		statusOutputValue(latest.State, "unknown"),
-		statusOutputValue(latest.RunID, "none"),
-		statusOutputValue(latest.Status, "unknown"),
-		statusOutputValue(latest.ProviderOrResult, "unknown"),
-		statusOutputValue(latest.EvaluationState, "unknown"),
-		statusOutputValue(latest.TimestampLabel, "unknown"),
-	)
+	writeCLIRunSummaryLine(w, "Latest Run", cliRunSummaryFields{
+		State:            latest.State,
+		RunID:            latest.RunID,
+		RunFallback:      "none",
+		Status:           latest.Status,
+		ProviderOrResult: latest.ProviderOrResult,
+		EvaluationState:  latest.EvaluationState,
+		TimestampLabel:   latest.TimestampLabel,
+	})
 
 	next := summary.NextAction
 	fmt.Fprintf(w, "Next Action: state=%s label=%s",
@@ -509,18 +510,14 @@ func writeStatusSummary(w io.Writer, summary serve.StatusSummary) {
 		fmt.Fprintf(w, "Active Run: state=%s\n", statusOutputValue(active.State, "none"))
 	} else {
 		for i, item := range active.Items {
-			label := "Active Run"
-			if len(active.Items) > 1 {
-				label = fmt.Sprintf("Active Run %d", i+1)
-			}
-			fmt.Fprintf(w, "%s: state=available run=%s status=%s provider_or_result=%s evaluation=%s timestamp=%s\n",
-				label,
-				statusOutputValue(item.RunID, "unknown"),
-				statusOutputValue(item.Status, "unknown"),
-				statusOutputValue(item.ProviderOrResult, "unknown"),
-				statusOutputValue(item.EvaluationState, "unknown"),
-				statusOutputValue(item.TimestampLabel, "unknown"),
-			)
+			writeCLIRunSummaryLine(w, cliSummaryItemLabel("Active Run", len(active.Items), i), cliRunSummaryFields{
+				State:            "available",
+				RunID:            item.RunID,
+				Status:           item.Status,
+				ProviderOrResult: item.ProviderOrResult,
+				EvaluationState:  item.EvaluationState,
+				TimestampLabel:   item.TimestampLabel,
+			})
 		}
 	}
 
@@ -534,10 +531,7 @@ func writeStatusSummary(w io.Writer, summary serve.StatusSummary) {
 		return
 	}
 	for i, item := range validation.Items {
-		label := "Validation Status"
-		if len(validation.Items) > 1 {
-			label = fmt.Sprintf("Validation Status %d", i+1)
-		}
+		label := cliSummaryItemLabel("Validation Status", len(validation.Items), i)
 		fmt.Fprintf(w, "%s: state=%s run=%s",
 			label,
 			statusOutputValue(item.ValidationState, "unknown"),
@@ -559,21 +553,65 @@ func writeRunsSummary(w io.Writer, summary serve.RecentRunsSummary) {
 		maxInt(len(summary.Items), 0),
 	)
 	for i, item := range summary.Items {
-		label := "Run"
-		if len(summary.Items) > 1 {
-			label = fmt.Sprintf("Run %d", i+1)
-		}
+		writeCLIRunSummaryLine(w, cliSummaryItemLabel("Run", len(summary.Items), i), cliRunSummaryFields{
+			State:             item.State,
+			RunID:             item.RunID,
+			Status:            item.Status,
+			ProviderOrResult:  item.ProviderOrResult,
+			EvaluationState:   item.EvaluationState,
+			ValidationState:   item.ValidationState,
+			TimestampLabel:    item.TimestampLabel,
+			IncludeValidation: true,
+		})
+	}
+}
+
+type cliRunSummaryFields struct {
+	State             string
+	RunID             string
+	RunFallback       string
+	Status            string
+	ProviderOrResult  string
+	EvaluationState   string
+	ValidationState   string
+	TimestampLabel    string
+	IncludeValidation bool
+}
+
+func writeCLIRunSummaryLine(w io.Writer, label string, fields cliRunSummaryFields) {
+	runFallback := fields.RunFallback
+	if runFallback == "" {
+		runFallback = "unknown"
+	}
+	if fields.IncludeValidation {
 		fmt.Fprintf(w, "%s: state=%s run=%s status=%s provider_or_result=%s evaluation=%s validation=%s timestamp=%s\n",
 			label,
-			statusOutputValue(item.State, "unknown"),
-			statusOutputValue(item.RunID, "unknown"),
-			statusOutputValue(item.Status, "unknown"),
-			statusOutputValue(item.ProviderOrResult, "unknown"),
-			statusOutputValue(item.EvaluationState, "unknown"),
-			statusOutputValue(item.ValidationState, "unknown"),
-			statusOutputValue(item.TimestampLabel, "unknown"),
+			statusOutputValue(fields.State, "unknown"),
+			statusOutputValue(fields.RunID, runFallback),
+			statusOutputValue(fields.Status, "unknown"),
+			statusOutputValue(fields.ProviderOrResult, "unknown"),
+			statusOutputValue(fields.EvaluationState, "unknown"),
+			statusOutputValue(fields.ValidationState, "unknown"),
+			statusOutputValue(fields.TimestampLabel, "unknown"),
 		)
+		return
 	}
+	fmt.Fprintf(w, "%s: state=%s run=%s status=%s provider_or_result=%s evaluation=%s timestamp=%s\n",
+		label,
+		statusOutputValue(fields.State, "unknown"),
+		statusOutputValue(fields.RunID, runFallback),
+		statusOutputValue(fields.Status, "unknown"),
+		statusOutputValue(fields.ProviderOrResult, "unknown"),
+		statusOutputValue(fields.EvaluationState, "unknown"),
+		statusOutputValue(fields.TimestampLabel, "unknown"),
+	)
+}
+
+func cliSummaryItemLabel(base string, total, index int) string {
+	if total <= 1 {
+		return base
+	}
+	return fmt.Sprintf("%s %d", base, index+1)
 }
 
 func statusOutputValue(value, fallback string) string {

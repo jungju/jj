@@ -20,7 +20,12 @@
     "TASK-0055 left jj status and jj runs output behavior unchanged for normal, no-run, active-run, validation metadata, malformed, denied, hostile-label, token-like, stale, partial, tied timestamp, missing timestamp, deterministic label, and internally inconsistent metadata cases.",
     "TASK-0055 left Dashboard Recent Runs, Active Run, Validation Status, run detail Validation Evidence, Compare Previous, and Run Artifacts behavior unchanged where touched.",
     "TASK-0055 did not introduce new CLI flags, dashboard pages, raw export endpoints, scanners, config behavior, pagination, manifest schema changes, artifact uploads, broad file browsing, dashboard layout changes, or user-facing output semantics.",
-    "TASK-0055 validation passed go test ./internal/cli ./internal/serve, git diff --check, go test ./..., and scripts/validate.sh with sanitized release-gate metadata."
+    "TASK-0055 validation passed go test ./internal/cli ./internal/serve, git diff --check, go test ./..., and scripts/validate.sh with sanitized release-gate metadata.",
+    "TASK-0056 reduced duplicated or unnecessarily nested sanitized CLI run-summary presentation logic in one narrow area by consolidating shared CLI run-summary line formatting for Latest Run, Active Run, and jj runs.",
+    "TASK-0056 added a small shared numbered-label helper for Run N, Active Run N, and Validation Status N while consuming only existing sanitized DTO/helper output or already-safe labels.",
+    "TASK-0056 left jj status and jj runs output behavior unchanged for covered normal, no-run, active-run, validation metadata, malformed, denied, hostile-label, token-like, deterministic-label, stale, partial, tied timestamp, missing timestamp, evaluation, and internally inconsistent metadata cases.",
+    "TASK-0056 introduced no raw manifest, artifact, command, environment, diff, validation output, planner handoff, TASK.md, EVAL.md, document body, arbitrary file, unsafe path, secret, or token-like value reads, and no new CLI flags, dashboard pages, routes, manifest schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw export behavior, or user-facing output semantics.",
+    "TASK-0056 validation passed go test ./internal/cli -run 'Test(StatusCommand|RunsCommand)', go test ./internal/cli ./internal/serve, git diff --check, go test ./..., and scripts/validate.sh with sanitized release-gate metadata."
   ],
   "created_at": "2026-04-28",
   "goals": [
@@ -33,7 +38,7 @@
     "Ensure auto and balanced task proposal resolution selects bugfix or security only from concrete current evidence, not completed guardrails, healthy context, or absent evidence.",
     "Use scripts/validate.sh as the single documented release validation entry point for local and CI security release gates.",
     "Keep completed security guardrails closed unless a concrete release-gate, CI, validation, test, disclosure, or boundary regression is observed.",
-    "Keep sanitized run-summary presentation code maintainable by reducing unnecessary duplication and branching without changing output semantics."
+    "Keep sanitized run-summary presentation code maintainable by reducing unnecessary duplication, nesting, and branching without changing output semantics."
   ],
   "non_goals": [
     "Provide a hosted cloud service.",
@@ -46,7 +51,7 @@
     "Allow explicitly provided plan files outside the workspace by default.",
     "Reopen completed tasks without fresh failing validation, tests, CI, confirmed disclosure, or boundary regression evidence.",
     "Expose child command stdout or stderr from the release validation entry point or CI wrapper.",
-    "Change jj status, jj runs, dashboard layout, manifest schema, artifact routes, redaction policy, path-boundary policy, or validation behavior as part of sanitized run-summary helper maintenance."
+    "Change jj status, jj runs, dashboard layout, manifest schema, artifact routes, redaction policy, path-boundary policy, validation behavior, or user-facing output semantics as part of sanitized run-summary helper maintenance."
   ],
   "open_questions": [],
   "requirements": [
@@ -92,14 +97,15 @@
     "jj runs ordering must be deterministic when timestamps are missing, malformed, duplicated, or tied, using sanitized stable tie-breakers only.",
     "jj runs must not add raw artifact browsing, raw export, new config semantics, pagination, dashboard behavior changes, scanners, artifact uploads, broad file browsing, .jjrc behavior, or unrelated user-facing features.",
     "Active Run, Validation Status, Validation Evidence, Compare Previous, Run Artifacts, jj status, and jj runs rendering must not add new dashboard pages, raw export endpoints, scanners, artifact uploads, broad file browsing, pagination, configurable limits, or unrelated user-facing features.",
-    "Sanitized run-summary presentation helpers may consolidate common safe run ID, status, evaluation, timestamp, detail URL, and audit URL label selection only when they accept existing sanitized DTO/helper output or already-safe labels and preserve existing behavior.",
+    "Sanitized run-summary presentation helpers may consolidate common safe run ID, status, evaluation, validation, timestamp, detail URL, audit URL, CLI run-summary line, and numbered label selection only when they accept existing sanitized DTO/helper output or already-safe labels and preserve existing behavior.",
     "Refactored CLI and dashboard presentation paths must remain thin and must not introduce raw manifest, artifact, command, environment, diff, validation output, planner handoff, TASK.md, EVAL.md, document body, arbitrary file, unsafe path reads, new user-facing surfaces, output semantics, schema fields, routes, configuration, pagination, scanners, uploads, or broad file browsing.",
+    "Unnecessary duplicated or deeply nested sanitized CLI run-summary presentation branching should be simplified only in narrow areas where existing behavior can be preserved and validated.",
     "Auto or balanced task proposal resolution must choose bugfix only from positive current blocker evidence and security only from concrete release-gate, CI, validation, test, disclosure, or boundary evidence showing a security or privacy regression.",
     "scripts/validate.sh must remain the single documented release validation entry point, run focused security boundary suites, full tests, vet, CLI build, and diff-check, suppress child command output, emit only deterministic sanitized metadata, and exit non-zero on any failing step.",
     "Completed security guardrails must remain closed unless scripts/validate.sh, focused Go security suites, full tests, vet, build, diff-check, or the CI release gate produces a concrete disclosure, path-boundary, artifact, dashboard, planner handoff, validation output, git diff, command metadata, or release-gate output regression."
   ],
-  "summary": "jj is a CLI that turns a planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security remains the controlling constraint: generated artifacts, served run-inspection surfaces, explicit plan inputs, command metadata, manifests, validation outputs, git diff artifacts, planner and Codex handoff metadata, run metadata, dashboard summaries, project document shortcuts, recent runs, evaluation findings, active-run progress, validation status, run detail validation evidence, compare-to-previous links, sanitized run artifact inventory, CLI status output, and CLI recent-run output must be guarded, redacted, and kept inside the configured workspace or allowed run artifact roots. Completed security guardrails remain closed unless concrete validation, test, CI, disclosure, or boundary evidence proves a regression. The dashboard summarizes TASK.md, latest run, next action, Project Docs, Recent Runs, Evaluation Findings, Active Run progress, compact sanitized validation status, guarded validation evidence, compare-to-previous navigation, and compact sanitized artifact inventory on run detail views without exposing raw artifacts. The jj status command provides safe high-level state in terminal form, and jj runs provides compact sanitized recent-run visibility without requiring the local server. Sanitized run-summary presentation code now shares a narrow helper for common safe labels while preserving user-facing behavior and security boundaries.",
+  "summary": "jj is a CLI that turns a planning file into implementation-ready specs, tasks, Codex runs, validation artifacts, and a local dashboard. Security remains the controlling constraint: generated artifacts, served run-inspection surfaces, explicit plan inputs, command metadata, manifests, validation outputs, git diff artifacts, planner and Codex handoff metadata, run metadata, dashboard summaries, project document shortcuts, recent runs, evaluation findings, active-run progress, validation status, run detail validation evidence, compare-to-previous links, sanitized run artifact inventory, CLI status output, and CLI recent-run output must be guarded, redacted, and kept inside the configured workspace or allowed run artifact roots. Completed security guardrails remain closed unless concrete validation, test, CI, disclosure, or boundary evidence proves a regression. The dashboard summarizes TASK.md, latest run, next action, Project Docs, Recent Runs, Evaluation Findings, Active Run progress, compact sanitized validation status, guarded validation evidence, compare-to-previous navigation, and compact sanitized artifact inventory on run detail views without exposing raw artifacts. The jj status command provides safe high-level state in terminal form, and jj runs provides compact sanitized recent-run visibility without requiring the local server. Sanitized run-summary presentation code now shares narrow helpers for common safe labels, CLI run-summary lines, and numbered labels while preserving user-facing behavior and security boundaries.",
   "title": "jj Security Boundary and Dashboard Run Inspection",
-  "updated_at": "2026-04-28T23:54:22Z",
+  "updated_at": "2026-04-29T00:05:18Z",
   "version": 1
 }
