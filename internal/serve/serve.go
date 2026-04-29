@@ -3941,10 +3941,7 @@ func validationStatusActions(detailURL, auditURL string) []dashboardRunActionLin
 }
 
 func validationStatusUnavailableState(run runLink) string {
-	if evaluationRunDenied(run) {
-		return "denied"
-	}
-	return "unavailable"
+	return sanitizedInvalidRunPresentationState(run)
 }
 
 func validationRunCompleted(status string) bool {
@@ -4113,10 +4110,7 @@ func validationEvidenceVisibleInputForRun(run runLink) (validationEvidenceVisibl
 }
 
 func validationEvidenceUnavailableState(run runLink) string {
-	if evaluationRunDenied(run) {
-		return "denied"
-	}
-	return "unavailable"
+	return sanitizedInvalidRunPresentationState(run)
 }
 
 func validationEvidenceUnknownMetadata(metadata runEvaluationMetadata) runEvaluationMetadata {
@@ -4448,10 +4442,7 @@ func evaluationFindingsGuardedLinks(runID string, includeAudit bool) evaluationF
 }
 
 func evaluationFindingsUnavailableState(run runLink) evaluationFindingsStateDecision {
-	state := "unavailable"
-	if evaluationRunDenied(run) {
-		state = "denied"
-	}
+	state := sanitizedInvalidRunPresentationState(run)
 	return evaluationFindingsDecisionWithMetadata(state, state, "evaluation "+state)
 }
 
@@ -4827,6 +4818,15 @@ func evaluationRunDenied(run runLink) bool {
 		}
 	}
 	return false
+}
+
+// sanitizedInvalidRunPresentationState expects a sanitized run DTO and returns
+// only fixed dashboard state labels for invalid run metadata.
+func sanitizedInvalidRunPresentationState(sanitizedRun runLink) string {
+	if evaluationRunDenied(sanitizedRun) {
+		return "denied"
+	}
+	return "unavailable"
 }
 
 func evaluationFindingsMessage(state string) string {

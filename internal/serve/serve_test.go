@@ -1527,6 +1527,67 @@ func TestDashboardValidationStatusUnavailableUnknownDeniedAndNoneStatesAreSafe(t
 	}
 }
 
+func TestSanitizedInvalidRunPresentationStateUsesFixedLabels(t *testing.T) {
+	secret := "sk-proj-invalidrunstate1234567890"
+	cases := []struct {
+		name string
+		run  runLink
+		want string
+	}{
+		{
+			name: "empty invalid metadata",
+			run:  runLink{Invalid: true},
+			want: "unavailable",
+		},
+		{
+			name: "normal unavailable metadata",
+			run:  runLink{Invalid: true, Status: "unavailable", ErrorSummary: "manifest unavailable"},
+			want: "unavailable",
+		},
+		{
+			name: "denied status",
+			run:  runLink{Invalid: true, Status: "denied"},
+			want: "denied",
+		},
+		{
+			name: "denied error",
+			run:  runLink{Invalid: true, Status: "unavailable", ErrorSummary: "run metadata denied"},
+			want: "denied",
+		},
+		{
+			name: "denied risk",
+			run:  runLink{Invalid: true, RiskSummary: "path denied"},
+			want: "denied",
+		},
+		{
+			name: "hostile token-like metadata",
+			run: runLink{
+				Invalid:      true,
+				Status:       secret,
+				ErrorSummary: "Authorization: Bearer " + secret,
+				RiskSummary:  "token=" + secret,
+			},
+			want: "unavailable",
+		},
+		{
+			name: "hostile denied payload",
+			run:  runLink{Invalid: true, ErrorSummary: "denied token=" + secret},
+			want: "unavailable",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sanitizedInvalidRunPresentationState(tc.run)
+			if got != tc.want {
+				t.Fatalf("state = %q, want %q", got, tc.want)
+			}
+			if strings.Contains(got, secret) || strings.Contains(got, "token=") || strings.Contains(got, "Authorization") {
+				t.Fatalf("state leaked hostile metadata: %q", got)
+			}
+		})
+	}
+}
+
 func TestValidationStatusSelectionIsDeterministicForTimestampFallbacksAndTies(t *testing.T) {
 	passed := runEvaluationMetadata{State: "all-clear", Status: "passed", EvidenceStatus: "recorded", SummaryLabel: "evaluation passed"}
 	failed := runEvaluationMetadata{State: "findings", Status: "failed", EvidenceStatus: "recorded", SummaryLabel: "evaluation failed", CommandCount: 1, FailedCount: 1}
