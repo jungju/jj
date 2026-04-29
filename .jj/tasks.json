@@ -2781,6 +2781,35 @@
       "updated_at": "2026-04-29T08:51:39Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Introduce only narrow unexported helper logic in the existing CLI presentation area for shared sanitized jj status and jj runs run-summary construction.",
+        "Preserve jj status and jj runs output byte-for-byte where asserted and behaviorally identical everywhere touched, including labels, ordering, spacing, timestamps, status, evaluation, validation text, fallback messages, and successful exits in valid workspaces.",
+        "Continue to render deterministic sanitized none, unavailable, unknown, denied, empty, malformed, partial, stale, hostile-label, token-like, missing timestamp, tied timestamp, and internally inconsistent metadata states without panics or unsafe reflection.",
+        "Consume only existing sanitized DTO/helper output, fixed safe labels, normalized values, safe timestamps or counts, guarded state metadata, and already-safe fallback labels.",
+        "Do not change DTO construction, manifest reading, route behavior, dashboard behavior, CLI flags, schema fields, config behavior, validation behavior, redaction policy, path-boundary policy, scanners, uploads, raw exports, or user-facing semantics.",
+        "Do not render or persist raw manifests, artifact bodies, paths, command text, environment values, diffs, validation payloads, planner handoff payloads, TASK.md bodies, EVAL.md bodies, document bodies, configured secrets, token-like values, omission placeholders, or unsafe path data.",
+        "Preserve or strengthen focused CLI tests for valid, none, unavailable, unknown, denied, empty, malformed, partial, stale, hostile-label, token-like, missing timestamp, tied timestamp, internally inconsistent metadata, field ordering, numbered labels, fallback labels, timestamps, status/evaluation/validation text, spacing, and deterministic sanitized values.",
+        "Validation passes focused CLI tests, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and ./scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t79",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T08:54:08Z",
+      "created_by_run": "autopilot-20260428-160202-t79",
+      "created_by_turn": null,
+      "id": "TASK-0100",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent override asks for code refactoring and simplification. Current evidence shows no blocker, failing validation, CI failure, disclosure, or security boundary regression, and recent completed work simplified dashboard and run-detail presentation while the adjacent jj status and jj runs CLI run-summary path remains a small behavior-preserving refactor target.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized CLI run-summary presentation construction",
+      "updated_at": "2026-04-29T09:01:52Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

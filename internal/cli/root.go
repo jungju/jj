@@ -474,7 +474,7 @@ func writeStatusSummary(w io.Writer, summary serve.StatusSummary) {
 		)
 	}
 
-	writeCLIRunSummaryLine(w, "Latest Run", cliLatestRunSummaryFields(summary.LatestRun))
+	writeCLIRunSummaryLine(w, cliLatestRunSummaryLine(summary.LatestRun))
 
 	next := summary.NextAction
 	fmt.Fprintf(w, "Next Action: state=%s label=%s",
@@ -501,7 +501,7 @@ func writeStatusSummary(w io.Writer, summary serve.StatusSummary) {
 		fmt.Fprintf(w, "Active Run: state=%s\n", statusOutputValue(active.State, "none"))
 	} else {
 		for i, item := range active.Items {
-			writeCLIRunSummaryLine(w, cliSummaryItemLabel("Active Run", len(active.Items), i), cliActiveRunSummaryFields(item))
+			writeCLIRunSummaryLine(w, cliActiveRunSummaryLine(item, len(active.Items), i))
 		}
 	}
 
@@ -537,14 +537,13 @@ func writeRunsSummary(w io.Writer, summary serve.RecentRunsSummary) {
 		maxInt(len(summary.Items), 0),
 	)
 	for i, item := range summary.Items {
-		writeCLIRunSummaryLine(w, cliSummaryItemLabel("Run", len(summary.Items), i), cliRecentRunSummaryFields(item))
+		writeCLIRunSummaryLine(w, cliRecentRunSummaryLine(item, len(summary.Items), i))
 	}
 }
 
-type cliRunSummaryFields struct {
-	cliRunSummarySafeLabels
-	RunFallback       string
-	IncludeValidation bool
+type cliRunSummaryLine struct {
+	Label  string
+	Fields []cliRunSummaryOutputField
 }
 
 type cliRunSummarySafeLabels struct {
@@ -568,8 +567,9 @@ type cliRunSummaryOutputField struct {
 	Fallback string
 }
 
-func cliLatestRunSummaryFields(latest serve.StatusLatestRunSummary) cliRunSummaryFields {
-	return cliRunSummaryFieldsFromSafeLabels(
+func cliLatestRunSummaryLine(latest serve.StatusLatestRunSummary) cliRunSummaryLine {
+	return cliRunSummaryLineFromSafeLabels(
+		"Latest Run",
 		cliRunSummarySafeLabels{
 			State:            latest.State,
 			RunID:            latest.RunID,
@@ -582,8 +582,9 @@ func cliLatestRunSummaryFields(latest serve.StatusLatestRunSummary) cliRunSummar
 	)
 }
 
-func cliActiveRunSummaryFields(item serve.StatusActiveRunItem) cliRunSummaryFields {
-	return cliRunSummaryFieldsFromSafeLabels(
+func cliActiveRunSummaryLine(item serve.StatusActiveRunItem, total, index int) cliRunSummaryLine {
+	return cliRunSummaryLineFromSafeLabels(
+		cliSummaryItemLabel("Active Run", total, index),
 		cliRunSummarySafeLabels{
 			State:            "available",
 			RunID:            item.RunID,
@@ -596,8 +597,9 @@ func cliActiveRunSummaryFields(item serve.StatusActiveRunItem) cliRunSummaryFiel
 	)
 }
 
-func cliRecentRunSummaryFields(item serve.RecentRunItem) cliRunSummaryFields {
-	return cliRunSummaryFieldsFromSafeLabels(
+func cliRecentRunSummaryLine(item serve.RecentRunItem, total, index int) cliRunSummaryLine {
+	return cliRunSummaryLineFromSafeLabels(
+		cliSummaryItemLabel("Run", total, index),
 		cliRunSummarySafeLabels{
 			State:            item.State,
 			RunID:            item.RunID,
@@ -611,38 +613,37 @@ func cliRecentRunSummaryFields(item serve.RecentRunItem) cliRunSummaryFields {
 	)
 }
 
-func cliRunSummaryFieldsFromSafeLabels(labels cliRunSummarySafeLabels, opts cliRunSummaryFieldOptions) cliRunSummaryFields {
-	return cliRunSummaryFields{
-		cliRunSummarySafeLabels: labels,
-		RunFallback:             opts.RunFallback,
-		IncludeValidation:       opts.IncludeValidation,
+func cliRunSummaryLineFromSafeLabels(label string, labels cliRunSummarySafeLabels, opts cliRunSummaryFieldOptions) cliRunSummaryLine {
+	return cliRunSummaryLine{
+		Label:  label,
+		Fields: cliRunSummaryOutputFields(labels, opts),
 	}
 }
 
-func writeCLIRunSummaryLine(w io.Writer, label string, fields cliRunSummaryFields) {
-	fmt.Fprintf(w, "%s:", label)
-	for _, field := range cliRunSummaryOutputFields(fields) {
+func writeCLIRunSummaryLine(w io.Writer, line cliRunSummaryLine) {
+	fmt.Fprintf(w, "%s:", line.Label)
+	for _, field := range line.Fields {
 		fmt.Fprintf(w, " %s=%s", field.Key, statusOutputValue(field.Value, field.Fallback))
 	}
 	fmt.Fprintln(w)
 }
 
-func cliRunSummaryOutputFields(fields cliRunSummaryFields) []cliRunSummaryOutputField {
-	runFallback := fields.RunFallback
+func cliRunSummaryOutputFields(labels cliRunSummarySafeLabels, opts cliRunSummaryFieldOptions) []cliRunSummaryOutputField {
+	runFallback := opts.RunFallback
 	if runFallback == "" {
 		runFallback = "unknown"
 	}
 	out := []cliRunSummaryOutputField{
-		{Key: "state", Value: fields.State, Fallback: "unknown"},
-		{Key: "run", Value: fields.RunID, Fallback: runFallback},
-		{Key: "status", Value: fields.Status, Fallback: "unknown"},
-		{Key: "provider_or_result", Value: fields.ProviderOrResult, Fallback: "unknown"},
-		{Key: "evaluation", Value: fields.EvaluationState, Fallback: "unknown"},
+		{Key: "state", Value: labels.State, Fallback: "unknown"},
+		{Key: "run", Value: labels.RunID, Fallback: runFallback},
+		{Key: "status", Value: labels.Status, Fallback: "unknown"},
+		{Key: "provider_or_result", Value: labels.ProviderOrResult, Fallback: "unknown"},
+		{Key: "evaluation", Value: labels.EvaluationState, Fallback: "unknown"},
 	}
-	if fields.IncludeValidation {
-		out = append(out, cliRunSummaryOutputField{Key: "validation", Value: fields.ValidationState, Fallback: "unknown"})
+	if opts.IncludeValidation {
+		out = append(out, cliRunSummaryOutputField{Key: "validation", Value: labels.ValidationState, Fallback: "unknown"})
 	}
-	out = append(out, cliRunSummaryOutputField{Key: "timestamp", Value: fields.TimestampLabel, Fallback: "unknown"})
+	out = append(out, cliRunSummaryOutputField{Key: "timestamp", Value: labels.TimestampLabel, Fallback: "unknown"})
 	return out
 }
 
