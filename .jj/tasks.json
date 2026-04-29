@@ -1612,6 +1612,33 @@
       "updated_at": "2026-04-29T00:01:51Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Reduce duplicated or unnecessarily nested sanitized dashboard run-detail presentation logic in exactly one narrow area, preferably around Validation Evidence, Compare Previous, or Run Artifacts.",
+        "Consume only existing sanitized DTO/helper output or already-safe labels.",
+        "Preserve rendered labels, ordering, guarded links, and none/unavailable/unknown/denied states for covered normal, missing, malformed, denied, hostile-label, token-like, stale, partial, no-previous/no-artifact, and internally inconsistent metadata cases where touched.",
+        "Introduce no raw manifest, artifact, command, environment, diff, validation output, planner handoff, TASK.md, EVAL.md, document body, arbitrary file, unsafe path, configured secret, or token-like value reads.",
+        "Introduce no new CLI flags, dashboard pages, routes, manifest schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw export behavior, visual redesign, or user-facing output semantics.",
+        "Pass focused serve tests for the touched run-detail section, go test ./internal/serve, go test ./internal/cli ./internal/serve, git diff --check, go test ./..., and scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t36",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T00:05:19Z",
+      "created_by_run": "autopilot-20260428-160202-t36",
+      "created_by_turn": null,
+      "id": "TASK-0057",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent explicitly asks for code refactoring and simplification. Current evidence shows all prior tasks are done and there is no failing validation, blocker, CI regression, or concrete security/privacy disclosure, so the next runnable task should be a narrow quality refactor that preserves behavior.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard run-detail presentation logic",
+      "updated_at": "2026-04-29T00:11:31Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

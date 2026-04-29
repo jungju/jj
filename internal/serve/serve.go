@@ -3565,22 +3565,10 @@ func validationEvidenceFromRun(run runLink) validationEvidenceSummary {
 	}
 	if run.Invalid {
 		state := "unavailable"
-		message := "Validation evidence unavailable."
 		if evaluationRunDenied(run) {
 			state = "denied"
-			message = "Validation evidence denied."
 		}
-		return validationEvidenceSummary{
-			Visible:         true,
-			State:           state,
-			Message:         message,
-			RunID:           runLabels.RunID,
-			ValidationState: state,
-			TimestampLabel:  runLabels.TimestampLabel,
-			Labels:          []string{"category " + state},
-			DetailURL:       runLabels.DetailURL,
-			AuditURL:        runLabels.AuditURL,
-		}
+		return validationEvidenceVisibleSummary(runLabels, state, "", []string{"category " + state})
 	}
 	if !validationRunCompleted(run.Status) {
 		return summary
@@ -3600,15 +3588,19 @@ func validationEvidenceFromRun(run runLink) validationEvidenceSummary {
 		return summary
 	}
 	evidenceLabels := validationEvidenceLabelsForRun(run, metadata, state)
+	return validationEvidenceVisibleSummary(runLabels, state, validationEvidenceCountsLabel(metadata), evidenceLabels)
+}
+
+func validationEvidenceVisibleSummary(runLabels runSummaryLabels, state, countsLabel string, labels []string) validationEvidenceSummary {
 	return validationEvidenceSummary{
 		Visible:         true,
 		State:           state,
 		Message:         validationEvidenceMessage(state),
 		RunID:           runLabels.RunID,
 		ValidationState: state,
-		CountsLabel:     validationEvidenceCountsLabel(metadata),
+		CountsLabel:     countsLabel,
 		TimestampLabel:  runLabels.TimestampLabel,
-		Labels:          evidenceLabels,
+		Labels:          labels,
 		DetailURL:       runLabels.DetailURL,
 		AuditURL:        runLabels.AuditURL,
 	}
