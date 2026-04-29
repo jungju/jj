@@ -3361,6 +3361,34 @@ func TestRunDetailComparePreviousSelectionIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestComparePreviousPresentationBuildsGuardedVisibleSummary(t *testing.T) {
+	current := "20260429-163000-current"
+	previous := "20260429-162000-previous"
+	summary := comparePreviousPresentation("available", current, previous)
+	if !summary.Visible || summary.State != "available" {
+		t.Fatalf("available compare previous visibility/state mismatch: %#v", summary)
+	}
+	if summary.Message != "Compare "+current+" to "+previous {
+		t.Fatalf("available compare previous message = %q", summary.Message)
+	}
+	if summary.URL != "/runs/compare?left="+current+"&right="+previous {
+		t.Fatalf("available compare previous URL = %q", summary.URL)
+	}
+
+	unsafePrevious := comparePreviousPresentation("available", current, "sk-proj-comparepreviousguarded1234567890")
+	if !unsafePrevious.Visible || unsafePrevious.State != "unavailable" || unsafePrevious.URL != "" || unsafePrevious.PreviousRunID != "" {
+		t.Fatalf("unsafe previous run should produce unavailable state without a link: %#v", unsafePrevious)
+	}
+	if unsafePrevious.Message != "Compare previous: unavailable." {
+		t.Fatalf("unsafe previous message = %q", unsafePrevious.Message)
+	}
+
+	unsafeCurrent := comparePreviousPresentation("none", "sk-proj-comparepreviouscurrent1234567890", "")
+	if unsafeCurrent.Visible || unsafeCurrent.Message != "" || unsafeCurrent.URL != "" {
+		t.Fatalf("unsafe current run should not render compare previous: %#v", unsafeCurrent)
+	}
+}
+
 func TestRunDetailRunArtifactsShowsAllowlistedInventoryAndPreservesSections(t *testing.T) {
 	dir := t.TempDir()
 	runID := "20260429-170000-artifacts"

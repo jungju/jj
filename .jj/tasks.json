@@ -1694,6 +1694,33 @@
       "updated_at": "2026-04-29T00:32:19Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Consolidate or simplify run-detail Compare Previous visible-summary and guarded-link construction into one narrow helper or equivalent simplified structure.",
+        "Consume only existing sanitized DTO/helper output or already-safe labels.",
+        "Preserve existing Compare Previous labels, ordering, guarded links, none/unavailable states, and deterministic previous-run behavior for valid previous-run, no previous-run, missing timestamp, malformed timestamp, tied timestamp, denied metadata, hostile-label, token-like, partial, stale, and internally inconsistent metadata cases.",
+        "Do not read or render raw manifests, artifact bodies, commands, environment values, diffs, validation output, planner handoff payloads, TASK.md bodies, EVAL.md bodies, document bodies, arbitrary files, unsafe paths, configured secrets, token-like values, or omission placeholders.",
+        "Do not introduce new CLI flags, dashboard pages, routes, manifest schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw export behavior, visual redesign, or user-facing output semantics.",
+        "Run focused internal/serve Compare Previous or run-detail tests, go test ./internal/serve, go test ./internal/cli ./internal/serve, git diff --check, go test ./..., and ./scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t39",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T00:34:44Z",
+      "created_by_run": "autopilot-20260428-160202-t39",
+      "created_by_turn": null,
+      "id": "TASK-0060",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active .jj/next-intent.md override asks for code refactoring and simplification. Recent completed work already simplified adjacent sanitized run-summary, CLI, dashboard-root, Validation Evidence, and Run Artifacts paths; Compare Previous is the next narrow run-detail presentation path with useful maintainability value. No current release-gate, CI, validation, test, disclosure, boundary, or blocker evidence justifies security or bugfix priority.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized Compare Previous presentation logic",
+      "updated_at": "2026-04-29T00:42:25Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
