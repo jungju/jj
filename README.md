@@ -35,6 +35,18 @@ go build -o jj ./cmd/jj
 
 The dashboard binds to localhost by default, usually `http://127.0.0.1:7331`.
 
+## Docker
+
+```bash
+docker build -t jj:local .
+
+docker run --rm -p 7331:7331 -v "$PWD:/workspace:ro" jj:local
+docker run --rm -v "$PWD:/workspace" jj:local --help
+docker run --rm -e OPENAI_API_KEY="$OPENAI_API_KEY" -v "$PWD:/workspace" jj:local run plan.md
+```
+
+The image includes the latest Codex CLI from `@openai/codex`, and `JJ_CODEX_BIN` is set to `codex` inside the container. The container starts `jj serve --cwd /workspace --host 0.0.0.0 --port 7331` by default. Read-only workspace mounts are enough for dashboard browsing; `jj run` needs a writable workspace mount and may still require project-specific validation dependencies beyond Codex CLI.
+
 ## CLI 사용설명서
 
 `jj`의 주 명령은 두 개입니다. `jj run <plan.md>`는 계획, 구현, 검증, artifact 기록을 실행하고, `jj serve`는 생성된 JSON 상태와 실행 artifact를 대시보드로 보여줍니다.
@@ -69,7 +81,7 @@ The dashboard binds to localhost by default, usually `http://127.0.0.1:7331`.
 | planning | `--planner-agents N`, `--planning-agents N`, `--agent-count N`, `--agents N`, `--openai-model MODEL`, `--task-proposal-mode MODE`, `--proposal-mode MODE` |
 | Codex 실행 | `--codex-bin PATH`, `--codex-binary PATH`, `--codex-model MODEL`, `--dry-run` |
 | 반복 실행 | `--auto-continue`, `--max-turns N` |
-| GitHub workspace mode | `--repo URL`, `--repo-dir PATH`, `--base-branch BRANCH`, `--work-branch BRANCH`, `--push`, `--push-mode branch\|current-branch\|none`, `--github-token-env NAME`, `--allow-dirty` |
+| GitHub workspace mode | `--repo URL`, `--repo-dir PATH`, `--base-branch BRANCH`, `--work-branch BRANCH`, `--push`, `--push-mode branch\|current-branch\|none`, `--auto-pr`, `--github-token-env NAME`, `--allow-dirty` |
 
 실행 시 알아둘 점:
 
@@ -101,6 +113,7 @@ The dashboard binds to localhost by default, usually `http://127.0.0.1:7331`.
   "openai_model": "gpt-5.5",
   "codex_bin": "codex",
   "task_proposal_mode": "auto",
+  "auto_pr": false,
   "planning_agents": 3,
   "allow_no_git": false,
   "serve_host": "127.0.0.1",
@@ -128,6 +141,7 @@ JJ_BASE_BRANCH
 JJ_WORK_BRANCH
 JJ_PUSH
 JJ_PUSH_MODE
+JJ_AUTO_PR
 JJ_GITHUB_TOKEN
 JJ_GITHUB_TOKEN_ENV
 JJ_SERVE_ADDR
@@ -149,6 +163,7 @@ Common flags:
 --dry-run
 --allow-no-git
 --task-proposal-mode auto|balanced|feature|security|hardening|quality|bugfix|docs
+--auto-pr
 --auto-continue
 --max-turns N
 ```
@@ -247,11 +262,14 @@ export JJ_GITHUB_TOKEN=github_pat_xxx
 
 jj run plan.md --repo https://github.com/acme/app.git
 jj run plan.md --repo https://github.com/acme/app.git --base-branch main --task-proposal-mode feature --push
+jj run plan.md --auto-pr
 ```
 
 Safe defaults:
 
 - Push is disabled unless `--push` is explicit.
+- Local `--auto-pr` is opt-in. When run from the default branch, jj creates a deterministic work branch, validates and commits the turn, pushes the branch, then creates or reuses a GitHub PR.
+- Auto-PR branch names use a short slug plus hash, such as `jj/intent-web-ui-about-a1b2c3d4`; PR titles and bodies are generated from `.jj/next-intent.md` content and do not include the hash.
 - Work happens on `jj/run-<run-id>` by default.
 - Tokens are never stored in `.git/config`, manifests, events, prompts, logs, artifacts, or dashboard HTML.
 - Remote URLs are stored and displayed only in sanitized form.

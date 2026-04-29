@@ -37,6 +37,11 @@ type ManifestRepository struct {
 	Pushed           bool   `json:"pushed"`
 	PushStatus       string `json:"push_status,omitempty"`
 	PushedRef        string `json:"pushed_ref,omitempty"`
+	PREnabled        bool   `json:"pr_enabled,omitempty"`
+	PRStatus         string `json:"pr_status,omitempty"`
+	PRNumber         int    `json:"pr_number,omitempty"`
+	PRURL            string `json:"pr_url,omitempty"`
+	PRTitle          string `json:"pr_title,omitempty"`
 	Remote           string `json:"remote,omitempty"`
 	HeadBefore       string `json:"head_before,omitempty"`
 	HeadAfter        string `json:"head_after,omitempty"`

@@ -31,6 +31,7 @@ type Config struct {
 	WorkBranch            string
 	Push                  bool
 	PushMode              string
+	AutoPR                bool
 	GitHubTokenEnv        string
 	RepoAllowDirty        bool
 	AllowNoGit            bool
@@ -62,6 +63,7 @@ type Config struct {
 	WorkBranchExplicit       bool
 	PushExplicit             bool
 	PushModeExplicit         bool
+	AutoPRExplicit           bool
 	GitHubTokenEnvExplicit   bool
 	RepoAllowDirtyExplicit   bool
 	DryRunExplicit           bool
@@ -70,9 +72,10 @@ type Config struct {
 	Stdout io.Writer
 	Stderr io.Writer
 
-	Planner     PlanningClient
-	CodexRunner CodexRunner
-	GitRunner   GitRunner
+	Planner      PlanningClient
+	CodexRunner  CodexRunner
+	GitRunner    GitRunner
+	GitHubClient GitHubPRClient
 
 	PlannerCodexRunner CodexRunner
 }
@@ -231,6 +234,17 @@ func ResolveConfig(cfg Config) (Config, error) {
 			cfg.PushMode = v
 		} else if strings.TrimSpace(cfg.PushMode) == "" {
 			cfg.PushMode = DefaultPushMode
+		}
+	}
+	if !cfg.AutoPRExplicit {
+		if v := firstEnv("JJ_AUTO_PR", "JJ_AUTOPR"); v != "" {
+			parsed, err := parseBool(v)
+			if err != nil {
+				return cfg, fmt.Errorf("parse JJ_AUTO_PR: %w", err)
+			}
+			cfg.AutoPR = parsed
+		} else if fileCfg.AutoPR != nil {
+			cfg.AutoPR = *fileCfg.AutoPR
 		}
 	}
 	if !cfg.GitHubTokenEnvExplicit {

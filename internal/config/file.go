@@ -29,6 +29,7 @@ type File struct {
 	WorkBranch       string `json:"work_branch"`
 	Push             *bool  `json:"push"`
 	PushMode         string `json:"push_mode"`
+	AutoPR           *bool  `json:"auto_pr"`
 	GitHubTokenEnv   string `json:"github_token_env"`
 	RepoAllowDirty   *bool  `json:"allow_dirty"`
 	PlanningAgents   *int   `json:"planning_agents"`

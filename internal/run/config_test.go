@@ -21,6 +21,7 @@ func TestResolveConfigUsesJJRCValues(t *testing.T) {
 		"work_branch": "jj/file-work",
 		"push": true,
 		"push_mode": "branch",
+		"auto_pr": true,
 		"github_token_env": "MY_GITHUB_TOKEN",
 		"allow_dirty": true,
 		"planning_agents": 2,
@@ -49,7 +50,7 @@ func TestResolveConfigUsesJJRCValues(t *testing.T) {
 	if cfg.RepoURL != "https://github.com/acme/app.git" || cfg.RepoDir != "/tmp/acme-app" || cfg.BaseBranch != "main" || cfg.WorkBranch != "jj/file-work" {
 		t.Fatalf("unexpected repository config: %#v", cfg)
 	}
-	if !cfg.Push || cfg.PushMode != PushModeBranch || cfg.GitHubTokenEnv != "MY_GITHUB_TOKEN" || !cfg.RepoAllowDirty {
+	if !cfg.Push || cfg.PushMode != PushModeBranch || !cfg.AutoPR || cfg.GitHubTokenEnv != "MY_GITHUB_TOKEN" || !cfg.RepoAllowDirty {
 		t.Fatalf("unexpected repository policy config: %#v", cfg)
 	}
 	if !cfg.GitHubTokenEnvExplicit {
@@ -167,6 +168,7 @@ func TestResolveConfigEnvOverridesJJRCForWorkflowFields(t *testing.T) {
 		"work_branch": "jj/file-work",
 		"push": false,
 		"push_mode": "none",
+		"auto_pr": false,
 		"github_token_env": "FILE_GITHUB_TOKEN",
 		"allow_dirty": false,
 		"planning_agents": 2,
@@ -182,6 +184,7 @@ func TestResolveConfigEnvOverridesJJRCForWorkflowFields(t *testing.T) {
 	t.Setenv("JJ_WORK_BRANCH", "jj/env-work")
 	t.Setenv("JJ_PUSH", "true")
 	t.Setenv("JJ_PUSH_MODE", "branch")
+	t.Setenv("JJ_AUTO_PR", "true")
 	t.Setenv("JJ_GITHUB_TOKEN_ENV", "ENV_GITHUB_TOKEN")
 	t.Setenv("JJ_REPO_ALLOW_DIRTY", "true")
 	t.Setenv("JJ_PLANNING_AGENTS", "5")
@@ -205,7 +208,7 @@ func TestResolveConfigEnvOverridesJJRCForWorkflowFields(t *testing.T) {
 	if cfg.RepoURL != "https://github.com/env/app.git" || cfg.RepoDir != "/env/repo" || cfg.BaseBranch != "env-main" || cfg.WorkBranch != "jj/env-work" {
 		t.Fatalf("env should override repository fields: %#v", cfg)
 	}
-	if !cfg.Push || cfg.PushMode != PushModeBranch || cfg.GitHubTokenEnv != "ENV_GITHUB_TOKEN" || !cfg.RepoAllowDirty {
+	if !cfg.Push || cfg.PushMode != PushModeBranch || !cfg.AutoPR || cfg.GitHubTokenEnv != "ENV_GITHUB_TOKEN" || !cfg.RepoAllowDirty {
 		t.Fatalf("env should override repository policy fields: %#v", cfg)
 	}
 	if !cfg.GitHubTokenEnvExplicit {

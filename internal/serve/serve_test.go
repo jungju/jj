@@ -81,6 +81,81 @@ func TestIndexShowsMissingReadiness(t *testing.T) {
 	}
 }
 
+func TestDashboardRootPresentationPolishPreservesSectionsAndGuardedLinks(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "plan.md", "# Plan\n")
+	writeFile(t, dir, "README.md", "# README\n")
+	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n")
+	writeFile(t, dir, "docs/EVAL.md", "# Eval\n")
+	writeFile(t, dir, "docs/TASK.md", `# Tasks
+
+- [~] TASK-0105 [feature] Polish jj serve dashboard visual presentation
+`)
+	writeFile(t, dir, ".jj/runs/20260429-123000-active/manifest.json", `{
+		"run_id":"20260429-123000-active",
+		"status":"implementing",
+		"started_at":"2026-04-29T12:30:00Z",
+		"planner_provider":"codex",
+		"artifacts":{"manifest":"manifest.json"},
+		"validation":{"status":"unknown","evidence_status":"none"}
+	}`)
+	writeFile(t, dir, ".jj/runs/20260429-130000-failed/manifest.json", `{
+		"run_id":"20260429-130000-failed",
+		"status":"partial_failed",
+		"started_at":"2026-04-29T13:00:00Z",
+		"planner_provider":"codex",
+		"artifacts":{"manifest":"manifest.json"},
+		"validation":{"ran":true,"status":"failed","evidence_status":"recorded","command_count":2,"passed_count":1,"failed_count":1}
+	}`)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+
+	for _, want := range []string{
+		`.dashboard-root {`,
+		`.dashboard-root > .dashboard-section`,
+		`.dashboard-root p a[href^="/runs"], .dashboard-root p a[href="/runs"]`,
+		`@media (max-width: 700px)`,
+		`<div class="dashboard-root">`,
+		`<section class="dashboard-section dashboard-section-task">`,
+		`<section class="dashboard-section dashboard-section-next-action">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard presentation hook missing %q:\n%s", want, body)
+		}
+	}
+	assertSubstringsInOrder(t, body, []string{
+		`<div class="dashboard-root">`,
+		`<h2>Current TASK</h2>`,
+		`<h2>Latest Run</h2>`,
+		`<h2>Risks And Failures</h2>`,
+		`<h2>Validation Status</h2>`,
+		`<h2>Evaluation Findings</h2>`,
+		`<h2>Recent Runs</h2>`,
+		`<h2>Next Action</h2>`,
+		`<h2>Project Docs</h2>`,
+		`<h2>Workspace Readiness</h2>`,
+		`<h2>Active Run</h2>`,
+		`<h2>State Files</h2>`,
+		`<h2>Runs</h2>`,
+	})
+
+	latest := htmlSection(body, "Latest Run", "Risks And Failures")
+	assertDashboardLatestRunActions(t, latest, "20260429-130000-failed")
+	validation := dashboardValidationStatusSection(t, body)
+	assertDashboardRunActions(t, validation, "20260429-130000-failed")
+	recent := htmlSection(body, "Recent Runs", "Next Action")
+	assertDashboardRunActions(t, recent, "20260429-130000-failed")
+	active := dashboardActiveRunSection(t, body)
+	assertDashboardRunActions(t, active, "20260429-123000-active")
+}
+
 func TestDashboardProjectDocsShortcutsPresentAndPreserveSummaries(t *testing.T) {
 	dir := t.TempDir()
 	secret := "sk-proj-projectdocs1234567890"
@@ -2769,6 +2844,36 @@ func TestNextActionTaskDrivenPresentationHelperPreservesOrderAndLinks(t *testing
 	}
 }
 
+func TestDashboardNextActionPresentationHelperPreservesNormalAndFallbackStates(t *testing.T) {
+	task := &taskQueueItem{ID: "TASK-0301", Category: "quality", Status: "in-progress", Title: "Continue current"}
+	normal := dashboardNextAction(nextActionSummary{
+		State:   "continue_task",
+		Label:   "Continue Task",
+		Message: "Continue the in-progress task from TASK.md.",
+		Task:    task,
+		Links: []nextActionLink{
+			{Label: "Open TASK.md", URL: taskDocDashboardURL()},
+		},
+	})
+	if normal.State != "continue_task" || normal.Label != "Continue Task" || normal.Message != "Continue the in-progress task from TASK.md." {
+		t.Fatalf("normal next action presentation changed: %#v", normal)
+	}
+	if normal.Task == nil || normal.Task.ID != "TASK-0301" || normal.Task.Category != "quality" || normal.Task.Status != "in-progress" || normal.Task.Title != "Continue current" {
+		t.Fatalf("normal next action task changed: %#v", normal.Task)
+	}
+	if normal.RunID != "" || len(normal.Links) != 1 || normal.Links[0].Label != "Open TASK.md" || normal.Links[0].URL != taskDocDashboardURL() {
+		t.Fatalf("normal next action links changed: %#v", normal)
+	}
+
+	fallback := dashboardNextAction(staticNextActionSummary(nextActionStaticTaskUnavailable, latestRunSummary{}))
+	if fallback.State != "task_unavailable" || fallback.Label != "TASK.md Unavailable" || fallback.Message != "TASK.md cannot be read through the workspace guard." {
+		t.Fatalf("fallback next action presentation changed: %#v", fallback)
+	}
+	if fallback.Task != nil || fallback.RunID != "" || len(fallback.Links) != 1 || fallback.Links[0].Label != "Start Web Run" || fallback.Links[0].URL != "/run/new" {
+		t.Fatalf("fallback next action links changed: %#v", fallback)
+	}
+}
+
 func TestDashboardNextActionTaskUnavailableUnknownDeniedAndHostileStates(t *testing.T) {
 	secret := "sk-proj-nextactiontask1234567890"
 
@@ -4025,6 +4130,203 @@ func TestRunDetailShowsManifestMetadataAndGuardedLinks(t *testing.T) {
 	}
 }
 
+func TestRunDetailPresentationPolishPreservesStructureOrderAndGuardedLinks(t *testing.T) {
+	dir := t.TempDir()
+	runID := "20260429-180000-polish"
+	previousID := "20260429-170000-previous"
+	writeRunManifest(t, dir, previousID, "complete", "2026-04-29T17:00:00Z")
+	writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{
+		"run_id":"`+runID+`",
+		"status":"complete",
+		"started_at":"2026-04-29T18:00:00Z",
+		"finished_at":"2026-04-29T18:00:02Z",
+		"duration_ms":2345,
+		"dry_run":true,
+		"planner_provider":"openai",
+		"planner":{"model":"gpt-polish"},
+		"task_proposal_mode":"feature",
+		"resolved_task_proposal_mode":"feature",
+		"selected_task_id":"TASK-0106",
+		"workspace":{"spec_path":".jj/spec.json","task_path":".jj/tasks.json","spec_written":true,"task_written":true},
+		"artifacts":{"manifest":"manifest.json","snapshot_spec_after":"snapshots/spec.after.json","validation_summary":"validation/summary.md"},
+		"validation":{"ran":true,"status":"passed","evidence_status":"recorded","summary_path":"validation/summary.md","command_count":1,"passed_count":1}
+	}`)
+	writeFile(t, dir, ".jj/runs/"+runID+"/snapshots/spec.after.json", `{"title":"SPEC"}`)
+	writeFile(t, dir, ".jj/runs/"+runID+"/validation/summary.md", "validation passed\n")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
+	newTestServer(t, dir, "").Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail status = %d body=%s", rec.Code, body)
+	}
+
+	assertSubstringsInOrder(t, body, []string{
+		`<div class="run-detail">`,
+		`<nav class="run-detail-actions actions" aria-label="Run actions">`,
+		`<section class="run-detail-section run-detail-overview">`,
+		"<h2>Overview</h2>",
+		`<section class="run-detail-section run-detail-planner">`,
+		"<h2>Planner</h2>",
+		`<section class="run-detail-section run-detail-generated">`,
+		"<h2>Generated State And Docs</h2>",
+		`<section class="run-detail-section run-detail-evaluation">`,
+		"<h2>Evaluation</h2>",
+		`<section class="run-detail-section run-detail-validation-evidence">`,
+		"<h2>Validation Evidence</h2>",
+		`<section class="run-detail-section run-detail-codex">`,
+		"<h2>Codex</h2>",
+		`<section class="run-detail-section run-detail-compare">`,
+		"<h2>Compare Previous</h2>",
+		`<section class="run-detail-section run-detail-commands">`,
+		"<h2>Command Metadata</h2>",
+		`<section class="run-detail-section run-detail-security">`,
+		"<h2>Security Diagnostics</h2>",
+		`<section class="run-detail-section run-detail-artifacts">`,
+		"<h2>Run Artifacts</h2>",
+	})
+	for _, want := range []string{
+		`<a class="button" href="/">← dashboard</a>`,
+		`<a class="button" href="/runs">all runs</a>`,
+		`<a class="button" href="/runs/audit?run=` + runID + `">Audit export</a>`,
+		`<a class="button" href="/runs/` + runID + `/manifest">Raw manifest</a>`,
+		`<strong class="run-detail-id">` + runID + `</strong>`,
+		`<span class="run-detail-status">complete</span>`,
+		"started 2026-04-29T18:00:00Z · finished 2026-04-29T18:00:02Z · duration 2.345s · dry-run true",
+		"manifest manifest available",
+		`<div class="run-detail-evidence-summary">`,
+		`<div class="run-detail-inline-actions"><a class="button" href="/runs/` + runID + `">Run detail</a><a class="button" href="/runs/audit?run=` + runID + `">Audit export</a></div>`,
+		`<div class="run-detail-inline-actions"><a class="button" href="/runs/compare?left=` + runID + `&amp;right=` + previousID + `">Compare ` + runID + ` to ` + previousID + `</a></div>`,
+		`<ul class="run-detail-artifact-list">`,
+		`href="/artifact?run=` + runID + `&amp;path=snapshots%2Fspec.after.json"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("run-detail polish missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestRunDetailPresentationPolishPreservesSafeFallbackStates(t *testing.T) {
+	secret := "sk-proj-rundetailpolish1234567890"
+	cases := []struct {
+		name      string
+		runID     string
+		setup     func(t *testing.T, dir, runID string)
+		status    int
+		want      []string
+		forbidden []string
+	}{
+		{
+			name:   "none validation evidence",
+			runID:  "20260429-181000-none",
+			status: http.StatusOK,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","started_at":"2026-04-29T18:10:00Z","artifacts":{"manifest":"manifest.json"}}`)
+			},
+			want: []string{
+				`class="run-detail"`,
+				`<section class="run-detail-section run-detail-overview">`,
+				`<section class="run-detail-section run-detail-artifacts">`,
+				`<span class="run-detail-status">complete</span>`,
+			},
+			forbidden: []string{`<h2>Validation Evidence</h2>`, `run-detail-validation-evidence`},
+		},
+		{
+			name:   "unavailable validation evidence",
+			runID:  "20260429-182000-unavailable",
+			status: http.StatusOK,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","started_at":"2026-04-29T18:20:00Z","artifacts":{"manifest":"manifest.json"},"validation":{"status":"unavailable","evidence_status":"unavailable"}}`)
+			},
+			want: []string{
+				`<section class="run-detail-section run-detail-validation-evidence">`,
+				"validation unavailable",
+				"status unavailable",
+				`class="muted run-detail-fallback"`,
+			},
+		},
+		{
+			name:   "unknown validation evidence",
+			runID:  "20260429-183000-unknown",
+			status: http.StatusOK,
+			setup: func(t *testing.T, dir, runID string) {
+				t.Setenv("JJ_RUN_DETAIL_POLISH_SECRET", secret)
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{
+					"run_id":"`+runID+`",
+					"status":"complete",
+					"started_at":"2026-04-29T18:30:00Z",
+					"artifacts":{"manifest":"manifest.json"},
+					"validation":{"ran":true,"status":"`+secret+`","evidence_status":"recorded","command_count":1,"commands":[{"label":"`+secret+`","status":"error","error":"token=`+secret+`"}]}
+				}`)
+			},
+			want: []string{
+				`<section class="run-detail-section run-detail-validation-evidence">`,
+				"validation unknown",
+				"commands 1 · passed 0 · failed 0 · skipped 0 · errors 1",
+				"status unknown",
+			},
+			forbidden: []string{secret, "sk-proj", "token="},
+		},
+		{
+			name:   "malformed metadata",
+			runID:  "20260429-184000-malformed",
+			status: http.StatusOK,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"`+secret+`",`)
+			},
+			want: []string{
+				`class="run-detail"`,
+				`<span class="run-detail-status">unknown</span>`,
+				"manifest is malformed",
+				`class="muted run-detail-fallback"`,
+				"No allowlisted run artifacts recorded.",
+			},
+			forbidden: []string{secret, "sk-proj", "Raw manifest"},
+		},
+		{
+			name:   "denied run root",
+			runID:  "20260429-185000-denied",
+			status: http.StatusForbidden,
+			setup: func(t *testing.T, dir, runID string) {
+				outside := t.TempDir()
+				writeFile(t, outside, "manifest.json", `{"run_id":"`+runID+`","status":"complete","artifacts":{"manifest":"manifest.json"}}`)
+				if err := os.MkdirAll(filepath.Join(dir, ".jj/runs"), 0o755); err != nil {
+					t.Fatalf("mkdir runs: %v", err)
+				}
+				if err := os.Symlink(outside, filepath.Join(dir, ".jj/runs", runID)); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+			},
+			want:      []string{"run id is not allowed"},
+			forbidden: []string{`class="run-detail"`, "Run Artifacts"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tc.setup(t, dir, tc.runID)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/runs/"+tc.runID, nil)
+			newTestServer(t, dir, "").Handler().ServeHTTP(rec, req)
+			body := rec.Body.String()
+			if rec.Code != tc.status {
+				t.Fatalf("detail status = %d, want %d body=%s", rec.Code, tc.status, body)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(body, want) {
+					t.Fatalf("%s missing %q:\n%s", tc.name, want, body)
+				}
+			}
+			for _, leaked := range append(tc.forbidden, security.RedactionMarker, "[omitted]", "raw command text", "raw environment") {
+				if strings.Contains(body, leaked) {
+					t.Fatalf("%s leaked %q:\n%s", tc.name, leaked, body)
+				}
+			}
+		})
+	}
+}
+
 func TestRunDetailValidationEvidenceShowsSanitizedCompletedRun(t *testing.T) {
 	dir := t.TempDir()
 	runID := "20260429-140000-evidence"
@@ -4358,6 +4660,102 @@ func TestValidationEvidencePresentationHelpersPreserveFallbacksAndNoLinks(t *tes
 		TimestampLabel:  "none",
 	}
 	assertValidationEvidenceSummary(t, got, want)
+}
+
+func TestRunDetailPresentationHelperPreservesHeaderActionsAndSections(t *testing.T) {
+	runID := "20260429-150500-detail"
+	previousID := "20260429-145500-previous"
+	detail := runDetail{
+		ID:            runID,
+		Status:        "complete",
+		StartedAt:     "2026-04-29T15:05:00Z",
+		FinishedAt:    "2026-04-29T15:05:03Z",
+		Duration:      "3s",
+		DryRun:        true,
+		ManifestState: "manifest available",
+		ValidationEvidence: validationEvidenceSummary{
+			Visible:         true,
+			State:           "failed",
+			Message:         "Validation evidence has findings.",
+			RunID:           runID,
+			ValidationState: "failed",
+			CountsLabel:     "commands 2 \u00b7 passed 1 \u00b7 failed 1 \u00b7 skipped 0 \u00b7 errors 0",
+			TimestampLabel:  "2026-04-29T15:05:00Z",
+			Labels:          []string{"unit tests", "status failed"},
+			DetailURL:       "/runs/" + runID,
+			AuditURL:        "/runs/audit?run=" + runID,
+		},
+		ComparePrevious: comparePreviousPresentation(comparePreviousStateAvailable, runID, previousID),
+		Artifacts: []runArtifactStatus{
+			{Label: "Input plan", Path: "input/plan.md", URL: "/artifact?run=" + runID + "&path=input%2Fplan.md", Available: true, Status: "available"},
+		},
+	}
+
+	got := runDetailPresentation(detail)
+	if got.Header.ID != runID || got.Header.Status != "complete" || got.Header.TimestampLine != "started 2026-04-29T15:05:00Z \u00b7 finished 2026-04-29T15:05:03Z \u00b7 duration 3s \u00b7 dry-run true" || got.Header.ManifestLine != "manifest manifest available" {
+		t.Fatalf("run-detail header presentation changed: %#v", got.Header)
+	}
+	if len(got.ActionLinks) != 4 ||
+		got.ActionLinks[0] != (runDetailActionLink{Label: "\u2190 dashboard", URL: "/"}) ||
+		got.ActionLinks[1] != (runDetailActionLink{Label: "all runs", URL: "/runs"}) ||
+		got.ActionLinks[2] != (runDetailActionLink{Label: "Audit export", URL: "/runs/audit?run=" + runID}) ||
+		got.ActionLinks[3] != (runDetailActionLink{Label: "Raw manifest", URL: "/runs/" + runID + "/manifest"}) {
+		t.Fatalf("run-detail top actions changed: %#v", got.ActionLinks)
+	}
+	evidence := got.ValidationEvidenceView
+	if !evidence.Visible || evidence.RunID != runID || evidence.ValidationState != "failed" || evidence.DetailURL != "/runs/"+runID || len(evidence.Actions) != 2 {
+		t.Fatalf("validation evidence presentation changed: %#v", evidence)
+	}
+	if evidence.Actions[0] != (runDetailActionLink{Label: "Run detail", URL: "/runs/" + runID}) ||
+		evidence.Actions[1] != (runDetailActionLink{Label: "Audit export", URL: "/runs/audit?run=" + runID}) {
+		t.Fatalf("validation evidence actions changed: %#v", evidence.Actions)
+	}
+	if !got.ComparePreviousView.Visible || got.ComparePreviousView.Message != "Compare "+runID+" to "+previousID || got.ComparePreviousView.URL != "/runs/compare?left="+runID+"&right="+previousID {
+		t.Fatalf("compare previous presentation changed: %#v", got.ComparePreviousView)
+	}
+	if got.ArtifactInventory.EmptyText != runArtifactEmptyListText || len(got.ArtifactInventory.Artifacts) != 1 || got.ArtifactInventory.Artifacts[0].Label != "Input plan" {
+		t.Fatalf("artifact inventory presentation changed: %#v", got.ArtifactInventory)
+	}
+}
+
+func TestRunDetailPresentationHelperPreservesFallbacksAndGuardsHostileActions(t *testing.T) {
+	runID := "20260429-151000-detail-fallback"
+	fallback := runDetailPresentation(runDetail{
+		ID:                 runID,
+		ManifestState:      "manifest is malformed",
+		Error:              "manifest is malformed",
+		ArtifactNote:       "manifest is malformed",
+		ValidationEvidence: validationEvidenceNoneSummary(),
+		ComparePrevious:    comparePreviousPresentation(comparePreviousStateNone, runID, ""),
+	})
+	if fallback.Header.Status != "unknown" || fallback.Header.TimestampLine != "started unknown \u00b7 finished unknown \u00b7 dry-run false" || fallback.Header.Error != "manifest is malformed" {
+		t.Fatalf("fallback header presentation changed: %#v", fallback.Header)
+	}
+	if len(fallback.ActionLinks) != 3 ||
+		fallback.ActionLinks[0] != (runDetailActionLink{Label: "\u2190 dashboard", URL: "/"}) ||
+		fallback.ActionLinks[1] != (runDetailActionLink{Label: "all runs", URL: "/runs"}) ||
+		fallback.ActionLinks[2] != (runDetailActionLink{Label: "Audit export", URL: "/runs/audit?run=" + runID}) {
+		t.Fatalf("fallback top actions changed: %#v", fallback.ActionLinks)
+	}
+	if fallback.ValidationEvidenceView.Visible || fallback.ValidationEvidenceView.Message != "No validation evidence recorded for this run." {
+		t.Fatalf("fallback validation evidence presentation changed: %#v", fallback.ValidationEvidenceView)
+	}
+	if !fallback.ComparePreviousView.Visible || fallback.ComparePreviousView.URL != "" || fallback.ComparePreviousView.Message != "Compare previous: none." {
+		t.Fatalf("fallback compare presentation changed: %#v", fallback.ComparePreviousView)
+	}
+	if fallback.ArtifactInventory.Note != "manifest is malformed" || fallback.ArtifactInventory.EmptyText != runArtifactEmptyListText || len(fallback.ArtifactInventory.Artifacts) != 0 {
+		t.Fatalf("fallback artifact presentation changed: %#v", fallback.ArtifactInventory)
+	}
+
+	hostile := runDetailActionLinks(
+		runDetailActionLink{Label: "Run detail", URL: "/runs/sk-proj-rundetailpresentation1234567890"},
+		runDetailActionLink{Label: "Audit export", URL: "/runs/audit?run=token=sk-proj-rundetailpresentation1234567890"},
+		runDetailActionLink{Label: "Raw manifest", URL: "/runs/" + runID + "/manifest?token=sk-proj-rundetailpresentation1234567890"},
+		runDetailActionLink{Label: "all runs", URL: "https://attacker.example/runs"},
+	)
+	if len(hostile) != 0 {
+		t.Fatalf("hostile run-detail actions should be denied: %#v", hostile)
+	}
 }
 
 func TestRunDetailComparePreviousShowsSanitizedGuardedAction(t *testing.T) {

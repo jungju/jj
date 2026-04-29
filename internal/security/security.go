@@ -82,6 +82,7 @@ type SafeConfig struct {
 	CodexModel       string `json:"codex_model,omitempty"`
 	CodexBin         string `json:"codex_bin,omitempty"`
 	TaskProposalMode string `json:"task_proposal_mode,omitempty"`
+	AutoPR           bool   `json:"auto_pr,omitempty"`
 	ConfigFile       string `json:"config_file,omitempty"`
 	OpenAIKeyEnv     string `json:"openai_api_key_env,omitempty"`
 	OpenAIKeySet     bool   `json:"openai_api_key_present"`
@@ -97,6 +98,7 @@ func NewSafeConfig(cfg SafeConfig) SafeConfig {
 		CodexModel:       safeConfigString(cfg.CodexModel),
 		CodexBin:         safeConfigString(cfg.CodexBin),
 		TaskProposalMode: safeConfigString(cfg.TaskProposalMode),
+		AutoPR:           cfg.AutoPR,
 		ConfigFile:       safeConfigString(cfg.ConfigFile),
 		OpenAIKeyEnv:     safeConfigString(cfg.OpenAIKeyEnv),
 		OpenAIKeySet:     cfg.OpenAIKeySet,

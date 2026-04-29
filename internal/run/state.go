@@ -49,6 +49,8 @@ type TaskRecord struct {
 	Reason                   string   `json:"reason"`
 	AcceptanceCriteria       []string `json:"acceptance_criteria"`
 	ValidationCommand        string   `json:"validation_command,omitempty"`
+	WorkBranch               string   `json:"work_branch,omitempty"`
+	NextIntentHash           string   `json:"next_intent_hash,omitempty"`
 	CreatedAt                string   `json:"created_at"`
 	UpdatedAt                string   `json:"updated_at"`
 	CreatedByRun             string   `json:"created_by_run"`

@@ -1476,6 +1476,131 @@ func TestExecuteNonDryRunCommitsCleanGitWorkspace(t *testing.T) {
 	}
 }
 
+func TestExecuteAutoPRBranchesPushesAndCreatesIntentPR(t *testing.T) {
+	dir := initGit(t)
+	runGit(t, dir, "checkout", "-b", "main")
+	runGit(t, dir, "config", "user.email", "jj@example.com")
+	runGit(t, dir, "config", "user.name", "jj test")
+	writePlan(t, dir, "plan.md")
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".jj/\n"), 0o644); err != nil {
+		t.Fatalf("write gitignore: %v", err)
+	}
+	runGit(t, dir, "add", "--all")
+	runGit(t, dir, "commit", "-m", "initial")
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	runGitClone(t, "--bare", dir, origin)
+	runGit(t, origin, "symbolic-ref", "HEAD", "refs/heads/main")
+	runGit(t, dir, "remote", "add", "origin", "https://github.com/acme/app.git")
+	runGit(t, dir, "remote", "set-url", "--push", "origin", origin)
+	t.Setenv("JJ_GITHUB_TOKEN", "test-token")
+	intent := "Web UI About page feature\n\nAcceptance: dashboard links to About.\n"
+	writeNextIntent(t, dir, intent)
+	client := &fakeGitHubPRClient{}
+	planner := &fakePlanner{mergeTask: plannedTaskJSON("Build About page")}
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "auto-pr-success",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		AutoPR:         true,
+		AutoPRExplicit: true,
+		Stdout:         io.Discard,
+		Planner:        planner,
+		CodexRunner:    &fakeCodexRunner{mutate: true},
+		GitHubClient:   client,
+	})
+	if err != nil {
+		t.Fatalf("execute auto-pr run: %v", err)
+	}
+
+	hash := shortHash(intent)
+	workBranch := "jj/intent-web-ui-about-" + hash
+	if branch := strings.TrimSpace(runGitOutput(t, dir, "branch", "--show-current")); branch != workBranch {
+		t.Fatalf("unexpected branch: %q", branch)
+	}
+	if !gitRefExists(t, origin, "refs/heads/"+workBranch) {
+		t.Fatalf("expected pushed branch %s", workBranch)
+	}
+	if client.createCalls != 1 || client.findCalls != 1 {
+		t.Fatalf("expected one PR lookup and create, find=%d create=%d", client.findCalls, client.createCalls)
+	}
+	if client.createReq.Title != "Web UI About page feature" {
+		t.Fatalf("unexpected PR title: %#v", client.createReq)
+	}
+	for _, forbidden := range []string{hash, workBranch, "jj/intent-"} {
+		if strings.Contains(client.createReq.Title, forbidden) || strings.Contains(client.createReq.Body, forbidden) {
+			t.Fatalf("PR text should not contain branch hash/name %q:\n%s\n%s", forbidden, client.createReq.Title, client.createReq.Body)
+		}
+	}
+	if !strings.Contains(client.createReq.Body, "Web UI About page feature") || !strings.Contains(client.createReq.Body, "TASK-0001 Build About page") {
+		t.Fatalf("PR body missing intent/task metadata:\n%s", client.createReq.Body)
+	}
+
+	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "auto-pr-success", "manifest.json"))
+	if !manifest.Repository.Enabled || manifest.Repository.WorkBranch != workBranch || !manifest.Repository.Pushed || manifest.Repository.PRStatus != "created" || manifest.Repository.PRNumber != 12 {
+		t.Fatalf("unexpected repository metadata: %#v", manifest.Repository)
+	}
+	tasks := readTaskState(t, filepath.Join(dir, ".jj", "tasks.json"))
+	selected := taskByID(tasks, "TASK-0001", TaskProposalResolution{})
+	if selected.WorkBranch != workBranch || selected.NextIntentHash != hash {
+		t.Fatalf("task missing workstream metadata: %#v", selected)
+	}
+}
+
+func TestExecuteAutoPRValidationFailureDoesNotPushOrCreatePR(t *testing.T) {
+	dir := initGit(t)
+	runGit(t, dir, "checkout", "-b", "main")
+	runGit(t, dir, "config", "user.email", "jj@example.com")
+	runGit(t, dir, "config", "user.name", "jj test")
+	writePlan(t, dir, "plan.md")
+	writeValidationScript(t, dir, "exit 1")
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".jj/\n"), 0o644); err != nil {
+		t.Fatalf("write gitignore: %v", err)
+	}
+	runGit(t, dir, "add", "--all")
+	runGit(t, dir, "commit", "-m", "initial")
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	runGitClone(t, "--bare", dir, origin)
+	runGit(t, origin, "symbolic-ref", "HEAD", "refs/heads/main")
+	runGit(t, dir, "remote", "add", "origin", "https://github.com/acme/app.git")
+	runGit(t, dir, "remote", "set-url", "--push", "origin", origin)
+	t.Setenv("JJ_GITHUB_TOKEN", "test-token")
+	intent := "Quality pass\n"
+	writeNextIntent(t, dir, intent)
+	client := &fakeGitHubPRClient{}
+
+	_, err := Execute(context.Background(), Config{
+		PlanPath:       filepath.Join(dir, "plan.md"),
+		CWD:            dir,
+		RunID:          "auto-pr-validation-fail",
+		PlanningAgents: 1,
+		OpenAIModel:    "test-model",
+		AutoPR:         true,
+		AutoPRExplicit: true,
+		Stdout:         io.Discard,
+		Planner:        &fakePlanner{},
+		CodexRunner:    &fakeCodexRunner{mutate: true},
+		GitHubClient:   client,
+	})
+	if err != nil {
+		t.Fatalf("validation failure should not abort auto-pr run: %v", err)
+	}
+
+	workBranch := "jj/intent-quality-pass-" + shortHash(intent)
+	if gitRefExists(t, origin, "refs/heads/"+workBranch) {
+		t.Fatalf("validation failure should not push branch %s", workBranch)
+	}
+	if client.findCalls != 0 || client.createCalls != 0 {
+		t.Fatalf("validation failure should not call PR API, find=%d create=%d", client.findCalls, client.createCalls)
+	}
+	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "auto-pr-validation-fail", "manifest.json"))
+	if manifest.Repository.Pushed || manifest.Repository.PRStatus == "created" {
+		t.Fatalf("validation failure should not push or create PR: %#v", manifest.Repository)
+	}
+}
+
 func TestExecuteDirtyWorkspacePreservedAndRecorded(t *testing.T) {
 	dir := initGit(t)
 	runGit(t, dir, "config", "user.email", "jj@example.com")

@@ -580,6 +580,7 @@ func TestNewSafeConfigOmitsSecretValuesAndKeepsPresenceMetadata(t *testing.T) {
 		CodexModel:       "safe-config-secret-value",
 		CodexBin:         "/tmp/codex",
 		TaskProposalMode: "security",
+		AutoPR:           true,
 		ConfigFile:       "/tmp/.jjrc",
 		OpenAIKeyEnv:     "OPENAI_API_KEY",
 		OpenAIKeySet:     true,
@@ -591,7 +592,7 @@ func TestNewSafeConfigOmitsSecretValuesAndKeepsPresenceMetadata(t *testing.T) {
 	if got.CodexModel != "" {
 		t.Fatalf("safe config should omit redacted secret-like model values, got %#v", got)
 	}
-	if got.OpenAIModel != "gpt-test" || got.CodexBin != "/tmp/codex" || got.OpenAIKeyEnv != "OPENAI_API_KEY" || !got.OpenAIKeySet || !got.AllowNoGit {
+	if got.OpenAIModel != "gpt-test" || got.CodexBin != "/tmp/codex" || got.OpenAIKeyEnv != "OPENAI_API_KEY" || !got.OpenAIKeySet || !got.AllowNoGit || !got.AutoPR {
 		t.Fatalf("safe config dropped non-secret metadata: %#v", got)
 	}
 	data, err := json.Marshal(got)

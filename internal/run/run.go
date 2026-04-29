@@ -333,6 +333,13 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	if !gitState.Available && !cfg.AllowNoGit {
 		return nil, validationError(errors.New("target directory is not a git repository; use --allow-no-git to override"))
 	}
+	var autoPRRuntime *autoPRRuntime
+	if repoRuntime == nil {
+		autoPRRuntime, gitState, err = prepareLocalAutoPRWorkspace(ctx, cfg, gitState, stateBefore.TasksBefore, existingSelectedTask, useExistingTask, intentContent, proposal)
+		if err != nil {
+			return nil, validationError(err)
+		}
+	}
 
 	store, err := artifact.NewStore(cfg.CWD, cfg.RunID)
 	if err != nil {
@@ -383,10 +390,13 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		TaskProposalReason:       sanitizeHandoffText(proposal.Reason),
 		SelectedTaskID:           proposal.SelectedTaskID,
 		Repository: func() ManifestRepository {
-			if repoRuntime == nil {
-				return ManifestRepository{}
+			if repoRuntime != nil {
+				return repoRuntime.Manifest
 			}
-			return repoRuntime.Manifest
+			if autoPRRuntime != nil {
+				return autoPRRuntime.Manifest
+			}
+			return ManifestRepository{}
 		}(),
 		Loop: manifestLoop,
 		Git: ManifestGit{
@@ -409,6 +419,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			CodexModel:       cfg.CodexModel,
 			CodexBin:         cfg.CodexBin,
 			TaskProposalMode: string(cfg.TaskProposalMode),
+			AutoPR:           cfg.AutoPR,
 			ConfigFile:       cfg.ConfigFile,
 			OpenAIKeyEnv:     cfg.OpenAIAPIKeyEnv,
 			OpenAIKeySet:     strings.TrimSpace(cfg.OpenAIAPIKey) != "",
@@ -611,6 +622,13 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			}
 		}
 	}
+	if autoPRRuntime != nil {
+		for _, event := range autoPRRuntime.Events {
+			if err := writeRunEvent(event.Type, event.Fields); err != nil {
+				return fail(StatusPartial, err)
+			}
+		}
+	}
 	if err := writeRunEvent("task_proposal_mode.selected", map[string]string{
 		"mode": string(proposal.Selected),
 	}); err != nil {
@@ -806,6 +824,9 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		if err := recordPlanningOutput(planningArtifact); err != nil {
 			return fail(StatusPlanningFailed, err)
 		}
+	}
+	if autoPRRuntime != nil {
+		tasksState, selectedTask = applyTaskWorkstreamMetadata(tasksState, selectedTask, autoPRRuntime)
 	}
 	if p, err := writeSnapshotJSON(store, "snapshots/spec.planned.json", plannedSpecState); err != nil {
 		return fail(StatusPlanningFailed, err)
@@ -1143,7 +1164,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 			} else {
 				commit := commitRepositoryTurn(ctx, cfg.CWD, proposal, selectedTask, cfg.RunID, validationResultForCommit)
 				manifest.Commit = commit
-				if repoRuntime != nil {
+				if repoRuntime != nil || autoPRRuntime != nil {
 					manifest.Repository.HeadAfter = strings.TrimSpace(mustGitOutput(ctx, cfg.CWD, "rev-parse", "HEAD"))
 				}
 				if commit.Status == "success" {
@@ -1178,6 +1199,76 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 								"status":     "success",
 								"pushed_ref": pushedRef,
 							})
+						}
+					}
+					if autoPRRuntime != nil {
+						if err := writeRunEvent("github.push.started", map[string]string{
+							"branch": manifest.Repository.WorkBranch,
+							"remote": "origin",
+						}); err != nil {
+							return fail(StatusPartial, err)
+						}
+						pushedRef, err := pushRepositoryBranch(ctx, cfg.CWD, autoPRRuntime.Token, PushModeBranch, manifest.Repository.WorkBranch)
+						if err != nil {
+							safeErr := redactSecrets(err.Error())
+							manifest.Repository.PushStatus = "failed"
+							manifest.Repository.Error = safeErr
+							addError(fmt.Errorf("push failed for branch %s: %s", manifest.Repository.WorkBranch, safeErr))
+							_ = writeRunEvent("github.push.failed", map[string]string{
+								"branch": manifest.Repository.WorkBranch,
+								"remote": "origin",
+								"status": "failed",
+								"error":  safeErr,
+							})
+							status = "completed_with_push_failure"
+							finalErr = fmt.Errorf("push failed for branch %s: %s", manifest.Repository.WorkBranch, safeErr)
+						} else {
+							manifest.Repository.Pushed = true
+							manifest.Repository.PushedRef = pushedRef
+							manifest.Repository.PushStatus = "pushed"
+							_ = writeRunEvent("github.push.completed", map[string]string{
+								"branch":     manifest.Repository.WorkBranch,
+								"remote":     "origin",
+								"status":     "success",
+								"pushed_ref": pushedRef,
+							})
+							if err := writeRunEvent("github.pr.started", map[string]string{
+								"branch": manifest.Repository.WorkBranch,
+								"base":   manifest.Repository.BaseBranch,
+							}); err != nil {
+								return fail(StatusPartial, err)
+							}
+							pr, prStatus, err := ensureAutoPRPullRequest(ctx, autoPRRuntime, selectedTask, cfg.RunID, strings.ToLower(validationResultForCommit), commit.SHA)
+							if err != nil {
+								safeErr := redactSecrets(err.Error())
+								manifest.Repository.PREnabled = true
+								manifest.Repository.PRStatus = "failed"
+								manifest.Repository.Error = safeErr
+								addError(fmt.Errorf("pull request failed for branch %s: %s", manifest.Repository.WorkBranch, safeErr))
+								_ = writeRunEvent("github.pr.failed", map[string]string{
+									"branch": manifest.Repository.WorkBranch,
+									"status": "failed",
+									"error":  safeErr,
+								})
+								status = "completed_with_pr_failure"
+								finalErr = fmt.Errorf("pull request failed for branch %s: %s", manifest.Repository.WorkBranch, safeErr)
+							} else {
+								manifest.Repository.PREnabled = true
+								manifest.Repository.PRStatus = prStatus
+								manifest.Repository.PRNumber = pr.Number
+								manifest.Repository.PRURL = pr.URL
+								manifest.Repository.PRTitle = pr.Title
+								eventType := "github.pr.completed"
+								if prStatus == "existing" {
+									eventType = "github.pr.existing"
+								}
+								_ = writeRunEvent(eventType, map[string]string{
+									"branch": manifest.Repository.WorkBranch,
+									"status": prStatus,
+									"number": fmt.Sprintf("%d", pr.Number),
+									"url":    pr.URL,
+								})
+							}
 						}
 					}
 				} else if commit.Status == "failed" {

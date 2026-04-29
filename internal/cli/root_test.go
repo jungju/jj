@@ -38,6 +38,7 @@ func TestRunCommandParsesFlags(t *testing.T) {
 		"--work-branch", "jj/test",
 		"--push",
 		"--push-mode", "branch",
+		"--auto-pr",
 		"--github-token-env", "MY_GITHUB_TOKEN",
 		"--allow-dirty",
 		"--allow-no-git",
@@ -58,10 +59,10 @@ func TestRunCommandParsesFlags(t *testing.T) {
 	if got.RepoURL != "https://github.com/acme/app.git" || got.RepoDir != "/tmp/repo-clone" || got.BaseBranch != "main" || got.WorkBranch != "jj/test" {
 		t.Fatalf("unexpected repository flags: %#v", got)
 	}
-	if !got.Push || got.PushMode != "branch" || got.GitHubTokenEnv != "MY_GITHUB_TOKEN" || !got.RepoAllowDirty {
+	if !got.Push || got.PushMode != "branch" || !got.AutoPR || got.GitHubTokenEnv != "MY_GITHUB_TOKEN" || !got.RepoAllowDirty {
 		t.Fatalf("unexpected repository push/auth flags: %#v", got)
 	}
-	if !got.RepoURLExplicit || !got.RepoDirExplicit || !got.BaseBranchExplicit || !got.WorkBranchExplicit || !got.PushExplicit || !got.PushModeExplicit || !got.GitHubTokenEnvExplicit || !got.RepoAllowDirtyExplicit {
+	if !got.RepoURLExplicit || !got.RepoDirExplicit || !got.BaseBranchExplicit || !got.WorkBranchExplicit || !got.PushExplicit || !got.PushModeExplicit || !got.AutoPRExplicit || !got.GitHubTokenEnvExplicit || !got.RepoAllowDirtyExplicit {
 		t.Fatalf("expected repository explicit markers: %#v", got)
 	}
 	if !got.PlanningAgentsExplicit || !got.OpenAIModelExplicit || !got.CodexModelExplicit || !got.CodexBinExplicit {
@@ -317,7 +318,7 @@ func TestRunCommandHelp(t *testing.T) {
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("help failed: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "--dry-run") || !strings.Contains(stdout.String(), "--cwd") || strings.Contains(stdout.String(), "--spec-path") || strings.Contains(stdout.String(), "--task-path") || strings.Contains(stdout.String(), "--eval-path") || !strings.Contains(stdout.String(), "--planner-agents") || !strings.Contains(stdout.String(), "--task-proposal-mode") || !strings.Contains(stdout.String(), "--repo") || !strings.Contains(stdout.String(), "--push") || !strings.Contains(stdout.String(), "--auto-continue") || !strings.Contains(stdout.String(), "--max-turns") {
+	if !strings.Contains(stdout.String(), "--dry-run") || !strings.Contains(stdout.String(), "--cwd") || strings.Contains(stdout.String(), "--spec-path") || strings.Contains(stdout.String(), "--task-path") || strings.Contains(stdout.String(), "--eval-path") || !strings.Contains(stdout.String(), "--planner-agents") || !strings.Contains(stdout.String(), "--task-proposal-mode") || !strings.Contains(stdout.String(), "--repo") || !strings.Contains(stdout.String(), "--push") || !strings.Contains(stdout.String(), "--auto-pr") || !strings.Contains(stdout.String(), "--auto-continue") || !strings.Contains(stdout.String(), "--max-turns") {
 		t.Fatalf("help output missing expected flags:\n%s", stdout.String())
 	}
 }

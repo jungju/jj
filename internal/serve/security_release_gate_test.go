@@ -457,6 +457,23 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !rootSectionsCalls["nextActionSummaryFromSummaries"] {
 		t.Fatalf("dashboardRootSectionsFrom must build next-action data through the sanitized summary helper; calls=%v", sortedCallNames(rootSectionsCalls))
 	}
+	if !rootSectionsCalls["dashboardNextAction"] {
+		t.Fatalf("dashboardRootSectionsFrom must build dashboard Next Action presentation through the centralized helper; calls=%v", sortedCallNames(rootSectionsCalls))
+	}
+	dashboardNextActionCalls := serveFunctionCalls(t, funcs, "dashboardNextAction")
+	for _, requiredCall := range []string{"dashboardNextActionTask", "dashboardNextActionLinks"} {
+		if !dashboardNextActionCalls[requiredCall] {
+			t.Fatalf("dashboardNextAction must centralize Next Action presentation through %s; calls=%v", requiredCall, sortedCallNames(dashboardNextActionCalls))
+		}
+	}
+	dashboardNextActionTaskCalls := serveFunctionCalls(t, funcs, "dashboardNextActionTask")
+	if !dashboardNextActionTaskCalls["sanitizeNextActionTask"] {
+		t.Fatalf("dashboardNextActionTask must use the sanitized Next Action task helper; calls=%v", sortedCallNames(dashboardNextActionTaskCalls))
+	}
+	dashboardNextActionLinkCalls := serveFunctionCalls(t, funcs, "dashboardNextActionLinks")
+	if !dashboardNextActionLinkCalls["nextActionLinks"] {
+		t.Fatalf("dashboardNextActionLinks must preserve guarded Next Action link decisions; calls=%v", sortedCallNames(dashboardNextActionLinkCalls))
+	}
 	nextActionCalls := serveFunctionCalls(t, funcs, "nextActionSummaryFromSummaries")
 	for _, requiredCall := range []string{"staticNextActionKindFromSummaries", "staticNextActionSummary"} {
 		if !nextActionCalls[requiredCall] {
@@ -480,6 +497,33 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		}
 	}
 	detailCalls := serveFunctionCalls(t, funcs, "runDetailFromInspection")
+	if !detailCalls["runDetailPresentation"] {
+		t.Fatalf("runDetailFromInspection must finish run-detail presentation through the shared helper; calls=%v", sortedCallNames(detailCalls))
+	}
+	renderDetailCalls := serveFunctionCalls(t, funcs, "renderRunDetail")
+	if !renderDetailCalls["runDetailPresentation"] {
+		t.Fatalf("renderRunDetail must refresh run-detail presentation after compare metadata is attached; calls=%v", sortedCallNames(renderDetailCalls))
+	}
+	runDetailPresentationCalls := serveFunctionCalls(t, funcs, "runDetailPresentation")
+	for _, requiredCall := range []string{"runDetailHeaderPresentation", "runDetailTopActionLinks", "runDetailValidationEvidencePresentation", "runDetailComparePreviousPresentation", "runDetailArtifactInventorySection"} {
+		if !runDetailPresentationCalls[requiredCall] {
+			t.Fatalf("runDetailPresentation must centralize run-detail section assembly through %s; calls=%v", requiredCall, sortedCallNames(runDetailPresentationCalls))
+		}
+	}
+	topActionCalls := serveFunctionCalls(t, funcs, "runDetailTopActionLinks")
+	for _, requiredCall := range []string{"guardedRunAuditURL", "guardedRunManifestURL", "runDetailActionLinks"} {
+		if !topActionCalls[requiredCall] {
+			t.Fatalf("runDetailTopActionLinks must build guarded run-detail actions through %s; calls=%v", requiredCall, sortedCallNames(topActionCalls))
+		}
+	}
+	evidencePresentationCalls := serveFunctionCalls(t, funcs, "runDetailValidationEvidencePresentation")
+	if !evidencePresentationCalls["runDetailActionLinks"] {
+		t.Fatalf("runDetailValidationEvidencePresentation must centralize Validation Evidence actions through shared action helper; calls=%v", sortedCallNames(evidencePresentationCalls))
+	}
+	comparePresentationCalls := serveFunctionCalls(t, funcs, "runDetailComparePreviousPresentation")
+	if !comparePresentationCalls["guardedRunCompareURL"] {
+		t.Fatalf("runDetailComparePreviousPresentation must preserve Compare Previous guarded URL decisions; calls=%v", sortedCallNames(comparePresentationCalls))
+	}
 	if !detailCalls["validationEvidenceFromRun"] {
 		t.Fatalf("runDetailFromInspection must build validation evidence through the sanitized run DTO helper; calls=%v", sortedCallNames(detailCalls))
 	}
@@ -583,6 +627,9 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"dashboardTaskSummaryNextForDecision",
 		"dashboardTaskSummaryNext",
 		"dashboardTaskSummaryEmptyMessage",
+		"dashboardNextAction",
+		"dashboardNextActionTask",
+		"dashboardNextActionLinks",
 		"nextActionSummaryFromSummaries",
 		"staticNextActionKindFromSummaries",
 		"taskQueueUnavailableNextActionKind",
@@ -598,6 +645,18 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"runCompareSideFromInspection",
 		"runHistoryLinkFromInspection",
 		"runDetailFromInspection",
+		"runDetailPresentation",
+		"runDetailHeaderPresentation",
+		"runDetailTimestampLine",
+		"runDetailTopActionLinks",
+		"runDetailValidationEvidencePresentation",
+		"runDetailComparePreviousPresentation",
+		"runDetailArtifactInventorySection",
+		"runDetailActionLinks",
+		"runDetailActionLabel",
+		"runDetailActionURL",
+		"guardedRunManifestURL",
+		"runDetailRawManifestActionURL",
 		"validationEvidenceFromRun",
 		"validationEvidenceVisibleSummaryForRun",
 		"validationEvidenceVisibleSummary",

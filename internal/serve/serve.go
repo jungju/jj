@@ -263,6 +263,39 @@ type comparePreviousSummary struct {
 	URL           string
 }
 
+type runDetailHeaderView struct {
+	ID            string
+	Status        string
+	TimestampLine string
+	ManifestLine  string
+	Error         string
+}
+
+type runDetailActionLink struct {
+	Label string
+	URL   string
+}
+
+type runDetailValidationEvidenceView struct {
+	Visible         bool
+	State           string
+	Message         string
+	RunID           string
+	ValidationState string
+	CountsLabel     string
+	TimestampLabel  string
+	Labels          []string
+	DetailURL       string
+	Actions         []runDetailActionLink
+}
+
+type runDetailComparePreviousView struct {
+	Visible bool
+	State   string
+	Message string
+	URL     string
+}
+
 type activeRunItem struct {
 	RunID            string
 	Status           string
@@ -366,6 +399,15 @@ type dashboardEvaluationFindingsFallbackView struct {
 }
 
 type nextActionSummary struct {
+	State   string
+	Label   string
+	Message string
+	Task    *taskQueueItem
+	RunID   string
+	Links   []nextActionLink
+}
+
+type dashboardNextActionView struct {
 	State   string
 	Label   string
 	Message string
@@ -548,6 +590,11 @@ type runDetail struct {
 	NextActions              []string
 	ValidationEvidence       validationEvidenceSummary
 	ComparePrevious          comparePreviousSummary
+	Header                   runDetailHeaderView
+	ActionLinks              []runDetailActionLink
+	ValidationEvidenceView   runDetailValidationEvidenceView
+	ComparePreviousView      runDetailComparePreviousView
+	ArtifactInventory        runArtifactInventoryPresentation
 }
 
 type runAuditExport struct {
@@ -722,6 +769,7 @@ type runArtifactInventoryCategory struct {
 type runArtifactInventoryPresentation struct {
 	Artifacts []runArtifactStatus
 	Note      string
+	EmptyText string
 }
 
 const (
@@ -735,6 +783,7 @@ const (
 
 	runArtifactGuardedPath    = "guarded artifact"
 	runArtifactNoMetadataNote = "No allowlisted run artifact metadata recorded."
+	runArtifactEmptyListText  = "No allowlisted run artifacts recorded."
 )
 
 type runValidationDetail struct {
@@ -839,7 +888,7 @@ type pageData struct {
 	RecentRuns         dashboardRecentRunsView
 	EvaluationFindings dashboardEvaluationFindingsView
 	ValidationStatus   validationStatusSummary
-	NextAction         nextActionSummary
+	NextAction         dashboardNextActionView
 	Docs               []docLink
 	ProjectDocs        []projectDocShortcut
 	Runs               []runLink
@@ -868,7 +917,7 @@ type dashboardRootSections struct {
 	RecentRuns         dashboardRecentRunsView
 	EvaluationFindings dashboardEvaluationFindingsView
 	ValidationStatus   validationStatusSummary
-	NextAction         nextActionSummary
+	NextAction         dashboardNextActionView
 	ProjectDocs        []projectDocShortcut
 	ActiveRuns         activeRunsSummary
 }
@@ -1062,13 +1111,14 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func dashboardRootSectionsFrom(runs []runLink, taskQueue taskQueueSummary, projectDocs []projectDocShortcut) dashboardRootSections {
 	latestRun := latestRunSummaryFromRuns(runs)
+	nextAction := nextActionSummaryFromSummaries(taskQueue, latestRun)
 	return dashboardRootSections{
 		TaskSummary:        dashboardTaskSummary(taskQueue),
 		LatestRun:          dashboardLatestRun(latestRun),
 		RecentRuns:         dashboardRecentRuns(recentRunsSummaryFromRuns(runs)),
 		EvaluationFindings: dashboardEvaluationFindings(evaluationFindingsSummaryFromRuns(runs)),
 		ValidationStatus:   validationStatusSummaryFromRuns(runs),
-		NextAction:         nextActionSummaryFromSummaries(taskQueue, latestRun),
+		NextAction:         dashboardNextAction(nextAction),
 		ProjectDocs:        projectDocs,
 		ActiveRuns:         activeRunsSummaryFromRuns(runs),
 	}
@@ -1632,6 +1682,7 @@ func (s *Server) renderRunDetail(w http.ResponseWriter, runID string) {
 	}
 	detail := inspection.Detail
 	detail.ComparePrevious = s.comparePreviousForInspection(inspection)
+	detail = runDetailPresentation(detail)
 	s.render(w, pageData{
 		Title:     "run " + detail.ID,
 		CWD:       displayWorkspace,
@@ -5397,6 +5448,32 @@ func nextActionSummaryFromSummaries(taskQueue taskQueueSummary, latest latestRun
 	return staticNextActionSummary(staticNextActionKindFromSummaries(taskQueue, latest), latest)
 }
 
+func dashboardNextAction(summary nextActionSummary) dashboardNextActionView {
+	return dashboardNextActionView{
+		State:   summary.State,
+		Label:   summary.Label,
+		Message: summary.Message,
+		Task:    dashboardNextActionTask(summary.Task),
+		RunID:   latestRunIDLabel(summary.RunID),
+		Links:   dashboardNextActionLinks(summary.Links),
+	}
+}
+
+func dashboardNextActionTask(task *taskQueueItem) *taskQueueItem {
+	if task == nil {
+		return nil
+	}
+	safe := sanitizeNextActionTask(*task)
+	if safe.ID == "" || safe.Status == "unknown" {
+		return nil
+	}
+	return &safe
+}
+
+func dashboardNextActionLinks(links []nextActionLink) []nextActionLink {
+	return nextActionLinks(links...)
+}
+
 func taskDrivenNextAction(taskQueue taskQueueSummary) (nextActionSummary, bool) {
 	for _, spec := range []nextActionTaskSpec{
 		{
@@ -6141,6 +6218,186 @@ func (s *Server) loadRunDetail(runID, runDir string) runDetail {
 	return inspection.Detail
 }
 
+func runDetailPresentation(detail runDetail) runDetail {
+	detail.Header = runDetailHeaderPresentation(detail)
+	detail.ActionLinks = runDetailTopActionLinks(detail.ID, detail.ManifestState)
+	detail.ValidationEvidenceView = runDetailValidationEvidencePresentation(detail.ValidationEvidence)
+	detail.ComparePreviousView = runDetailComparePreviousPresentation(detail.ComparePrevious)
+	detail.ArtifactInventory = runDetailArtifactInventorySection(detail.Artifacts, detail.ArtifactNote)
+	return detail
+}
+
+func runDetailHeaderPresentation(detail runDetail) runDetailHeaderView {
+	runID := latestRunIDLabel(detail.ID)
+	if runID == "" {
+		runID = latestRunDisplayText(detail.ID, "")
+	}
+	return runDetailHeaderView{
+		ID:            runID,
+		Status:        latestRunDisplayText(detail.Status, "unknown"),
+		TimestampLine: runDetailTimestampLine(detail.StartedAt, detail.FinishedAt, detail.Duration, detail.DryRun),
+		ManifestLine:  "manifest " + latestRunDisplayText(detail.ManifestState, "manifest unavailable"),
+		Error:         latestRunDisplayText(detail.Error, ""),
+	}
+}
+
+func runDetailTimestampLine(startedAt, finishedAt, duration string, dryRun bool) string {
+	parts := []string{
+		"started " + latestRunDisplayText(startedAt, "unknown"),
+		"finished " + latestRunDisplayText(finishedAt, "unknown"),
+	}
+	if duration = latestRunDisplayText(duration, ""); duration != "" {
+		parts = append(parts, "duration "+duration)
+	}
+	parts = append(parts, fmt.Sprintf("dry-run %t", dryRun))
+	return strings.Join(parts, " \u00b7 ")
+}
+
+func runDetailTopActionLinks(runID, manifestState string) []runDetailActionLink {
+	links := []runDetailActionLink{
+		{Label: "\u2190 dashboard", URL: "/"},
+		{Label: "all runs", URL: "/runs"},
+		{Label: "Audit export", URL: guardedRunAuditURL(runID)},
+	}
+	if manifestState == "manifest available" {
+		links = append(links, runDetailActionLink{Label: "Raw manifest", URL: guardedRunManifestURL(runID)})
+	}
+	return runDetailActionLinks(links...)
+}
+
+func runDetailValidationEvidencePresentation(summary validationEvidenceSummary) runDetailValidationEvidenceView {
+	if !summary.Visible {
+		return runDetailValidationEvidenceView{
+			Visible:         false,
+			State:           dashboardCategory(summary.State, "unknown"),
+			Message:         sanitizeRunDetailText(summary.Message),
+			ValidationState: dashboardCategory(summary.ValidationState, "unknown"),
+			TimestampLabel:  latestRunDisplayText(summary.TimestampLabel, "none"),
+		}
+	}
+	return runDetailValidationEvidenceView{
+		Visible:         true,
+		State:           validationEvidenceStateLabel(summary.State),
+		Message:         sanitizeRunDetailText(summary.Message),
+		RunID:           latestRunIDLabel(summary.RunID),
+		ValidationState: validationEvidenceStateLabel(summary.ValidationState),
+		CountsLabel:     sanitizeRunDetailText(summary.CountsLabel),
+		TimestampLabel:  validationEvidenceTimestampLabel(summary.TimestampLabel),
+		Labels:          validationEvidenceSanitizedLabels(summary.Labels),
+		DetailURL:       dashboardRunDetailActionURL(summary.DetailURL),
+		Actions: runDetailActionLinks(
+			runDetailActionLink{Label: "Run detail", URL: summary.DetailURL},
+			runDetailActionLink{Label: "Audit export", URL: summary.AuditURL},
+		),
+	}
+}
+
+func runDetailComparePreviousPresentation(summary comparePreviousSummary) runDetailComparePreviousView {
+	if !summary.Visible {
+		return runDetailComparePreviousView{}
+	}
+	state := comparePreviousStateToken(summary.State)
+	message := strings.TrimSpace(sanitizeRunDetailText(summary.Message))
+	if message == "" || unsafeRunDetailText(message) {
+		message = comparePreviousMessage(state)
+	}
+	url := ""
+	if state == comparePreviousStateAvailable {
+		url = guardedRunCompareURL(summary.CurrentRunID, summary.PreviousRunID)
+		if url == "" {
+			state = comparePreviousStateUnavailable
+			message = comparePreviousMessage(state)
+		}
+	}
+	return runDetailComparePreviousView{
+		Visible: true,
+		State:   state,
+		Message: message,
+		URL:     url,
+	}
+}
+
+func runDetailArtifactInventorySection(artifacts []runArtifactStatus, note string) runArtifactInventoryPresentation {
+	return runArtifactInventoryPresentation{
+		Artifacts: append([]runArtifactStatus(nil), artifacts...),
+		Note:      sanitizeRunDetailText(note),
+		EmptyText: runArtifactEmptyListText,
+	}
+}
+
+func runDetailActionLinks(links ...runDetailActionLink) []runDetailActionLink {
+	out := make([]runDetailActionLink, 0, len(links))
+	for _, link := range links {
+		label := runDetailActionLabel(link.Label)
+		if label == "" {
+			continue
+		}
+		url := runDetailActionURL(label, link.URL)
+		if url == "" {
+			continue
+		}
+		out = append(out, runDetailActionLink{Label: label, URL: url})
+	}
+	return out
+}
+
+func runDetailActionLabel(label string) string {
+	switch strings.TrimSpace(label) {
+	case "\u2190 dashboard":
+		return "\u2190 dashboard"
+	case "all runs":
+		return "all runs"
+	case "Audit export":
+		return "Audit export"
+	case "Raw manifest":
+		return "Raw manifest"
+	case "Run detail":
+		return "Run detail"
+	default:
+		return ""
+	}
+}
+
+func runDetailActionURL(label, raw string) string {
+	raw = strings.TrimSpace(raw)
+	switch label {
+	case "\u2190 dashboard":
+		if raw == "/" {
+			return raw
+		}
+	case "all runs":
+		if raw == "/runs" {
+			return raw
+		}
+	case "Audit export":
+		return dashboardRunAuditActionURL(raw)
+	case "Raw manifest":
+		return runDetailRawManifestActionURL(raw)
+	case "Run detail":
+		return dashboardRunDetailActionURL(raw)
+	}
+	return ""
+}
+
+func guardedRunManifestURL(runID string) string {
+	if latestRunIDLabel(runID) == "" {
+		return ""
+	}
+	return "/runs/" + template.URLQueryEscaper(runID) + "/manifest"
+}
+
+func runDetailRawManifestActionURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "/runs/") || !strings.HasSuffix(raw, "/manifest") {
+		return ""
+	}
+	runID := strings.TrimSuffix(strings.TrimPrefix(raw, "/runs/"), "/manifest")
+	if latestRunIDLabel(runID) == "" {
+		return ""
+	}
+	return raw
+}
+
 func (s *Server) runDetailFromInspection(inspection runInspection) runDetail {
 	roots := inspection.Roots
 	safeText := func(value string) string {
@@ -6167,7 +6424,7 @@ func (s *Server) runDetailFromInspection(inspection runInspection) runDetail {
 	detail.ValidationEvidence = validationEvidenceFromRun(runDTO)
 	if !inspection.ManifestLoaded {
 		detail.NextActions = runDetailNextActions(detail, dashboardManifest{}, false)
-		return detail
+		return runDetailPresentation(detail)
 	}
 	manifest := inspection.manifest
 	trustedManifest := inspection.TrustedManifest
@@ -6212,7 +6469,7 @@ func (s *Server) runDetailFromInspection(inspection runInspection) runDetail {
 		detail.SecurityDetails = []string{"diagnostics unknown"}
 	}
 	detail.NextActions = runDetailNextActions(detail, manifest, trustedManifest)
-	return detail
+	return runDetailPresentation(detail)
 }
 
 func (s *Server) runDetailDocs(manifest dashboardManifest, runDir, runID string, roots ...security.CommandPathRoot) []runDetailLink {
@@ -6296,7 +6553,7 @@ func runDetailArtifactInventoryPresentation(run runLink, manifestState string, t
 		artifacts = runArtifactInventoryFromRun(run)
 	}
 	artifacts, note := runDetailArtifactInventoryDecision(artifacts, manifestState, trustedManifest)
-	return runArtifactInventoryPresentation{Artifacts: artifacts, Note: note}
+	return runDetailArtifactInventorySection(artifacts, note)
 }
 
 func runDetailArtifactInventoryDecision(artifacts []runArtifactStatus, manifestState string, trustedManifest bool) ([]runArtifactStatus, string) {
@@ -7339,24 +7596,33 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}}</title>
   <style>
-    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    body { margin: 0; background: Canvas; color: CanvasText; }
-    header { padding: 18px 24px; border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent); }
-    main { max-width: 1120px; margin: 0 auto; padding: 24px; }
-    h1 { margin: 0 0 6px; font-size: 22px; }
-    h2 { margin-top: 28px; font-size: 16px; }
-    h3 { margin: 18px 0 8px; font-size: 14px; }
-    .muted { color: color-mix(in srgb, CanvasText 62%, transparent); font-size: 13px; }
+    :root {
+      color-scheme: light dark;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --line: color-mix(in srgb, CanvasText 16%, transparent);
+      --line-soft: color-mix(in srgb, CanvasText 9%, transparent);
+      --surface-soft: color-mix(in srgb, CanvasText 3%, Canvas);
+      --muted-text: color-mix(in srgb, CanvasText 62%, transparent);
+    }
+    body { margin: 0; background: var(--surface-soft); color: CanvasText; line-height: 1.5; }
+    header { padding: 20px 24px; border-bottom: 1px solid var(--line); background: Canvas; }
+    main { max-width: 1120px; margin: 0 auto; padding: 28px 24px 44px; }
+    h1 { margin: 0 0 6px; font-size: 22px; line-height: 1.25; }
+    h2 { margin: 28px 0 10px; font-size: 16px; line-height: 1.3; }
+    h3 { margin: 18px 0 8px; font-size: 14px; line-height: 1.3; }
+    p { margin: 8px 0; }
+    .muted { color: var(--muted-text); font-size: 13px; }
     .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
     .ready-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin: 12px 0 16px; }
-    .ready-item { border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 6px; padding: 10px; }
+    .ready-item { border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: Canvas; }
     .status { display: inline-block; margin-top: 6px; font-size: 12px; font-weight: 700; }
     .status.ready { color: #067647; }
     .status.missing { color: #b42318; }
     .status.running { color: #175cd3; }
     .actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0 22px; }
-    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 12px; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 6px; background: color-mix(in srgb, CanvasText 5%, Canvas); color: CanvasText; text-decoration: none; font: inherit; cursor: pointer; }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: color-mix(in srgb, CanvasText 5%, Canvas); color: CanvasText; text-decoration: none; font: inherit; cursor: pointer; }
     .button.primary { background: LinkText; color: Canvas; border-color: LinkText; }
+    .button:hover { text-decoration: none; border-color: color-mix(in srgb, LinkText 55%, var(--line)); }
     form { max-width: 760px; display: grid; gap: 14px; }
     form.filters { max-width: none; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end; margin: 12px 0 18px; }
     form.filters .actions { margin: 0; }
@@ -7367,10 +7633,10 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
     input[type="checkbox"] { min-height: 0; width: 16px; height: 16px; }
     .check { display: flex; gap: 8px; align-items: center; font-weight: 500; }
     ul { list-style: none; padding: 0; margin: 10px 0 0; }
-    li { padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent); }
+    li { padding: 7px 0; border-bottom: 1px solid var(--line-soft); }
     a { color: LinkText; text-decoration: none; }
     a:hover { text-decoration: underline; }
-    pre { overflow: auto; padding: 18px; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 6px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+    pre { overflow: auto; padding: 18px; border: 1px solid var(--line); border-radius: 6px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; background: Canvas; }
     pre.logs { max-height: 360px; background: color-mix(in srgb, CanvasText 4%, Canvas); }
     .turns li { display: grid; gap: 3px; }
     article { overflow-wrap: anywhere; line-height: 1.55; }
@@ -7379,6 +7645,46 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
     article ul { list-style: disc; padding-left: 22px; }
     article li { border: 0; padding: 3px 0; }
     .error { color: #b42318; }
+    .dashboard-root { background: Canvas; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .dashboard-root > .dashboard-section { padding: 18px 0; border-top: 1px solid var(--line-soft); }
+    .dashboard-root > .dashboard-section:first-child { border-top: 0; }
+    .dashboard-root h2 { margin-top: 0; }
+    .dashboard-root p, .dashboard-root li { max-width: 86ch; }
+    .dashboard-root li > div { margin-top: 4px; }
+    .dashboard-root .link-row { margin-top: 10px; line-height: 1.8; }
+    .dashboard-root .link-row a { font-weight: 600; text-underline-offset: 3px; }
+    .dashboard-root p a[href^="/runs"], .dashboard-root p a[href="/runs"] { font-weight: 600; text-underline-offset: 3px; }
+    .dashboard-root .error { font-weight: 600; }
+    .dashboard-section-task, .dashboard-section-latest, .dashboard-section-next-action { padding-block: 20px; }
+    .dashboard-section-validation li, .dashboard-section-recent li, .dashboard-section-active li { padding-block: 10px; }
+    .run-detail { display: grid; gap: 18px; }
+    .run-detail-actions { margin: 0 0 4px; }
+    .run-detail-actions .button { min-height: 34px; font-weight: 600; }
+    .run-detail-section { padding: 18px; border: 1px solid var(--line); border-radius: 8px; background: Canvas; }
+    .run-detail-section h2 { margin-top: 0; }
+    .run-detail-section > :last-child { margin-bottom: 0; }
+    .run-detail-overview { padding: 20px; }
+    .run-detail-title-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+    .run-detail-id { font-size: 18px; line-height: 1.25; overflow-wrap: anywhere; }
+    .run-detail-status { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; background: color-mix(in srgb, LinkText 8%, Canvas); color: CanvasText; font-size: 12px; font-weight: 700; }
+    .run-detail-meta { display: grid; gap: 5px; margin-top: 12px; }
+    .run-detail-meta-line { margin: 0; }
+    .run-detail-evidence-summary { display: grid; gap: 6px; margin: 2px 0 12px; }
+    .run-detail-label-list, .run-detail-artifact-list { margin-top: 12px; }
+    .run-detail-label-list li, .run-detail-artifact-list li { padding-block: 9px; }
+    .run-detail-inline-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
+    .run-detail-inline-actions .button { min-height: 32px; padding-inline: 10px; font-size: 13px; font-weight: 600; }
+    .run-detail-fallback { padding: 10px 12px; border: 1px dashed var(--line); border-radius: 6px; background: var(--surface-soft); }
+    @media (max-width: 700px) {
+      header { padding: 16px; }
+      main { padding: 20px 16px 36px; }
+      .dashboard-root > .dashboard-section { padding: 16px 0; }
+      .run-detail { gap: 14px; }
+      .run-detail-section, .run-detail-overview { padding: 14px; }
+      .run-detail-title-row { align-items: flex-start; }
+      .actions { gap: 8px; }
+      .button { width: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -7617,20 +7923,27 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
       {{end}}
       </div>
     {{else if .RunDetail}}
-      <p><a href="/">← dashboard</a> · <a href="/runs">all runs</a> · <a href="/runs/audit?run={{q .RunDetail.ID}}">Audit export</a>{{if eq .RunDetail.ManifestState "manifest available"}} · <a href="/runs/{{q .RunDetail.ID}}/manifest">Raw manifest</a>{{end}}</p>
-      <section>
+      <div class="run-detail">
+      {{if .RunDetail.ActionLinks}}
+      <nav class="run-detail-actions actions" aria-label="Run actions">
+        {{range .RunDetail.ActionLinks}}<a class="button" href="{{.URL}}">{{.Label}}</a>{{end}}
+      </nav>
+      {{end}}
+      <section class="run-detail-section run-detail-overview">
         <h2>Overview</h2>
-        <p><strong>{{.RunDetail.ID}}</strong> <span class="muted">{{.RunDetail.Status}}</span></p>
-        <p class="muted">started {{if .RunDetail.StartedAt}}{{.RunDetail.StartedAt}}{{else}}unknown{{end}} · finished {{if .RunDetail.FinishedAt}}{{.RunDetail.FinishedAt}}{{else}}unknown{{end}}{{if .RunDetail.Duration}} · duration {{.RunDetail.Duration}}{{end}} · dry-run {{.RunDetail.DryRun}}</p>
-        <p class="muted">manifest {{.RunDetail.ManifestState}}</p>
-        {{if .RunDetail.Error}}<p class="error">{{.RunDetail.Error}}</p>{{end}}
+        <div class="run-detail-title-row"><strong class="run-detail-id">{{.RunDetail.Header.ID}}</strong> <span class="run-detail-status">{{.RunDetail.Header.Status}}</span></div>
+        <div class="run-detail-meta">
+          <p class="muted run-detail-meta-line">{{.RunDetail.Header.TimestampLine}}</p>
+          <p class="muted run-detail-meta-line">{{.RunDetail.Header.ManifestLine}}</p>
+        </div>
+        {{if .RunDetail.Header.Error}}<p class="error">{{.RunDetail.Header.Error}}</p>{{end}}
       </section>
-      <section>
+      <section class="run-detail-section run-detail-planner">
         <h2>Planner</h2>
         <p class="muted">provider {{if .RunDetail.PlannerProvider}}{{.RunDetail.PlannerProvider}}{{else}}unknown{{end}}{{if .RunDetail.PlannerModel}} · model {{.RunDetail.PlannerModel}}{{end}}{{if .RunDetail.TaskProposalMode}} · mode {{.RunDetail.TaskProposalMode}}{{if .RunDetail.ResolvedTaskProposalMode}} → {{.RunDetail.ResolvedTaskProposalMode}}{{end}}{{end}}{{if .RunDetail.SelectedTaskID}} · selected task {{.RunDetail.SelectedTaskID}}{{end}}</p>
         {{if .RunDetail.RepositorySummary}}<p class="muted">repository {{.RunDetail.RepositorySummary}}</p>{{end}}
       </section>
-      <section>
+      <section class="run-detail-section run-detail-generated">
         <h2>Generated State And Docs</h2>
         <ul>
         {{range .RunDetail.Docs}}
@@ -7640,46 +7953,50 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
         {{end}}
         </ul>
       </section>
-      <section>
+      <section class="run-detail-section run-detail-evaluation">
         <h2>Evaluation</h2>
         <p class="muted">status {{.RunDetail.Validation.Status}} · evidence {{.RunDetail.Validation.EvidenceStatus}} · commands {{.RunDetail.Validation.CommandCount}} · passed {{.RunDetail.Validation.PassedCount}} · failed {{.RunDetail.Validation.FailedCount}}</p>
         {{if .RunDetail.Validation.Reason}}<p class="muted">{{.RunDetail.Validation.Reason}}</p>{{end}}
         {{if .RunDetail.Validation.Summary}}<p>{{.RunDetail.Validation.Summary}}</p>{{end}}
         <p>{{if .RunDetail.Validation.SummaryURL}}<a href="{{.RunDetail.Validation.SummaryURL}}">Validation summary</a>{{else if .RunDetail.Validation.SummaryPath}}<span class="muted">Validation summary {{.RunDetail.Validation.SummaryPath}}</span>{{end}}{{if .RunDetail.Validation.ResultsURL}} · <a href="{{.RunDetail.Validation.ResultsURL}}">Validation results</a>{{else if .RunDetail.Validation.ResultsPath}} · <span class="muted">Validation results {{.RunDetail.Validation.ResultsPath}}</span>{{end}}</p>
       </section>
-      {{if .RunDetail.ValidationEvidence.Visible}}
-      <section>
+      {{$evidence := .RunDetail.ValidationEvidenceView}}
+      {{if $evidence.Visible}}
+      <section class="run-detail-section run-detail-validation-evidence">
         <h2>Validation Evidence</h2>
-        <p><a href="{{.RunDetail.ValidationEvidence.DetailURL}}">{{.RunDetail.ValidationEvidence.RunID}}</a> <span class="muted">validation {{.RunDetail.ValidationEvidence.ValidationState}} · {{.RunDetail.ValidationEvidence.TimestampLabel}}</span></p>
-        {{if .RunDetail.ValidationEvidence.CountsLabel}}<p class="muted">{{.RunDetail.ValidationEvidence.CountsLabel}}</p>{{end}}
-        {{if .RunDetail.ValidationEvidence.Labels}}
-        <ul>
-        {{range .RunDetail.ValidationEvidence.Labels}}
+        <div class="run-detail-evidence-summary">
+          <p><a href="{{$evidence.DetailURL}}">{{$evidence.RunID}}</a> <span class="muted">validation {{$evidence.ValidationState}} · {{$evidence.TimestampLabel}}</span></p>
+          {{if $evidence.CountsLabel}}<p class="muted run-detail-meta-line">{{$evidence.CountsLabel}}</p>{{end}}
+        </div>
+        {{if $evidence.Labels}}
+        <ul class="run-detail-label-list">
+        {{range $evidence.Labels}}
           <li><span class="muted">label</span> {{.}}</li>
         {{end}}
         </ul>
         {{end}}
-        <p><a href="{{.RunDetail.ValidationEvidence.DetailURL}}">Run detail</a>{{if .RunDetail.ValidationEvidence.AuditURL}} · <a href="{{.RunDetail.ValidationEvidence.AuditURL}}">Audit export</a>{{end}}</p>
-        {{if .RunDetail.ValidationEvidence.Message}}<p class="muted">{{.RunDetail.ValidationEvidence.Message}}</p>{{end}}
+        {{if $evidence.Actions}}<div class="run-detail-inline-actions">{{range $evidence.Actions}}<a class="button" href="{{.URL}}">{{.Label}}</a>{{end}}</div>{{end}}
+        {{if $evidence.Message}}<p class="muted run-detail-fallback">{{$evidence.Message}}</p>{{end}}
       </section>
       {{end}}
-      <section>
+      <section class="run-detail-section run-detail-codex">
         <h2>Codex</h2>
         <p class="muted">ran {{.RunDetail.Codex.Ran}} · skipped {{.RunDetail.Codex.Skipped}} · status {{.RunDetail.Codex.Status}}{{if .RunDetail.Codex.Model}} · model {{.RunDetail.Codex.Model}}{{end}} · exit {{.RunDetail.Codex.ExitCode}}{{if .RunDetail.Codex.Duration}} · duration {{.RunDetail.Codex.Duration}}{{end}}</p>
         {{if .RunDetail.Codex.Error}}<p class="error">{{.RunDetail.Codex.Error}}</p>{{end}}
         <p>{{if .RunDetail.Codex.SummaryURL}}<a href="{{.RunDetail.Codex.SummaryURL}}">Codex summary</a>{{else if .RunDetail.Codex.SummaryPath}}<span class="muted">Codex summary {{.RunDetail.Codex.SummaryPath}}</span>{{end}}{{if .RunDetail.Codex.EventsURL}} · <a href="{{.RunDetail.Codex.EventsURL}}">Codex events</a>{{else if .RunDetail.Codex.EventsPath}} · <span class="muted">Codex events {{.RunDetail.Codex.EventsPath}}</span>{{end}}{{if .RunDetail.Codex.ExitURL}} · <a href="{{.RunDetail.Codex.ExitURL}}">Codex command metadata</a>{{else if .RunDetail.Codex.ExitPath}} · <span class="muted">Codex command metadata {{.RunDetail.Codex.ExitPath}}</span>{{end}}</p>
       </section>
-      {{if .RunDetail.ComparePrevious.Visible}}
-      <section>
+      {{$compare := .RunDetail.ComparePreviousView}}
+      {{if $compare.Visible}}
+      <section class="run-detail-section run-detail-compare">
         <h2>Compare Previous</h2>
-        {{if .RunDetail.ComparePrevious.URL}}
-          <p><a href="{{.RunDetail.ComparePrevious.URL}}">{{.RunDetail.ComparePrevious.Message}}</a></p>
+        {{if $compare.URL}}
+          <div class="run-detail-inline-actions"><a class="button" href="{{$compare.URL}}">{{$compare.Message}}</a></div>
         {{else}}
-          <p class="muted">{{.RunDetail.ComparePrevious.Message}}</p>
+          <p class="muted run-detail-fallback">{{$compare.Message}}</p>
         {{end}}
       </section>
       {{end}}
-      <section>
+      <section class="run-detail-section run-detail-commands">
         <h2>Command Metadata</h2>
         <ul>
         {{range .RunDetail.Commands}}
@@ -7695,27 +8012,29 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
         {{end}}
         </ul>
       </section>
-      <section>
+      <section class="run-detail-section run-detail-security">
         <h2>Security Diagnostics</h2>
         <p class="muted">{{.RunDetail.SecuritySummary}}{{range .RunDetail.SecurityDetails}} · {{.}}{{end}}</p>
       </section>
-      <section>
+      <section class="run-detail-section run-detail-artifacts">
         <h2>Run Artifacts</h2>
-        {{if .RunDetail.ArtifactNote}}<p class="muted">{{.RunDetail.ArtifactNote}}</p>{{end}}
-        <ul>
-        {{range .RunDetail.Artifacts}}
+        {{$artifactInventory := .RunDetail.ArtifactInventory}}
+        {{if $artifactInventory.Note}}<p class="muted run-detail-fallback">{{$artifactInventory.Note}}</p>{{end}}
+        <ul class="run-detail-artifact-list">
+        {{range $artifactInventory.Artifacts}}
           <li>{{.Label}} · {{if .URL}}<a href="{{.URL}}">{{.Path}}</a>{{else}}{{.Path}}{{end}} <span class="muted">{{.Status}}</span></li>
         {{else}}
-          <li class="muted">No allowlisted run artifacts recorded.</li>
+          <li class="muted">{{$artifactInventory.EmptyText}}</li>
         {{end}}
         </ul>
       </section>
       {{if .RunDetail.NextActions}}
-      <section>
+      <section class="run-detail-section run-detail-next-actions">
         <h2>Next Actions</h2>
         <ul>{{range .RunDetail.NextActions}}<li>{{.}}</li>{{end}}</ul>
       </section>
       {{end}}
+      </div>
     {{else if .RunsOnly}}
       <p><a href="/">← dashboard</a></p>
       <h2>Filters</h2>
@@ -7789,7 +8108,8 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
       {{end}}
       </ul>
 	    {{else}}
-	      <section>
+      <div class="dashboard-root">
+	      <section class="dashboard-section dashboard-section-task">
 	        <h2>Current TASK</h2>
 	        {{$taskSummary := .TaskSummary}}
 	        {{if $taskSummary.MessageMuted}}<p class="muted">{{$taskSummary.Message}}</p>{{else}}<p>{{$taskSummary.Message}}</p>{{end}}
@@ -7799,7 +8119,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          {{if $taskSummary.EmptyMessage}}<p class="muted">{{$taskSummary.EmptyMessage}}</p>{{end}}
 	        {{end}}
 	      </section>
-	      <section>
+	      <section class="dashboard-section dashboard-section-latest">
 	        <h2>Latest Run</h2>
 	        {{with .LatestRun.Primary}}
 	          <p>{{if .URL}}<a href="{{.URL}}">{{.RunID}}</a>{{else}}<strong>{{.RunID}}</strong>{{end}} <span class="muted">{{.Meta}}</span></p>
@@ -7811,7 +8131,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	        <p>{{range $i, $link := .LatestRun.Actions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</p>
 	        {{end}}
 	      </section>
-		      <section>
+		      <section class="dashboard-section dashboard-section-risks">
 		        <h2>Risks And Failures</h2>
 		        {{if .Runs}}{{with index .Runs 0}}
 		          {{if .ErrorSummary}}<p class="error">{{.ErrorSummary}}</p>{{else if .RiskSummary}}<p>{{.RiskSummary}}</p>{{else}}<p class="muted">No recorded failures or risks in the latest run.</p>{{end}}
@@ -7820,20 +8140,20 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 		        {{end}}
 		      </section>
 		      {{if .ValidationStatus.Items}}
-		      <section>
+		      <section class="dashboard-section dashboard-section-validation">
 		        <h2>Validation Status</h2>
 		        <ul>
 		        {{range .ValidationStatus.Items}}
 		          <li>
 		            <a href="{{.DetailURL}}">{{.RunID}}</a> <span class="muted">validation {{.ValidationState}} · {{.TimestampLabel}}</span>
 		            {{if .CountsLabel}}<div class="muted">{{.CountsLabel}}</div>{{end}}
-		            <div>{{range $i, $link := .Actions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
+		            <div class="link-row">{{range $i, $link := .Actions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
 		          </li>
 		        {{end}}
 		        </ul>
 		      </section>
 		      {{end}}
-		      <section>
+		      <section class="dashboard-section dashboard-section-findings">
 		        <h2>Evaluation Findings</h2>
 	        {{if .EvaluationFindings.RunID}}
 	          <p><a href="{{.EvaluationFindings.DetailURL}}">{{.EvaluationFindings.RunID}}</a> <span class="muted">{{.EvaluationFindings.StateLine}}</span></p>
@@ -7854,7 +8174,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          {{with .EvaluationFindings.Fallback.HistoryAction}}<p><a href="{{.URL}}">{{.Label}}</a></p>{{end}}
 	        {{end}}
 	      </section>
-	      <section>
+	      <section class="dashboard-section dashboard-section-recent">
 	        <h2>Recent Runs</h2>
 	        {{if .RecentRuns.Items}}
 	          <ul>
@@ -7862,7 +8182,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	            <li>
 	              {{if .DetailURL}}<a href="{{.DetailURL}}">{{.RunID}}</a>{{else}}<strong>{{.RunID}}</strong>{{end}} <span class="muted">{{.StateLine}}</span>
 	              <div class="muted">{{.ProviderLine}}</div>
-	              <div>{{range $i, $link := .Actions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
+	              <div class="link-row">{{range $i, $link := .Actions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
 	              {{if .Message}}<div class="error">{{.Message}}</div>{{end}}
 	            </li>
 	          {{end}}
@@ -7873,7 +8193,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          {{with .RecentRuns.Fallback.HistoryAction}}<p><a href="{{.URL}}">{{.Label}}</a></p>{{end}}
 	        {{end}}
 	      </section>
-	      <section>
+	      <section class="dashboard-section dashboard-section-next-action">
 	        <h2>Next Action</h2>
 	        <p><strong>{{.NextAction.Label}}</strong> <span class="muted">{{.NextAction.State}}</span></p>
 	        <p>{{.NextAction.Message}}</p>
@@ -7886,7 +8206,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          </div>
 	        {{end}}
 	      </section>
-	      <section>
+	      <section class="dashboard-section dashboard-section-project-docs">
 	        <h2>Project Docs</h2>
 	        <ul>
 	        {{range .ProjectDocs}}
@@ -7896,7 +8216,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	        {{end}}
 	        </ul>
 	      </section>
-	      <section>
+	      <section class="dashboard-section dashboard-section-workspace">
 	        <h2>Workspace Readiness</h2>
         <div class="ready-grid">
         {{range .Readiness}}
@@ -7920,21 +8240,21 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	        </div>
       </section>
       {{if .ActiveRuns.Items}}
-      <section>
+      <section class="dashboard-section dashboard-section-active">
         <h2>Active Run</h2>
         <ul>
         {{range .ActiveRuns.Items}}
           <li>
             <a href="{{.DetailURL}}">{{.RunID}}</a> <span class="muted">{{.Status}} · {{.TimestampLabel}}</span>
             <div class="muted">provider/result {{.ProviderOrResult}}{{if .EvaluationState}} · evaluation {{.EvaluationState}}{{end}}</div>
-            <div>{{range $i, $link := .Actions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
+            <div class="link-row">{{range $i, $link := .Actions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</div>
           </li>
         {{end}}
         </ul>
       </section>
       {{end}}
       <div class="grid">
-        <section>
+        <section class="dashboard-section dashboard-section-state-files">
           <h2>State Files</h2>
           <ul>
           {{range .Docs}}
@@ -7944,7 +8264,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
           {{end}}
           </ul>
         </section>
-	        <section>
+	        <section class="dashboard-section dashboard-section-runs">
 	          <h2>Runs</h2>
 	          <ul>
 	          {{range .Runs}}
@@ -7955,6 +8275,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	          </ul>
 	        </section>
 	      </div>
+      </div>
     {{end}}
   </main>
 </body>
