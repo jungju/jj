@@ -3993,18 +3993,19 @@ func TestRunArtifactInventoryFromRunUsesFixedCategoriesAndGuardedLinks(t *testin
 		{Label: "Input plan", Path: "input/plan.md", URL: "https://example.test/artifact?run=" + runID + "&path=input%2Fplan.md", Available: true, Status: "available"},
 		{Label: "Generated SPEC", Path: "snapshots/spec.after.json", URL: "/artifact?run=" + runID + "&path=snapshots%2Fspec.after.json", Available: true, Status: "notlisted"},
 		{Label: "hostile_label", Path: "planning/raw-response.txt", URL: "/artifact?run=" + runID + "&path=planning%2Fraw-response.txt", Available: true, Status: "available"},
+		{Label: "Git diff summary", Path: "git/diff-summary.txt", URL: "/artifact?run=" + runID + "&path=git%2Fdiff-summary.txt", Available: true},
 		{Label: "Codex summary", Path: "codex/summary.md", URL: "/artifact?run=sk-proj-runartifacthelper1234567890&path=codex%2Fsummary.md", Available: true, Status: "available"},
 		{Label: "token=sk-proj-runartifacthelper1234567890", Path: "raw artifact body", URL: "/artifact?run=" + runID + "&path=codex%2Fevents.jsonl", Available: true, Status: "available"},
 		{Label: "Input plan", Path: "input/duplicate.md", URL: "/artifact?run=" + runID + "&path=input%2Fduplicate.md", Available: true, Status: "available"},
 	}})
-	if got, want := len(items), 4; got != want {
+	if got, want := len(items), 5; got != want {
 		t.Fatalf("inventory item count = %d, want %d: %#v", got, want, items)
 	}
 	var labels []string
 	for _, item := range items {
 		labels = append(labels, item.Label)
 	}
-	if got, want := strings.Join(labels, "|"), "Input plan|Generated SPEC|Generated TASK|Codex summary"; got != want {
+	if got, want := strings.Join(labels, "|"), "Input plan|Generated SPEC|Generated TASK|Git diff summary|Codex summary"; got != want {
 		t.Fatalf("inventory labels = %q, want %q", got, want)
 	}
 	if items[0].URL != "" || items[0].Available {
@@ -4016,8 +4017,11 @@ func TestRunArtifactInventoryFromRunUsesFixedCategoriesAndGuardedLinks(t *testin
 	if items[2].URL == "" || !items[2].Available {
 		t.Fatalf("guarded artifact URL should be preserved for available fixed category: %#v", items[2])
 	}
-	if items[3].URL != "" || items[3].Available {
-		t.Fatalf("token-like run URL should not be linked: %#v", items[3])
+	if items[3].Status != "unknown" || items[3].URL != "" || items[3].Available {
+		t.Fatalf("unknown artifact state should keep safe label without link: %#v", items[3])
+	}
+	if items[4].URL != "" || items[4].Available {
+		t.Fatalf("token-like run URL should not be linked: %#v", items[4])
 	}
 	for _, item := range items {
 		joined := item.Label + item.Path + item.URL + item.Status

@@ -2268,6 +2268,32 @@
       "updated_at": "2026-04-29T04:49:44Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Centralize run-detail Run Artifacts fixed item construction, safe availability labels, state messages, unavailable, none, denied, and unknown decisions, and guarded link decisions in narrow helper logic or an equivalent simpler structure.",
+        "Consume only existing sanitized DTO/helper output, fixed expected artifact categories, guarded URL decisions, safe availability labels, or already-safe labels.",
+        "Preserve existing Run Artifacts labels, ordering, visibility, guarded URLs, state messages, none states, unavailable states, denied states, unknown states, malformed or partial metadata handling, stale metadata handling, hostile-label handling, token-like handling, and surrounding run-detail behavior.",
+        "Introduce no raw artifact body, raw manifest, raw path, command text, environment value, diff body, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, arbitrary file read, unsafe path read, new route, CLI flag, schema field, config behavior, pagination, scanner, upload, broad file browsing, raw export, visual redesign, or user-facing semantic change.",
+        "Add or preserve focused serve coverage for Run Artifacts normal, none or missing metadata, unavailable, denied, unknown, malformed or partial metadata, stale metadata, hostile-label, token-like, and guarded-link states where practical."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t60",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T04:52:41Z",
+      "created_by_run": "autopilot-20260428-160202-t60",
+      "created_by_turn": null,
+      "id": "TASK-0081",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active .jj/next-intent.md asks for code refactoring and simplification. Current evidence shows no blocker, failing validation, CI failure, disclosure, or boundary regression requiring bugfix or security work, and run-detail Run Artifacts remains a narrow SPEC-approved sanitized presentation helper maintenance area after TASK-0080.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized run-detail Run Artifacts presentation logic",
+      "updated_at": "2026-04-29T05:01:51Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

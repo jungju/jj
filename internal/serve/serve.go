@@ -642,6 +642,19 @@ type runArtifactInventoryCategory struct {
 	Path  func(dashboardManifest) string
 }
 
+const (
+	runArtifactAvailabilityAvailable   = "available"
+	runArtifactAvailabilityMissing     = "missing"
+	runArtifactAvailabilityUnavailable = "unavailable"
+	runArtifactAvailabilityGuarded     = "guarded"
+	runArtifactAvailabilityNotListed   = "not listed"
+	runArtifactAvailabilityNotRecorded = "not recorded"
+	runArtifactAvailabilityUnknown     = "unknown"
+
+	runArtifactGuardedPath    = "guarded artifact"
+	runArtifactNoMetadataNote = "No allowlisted run artifact metadata recorded."
+)
+
 type runValidationDetail struct {
 	Status         string
 	EvidenceStatus string
@@ -5722,15 +5735,13 @@ func (s *Server) runDetailFromInspection(inspection runInspection) runDetail {
 	}
 
 	if trustedManifest {
-		detail.Artifacts = runArtifactInventoryFromRun(runDTO)
-		if len(detail.Artifacts) == 0 {
-			detail.ArtifactNote = "No allowlisted run artifact metadata recorded."
-		}
+		artifacts := runArtifactInventoryFromRun(runDTO)
+		detail.Artifacts, detail.ArtifactNote = runDetailArtifactInventoryDecision(artifacts, detail.ManifestState, true)
 		detail.Docs = s.runDetailDocs(manifest, inspection.RunDir, inspection.rawID, roots...)
 		detail.Codex = s.runCodexDetail(manifest, inspection.RunDir, inspection.rawID, roots...)
 		detail.Commands = s.runCommandDetails(manifest, inspection.RunDir, inspection.rawID, roots...)
-	} else if detail.ArtifactNote == "" {
-		detail.ArtifactNote = unavailableRunError(detail.ManifestState)
+	} else {
+		_, detail.ArtifactNote = runDetailArtifactInventoryDecision(nil, detail.ManifestState, false)
 	}
 	detail.Validation = s.runValidationDetail(manifest, inspection.RunDir, inspection.rawID, trustedManifest, roots...)
 	detail.SecuritySummary, detail.SecurityDetails = runDetailSecurityDiagnostics(manifest.Security)
@@ -5815,6 +5826,16 @@ func runArtifactInventoryFromRun(run runLink) []runArtifactStatus {
 		}
 	}
 	return out
+}
+
+func runDetailArtifactInventoryDecision(artifacts []runArtifactStatus, manifestState string, trustedManifest bool) ([]runArtifactStatus, string) {
+	if !trustedManifest {
+		return nil, unavailableRunError(manifestState)
+	}
+	if len(artifacts) == 0 {
+		return nil, runArtifactNoMetadataNote
+	}
+	return artifacts, ""
 }
 
 func runArtifactInventoryCategories() []runArtifactInventoryCategory {
@@ -5918,7 +5939,7 @@ func runArtifactInventoryItem(label string, status runArtifactStatus) (runArtifa
 	if item.Path == "" {
 		return runArtifactStatus{}, false
 	}
-	if availability == "available" && status.Available {
+	if availability == runArtifactAvailabilityAvailable && status.Available {
 		item.URL = safeRunArtifactURL(status.URL)
 		item.Available = item.URL != ""
 	}
@@ -5928,14 +5949,20 @@ func runArtifactInventoryItem(label string, status runArtifactStatus) (runArtifa
 func runArtifactAvailabilityLabel(value string) string {
 	value = strings.TrimSpace(sanitizeRunDetailText(value))
 	switch value {
-	case "available", "missing", "unavailable", "guarded", "not listed", "not recorded", "unknown":
+	case runArtifactAvailabilityAvailable,
+		runArtifactAvailabilityMissing,
+		runArtifactAvailabilityUnavailable,
+		runArtifactAvailabilityGuarded,
+		runArtifactAvailabilityNotListed,
+		runArtifactAvailabilityNotRecorded,
+		runArtifactAvailabilityUnknown:
 		return value
 	case "":
-		return "unknown"
+		return runArtifactAvailabilityUnknown
 	default:
-		category := dashboardCategory(value, "unknown")
+		category := dashboardCategory(value, runArtifactAvailabilityUnknown)
 		if category == "notlisted" {
-			return "not listed"
+			return runArtifactAvailabilityNotListed
 		}
 		return category
 	}
@@ -6158,36 +6185,36 @@ func artifactStatusForPath(manifest dashboardManifest, runDir, runID, raw string
 	}
 	clean, err := cleanAllowedArtifactPath(raw)
 	if err != nil {
-		return runArtifactStatus{Path: "guarded artifact", Status: "guarded"}
+		return runArtifactStatus{Path: runArtifactGuardedPath, Status: runArtifactAvailabilityGuarded}
 	}
 	display, ok := safeRunDetailPath(clean, roots...)
 	if !ok {
-		return runArtifactStatus{Path: "guarded artifact", Status: "guarded"}
+		return runArtifactStatus{Path: runArtifactGuardedPath, Status: runArtifactAvailabilityGuarded}
 	}
-	status := runArtifactStatus{Path: display, Status: "not listed"}
+	status := runArtifactStatus{Path: display, Status: runArtifactAvailabilityNotListed}
 	if !manifestHasArtifactPath(manifest.Artifacts, clean) {
 		return status
 	}
 	path, err := safeJoin(runDir, clean)
 	if err != nil {
-		status.Status = "guarded"
+		status.Status = runArtifactAvailabilityGuarded
 		return status
 	}
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		status.Status = "missing"
+		status.Status = runArtifactAvailabilityMissing
 		return status
 	}
 	if err != nil {
-		status.Status = "unavailable"
+		status.Status = runArtifactAvailabilityUnavailable
 		return status
 	}
 	if info.IsDir() {
-		status.Status = "unavailable"
+		status.Status = runArtifactAvailabilityUnavailable
 		return status
 	}
 	status.Available = true
-	status.Status = "available"
+	status.Status = runArtifactAvailabilityAvailable
 	status.URL = artifactURL(runID, clean)
 	return status
 }
