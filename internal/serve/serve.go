@@ -434,6 +434,11 @@ type dashboardRunActionLink struct {
 	URL   string
 }
 
+type dashboardRunHistoryFallback struct {
+	Message       string
+	HistoryAction *dashboardRunActionLink
+}
+
 type dashboardRunLinks struct {
 	RunID     string
 	DetailURL string
@@ -3646,9 +3651,10 @@ func dashboardRecentRunItemView(item recentRunItem) dashboardRecentRunItem {
 }
 
 func dashboardRecentRunsFallback(summary recentRunsSummary, historyAction *dashboardRunActionLink) dashboardRecentRunsFallbackView {
+	fallback := dashboardRunHistoryFallbackFor(summary.Message, historyAction)
 	return dashboardRecentRunsFallbackView{
-		Message:       summary.Message,
-		HistoryAction: historyAction,
+		Message:       fallback.Message,
+		HistoryAction: fallback.HistoryAction,
 	}
 }
 
@@ -3661,12 +3667,7 @@ func dashboardRecentRunProviderLine(item recentRunItem) string {
 }
 
 func dashboardRecentRunHistoryAction(historyURL string) *dashboardRunActionLink {
-	links := dashboardRunActionLinks(dashboardRunAction(dashboardRunActionHistory, historyURL))
-	if len(links) == 0 {
-		return nil
-	}
-	link := links[0]
-	return &link
+	return dashboardOptionalRunAction(dashboardRunActionHistory, historyURL)
 }
 
 func recentRunItemFromRun(run runLink) (recentRunItem, bool) {
@@ -5193,19 +5194,31 @@ func dashboardEvaluationFindingsActions(summary evaluationFindingsSummary) []das
 }
 
 func dashboardEvaluationFindingsFallback(summary evaluationFindingsSummary, historyAction *dashboardRunActionLink) dashboardEvaluationFindingsFallbackView {
+	fallback := dashboardRunHistoryFallbackFor(summary.Message, historyAction)
 	return dashboardEvaluationFindingsFallbackView{
-		Message:       summary.Message,
-		HistoryAction: historyAction,
+		Message:       fallback.Message,
+		HistoryAction: fallback.HistoryAction,
 	}
 }
 
 func dashboardEvaluationFindingsHistoryAction(historyURL string) *dashboardRunActionLink {
-	links := dashboardRunActionLinks(dashboardRunAction(dashboardRunActionHistory, historyURL))
+	return dashboardOptionalRunAction(dashboardRunActionHistory, historyURL)
+}
+
+func dashboardOptionalRunAction(kind dashboardRunActionKind, url string) *dashboardRunActionLink {
+	links := dashboardRunActionLinks(dashboardRunAction(kind, url))
 	if len(links) == 0 {
 		return nil
 	}
 	link := links[0]
 	return &link
+}
+
+func dashboardRunHistoryFallbackFor(message string, historyAction *dashboardRunActionLink) dashboardRunHistoryFallback {
+	return dashboardRunHistoryFallback{
+		Message:       message,
+		HistoryAction: historyAction,
+	}
 }
 
 func latestRunNoneSummary() latestRunSummary {

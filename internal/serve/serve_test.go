@@ -965,6 +965,50 @@ func TestDashboardRecentRunsSummaryDisplayDataAndActionsAreDeterministic(t *test
 	}
 }
 
+func TestDashboardSharedGuardedActionAndFallbackHelpersPreserveStates(t *testing.T) {
+	runID := "20260429-141500-shared"
+	history := dashboardRunActionLink{Label: "Run history", URL: "/runs"}
+
+	for name, action := range map[string]*dashboardRunActionLink{
+		"recent runs":         dashboardRecentRunHistoryAction("/runs"),
+		"evaluation findings": dashboardEvaluationFindingsHistoryAction("/runs"),
+	} {
+		if action == nil || *action != history {
+			t.Fatalf("%s history action = %#v, want %#v", name, action, history)
+		}
+	}
+
+	if action := dashboardOptionalRunAction(dashboardRunActionDetail, "/runs/"+runID); action == nil || *action != (dashboardRunActionLink{Label: "Run detail", URL: "/runs/" + runID}) {
+		t.Fatalf("detail optional action = %#v", action)
+	}
+	if action := dashboardOptionalRunAction(dashboardRunActionAudit, "/runs/audit?run="+runID); action == nil || *action != (dashboardRunActionLink{Label: "Audit export", URL: "/runs/audit?run=" + runID}) {
+		t.Fatalf("audit optional action = %#v", action)
+	}
+	for _, action := range []*dashboardRunActionLink{
+		dashboardRecentRunHistoryAction("/runs/" + runID),
+		dashboardEvaluationFindingsHistoryAction("/runs/audit?run=" + runID),
+		dashboardOptionalRunAction(dashboardRunActionDetail, "/runs/sk-proj-sharedaction1234567890"),
+		dashboardOptionalRunAction(dashboardRunActionKind("unknown"), "/runs/"+runID),
+	} {
+		if action != nil {
+			t.Fatalf("unsafe optional action should be nil, got %#v", action)
+		}
+	}
+
+	recentFallback := dashboardRecentRunsFallback(recentRunsSummary{Message: "No jj runs found."}, &history)
+	if recentFallback.Message != "No jj runs found." || recentFallback.HistoryAction == nil || *recentFallback.HistoryAction != history {
+		t.Fatalf("recent runs fallback changed: %#v", recentFallback)
+	}
+	findingsFallback := dashboardEvaluationFindingsFallback(evaluationFindingsSummary{Message: "Evaluation metadata unavailable."}, &history)
+	if findingsFallback.Message != "Evaluation metadata unavailable." || findingsFallback.HistoryAction == nil || *findingsFallback.HistoryAction != history {
+		t.Fatalf("evaluation findings fallback changed: %#v", findingsFallback)
+	}
+	nilFallback := dashboardEvaluationFindingsFallback(evaluationFindingsSummary{Message: "Evaluation metadata denied."}, nil)
+	if nilFallback.Message != "Evaluation metadata denied." || nilFallback.HistoryAction != nil {
+		t.Fatalf("nil history fallback changed: %#v", nilFallback)
+	}
+}
+
 func TestDashboardActiveRunShowsSanitizedNonTerminalRunsAndPreservesSections(t *testing.T) {
 	dir := t.TempDir()
 	secret := "sk-proj-activerun1234567890"

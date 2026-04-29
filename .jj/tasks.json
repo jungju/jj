@@ -2754,6 +2754,33 @@
       "updated_at": "2026-04-29T08:41:38Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Introduce only narrow unexported internal/serve helper logic that removes real duplicated guarded action-link or fallback presentation construction.",
+        "Helpers consume only existing sanitized DTO/helper output, guarded URL decisions, fixed safe labels, normalized values, safe timestamps or counts, and already-safe state metadata.",
+        "Dashboard root and run-detail labels, ordering, visibility, guarded links, fallback messages, spacing, timestamps, denied, unavailable, unknown, none, empty, malformed, partial, stale, hostile-label, token-like, missing timestamp, tied timestamp, internally inconsistent, and no-link behavior remain unchanged for every touched section.",
+        "No raw manifest, artifact body, raw path, command text, environment value, diff body, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, arbitrary file read, route, CLI flag, schema field, config behavior, scanner, upload, raw export, visual redesign, redaction policy change, path-boundary policy change, or user-facing semantic change is introduced.",
+        "Focused serve coverage is preserved or strengthened for all touched guarded action-link and fallback states.",
+        "Validation passes: focused internal/serve tests for touched sections, go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t78",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T08:43:15Z",
+      "created_by_run": "autopilot-20260428-160202-t78",
+      "created_by_turn": null,
+      "id": "TASK-0099",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent override asks for code refactoring and simplification. Current evidence shows all prior tasks are complete and no failing validation, CI, test, disclosure, or boundary issue requires bugfix or security work, so the next best task is a narrow behavior-preserving internal/serve cleanup that removes duplicated guarded action-link or fallback construction without changing user-facing output.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify shared guarded dashboard action-link and fallback presentation construction",
+      "updated_at": "2026-04-29T08:51:39Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

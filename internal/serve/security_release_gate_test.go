@@ -290,10 +290,8 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		}
 	}
 	recentRunHistoryActionCalls := serveFunctionCalls(t, funcs, "dashboardRecentRunHistoryAction")
-	for _, requiredCall := range []string{"dashboardRunAction", "dashboardRunActionLinks"} {
-		if !recentRunHistoryActionCalls[requiredCall] {
-			t.Fatalf("dashboardRecentRunHistoryAction must guard Recent Runs history links through %s; calls=%v", requiredCall, sortedCallNames(recentRunHistoryActionCalls))
-		}
+	if !recentRunHistoryActionCalls["dashboardOptionalRunAction"] {
+		t.Fatalf("dashboardRecentRunHistoryAction must guard Recent Runs history links through shared optional action helper; calls=%v", sortedCallNames(recentRunHistoryActionCalls))
 	}
 	if !rootSectionsCalls["evaluationFindingsSummaryFromRuns"] {
 		t.Fatalf("dashboardRootSectionsFrom must build evaluation-findings data through the sanitized summary helper; calls=%v", sortedCallNames(rootSectionsCalls))
@@ -318,9 +316,19 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		}
 	}
 	dashboardFindingsHistoryActionCalls := serveFunctionCalls(t, funcs, "dashboardEvaluationFindingsHistoryAction")
+	if !dashboardFindingsHistoryActionCalls["dashboardOptionalRunAction"] {
+		t.Fatalf("dashboardEvaluationFindingsHistoryAction must guard Evaluation Findings history links through shared optional action helper; calls=%v", sortedCallNames(dashboardFindingsHistoryActionCalls))
+	}
+	optionalActionCalls := serveFunctionCalls(t, funcs, "dashboardOptionalRunAction")
 	for _, requiredCall := range []string{"dashboardRunAction", "dashboardRunActionLinks"} {
-		if !dashboardFindingsHistoryActionCalls[requiredCall] {
-			t.Fatalf("dashboardEvaluationFindingsHistoryAction must guard Evaluation Findings history links through %s; calls=%v", requiredCall, sortedCallNames(dashboardFindingsHistoryActionCalls))
+		if !optionalActionCalls[requiredCall] {
+			t.Fatalf("dashboardOptionalRunAction must centralize guarded action construction through %s; calls=%v", requiredCall, sortedCallNames(optionalActionCalls))
+		}
+	}
+	for _, fn := range []string{"dashboardRecentRunsFallback", "dashboardEvaluationFindingsFallback"} {
+		calls := serveFunctionCalls(t, funcs, fn)
+		if !calls["dashboardRunHistoryFallbackFor"] {
+			t.Fatalf("%s must centralize message/history fallback construction; calls=%v", fn, sortedCallNames(calls))
 		}
 	}
 	if !rootSectionsCalls["dashboardTaskSummary"] {
@@ -500,6 +508,8 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"dashboardRecentRunStateLine",
 		"dashboardRecentRunProviderLine",
 		"dashboardRecentRunHistoryAction",
+		"dashboardOptionalRunAction",
+		"dashboardRunHistoryFallbackFor",
 		"recentRunItemFromRun",
 		"evaluationFindingsSummaryFromRuns",
 		"evaluationFindingsSummaryForRun",
