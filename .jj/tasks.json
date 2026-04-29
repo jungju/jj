@@ -1858,6 +1858,33 @@
       "updated_at": "2026-04-29T01:33:57Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Reduce duplicated or unnecessarily nested sanitized dashboard-root TASK summary presentation logic in one narrow area.",
+        "Consume only existing sanitized dashboard DTO/helper output, guarded URL decisions, or already-safe labels.",
+        "Preserve dashboard-root TASK summary labels, ordering, guarded links, empty states, denied states, unavailable states, unknown states, and surrounding dashboard-root behavior.",
+        "Do not read or render raw manifest, artifact body, command, environment, diff, validation output, planner handoff, TASK.md body, EVAL.md body, document body, arbitrary file path, unsafe path, configured secret, token-like value, or omission placeholder content.",
+        "Do not introduce new CLI flags, dashboard pages, routes, manifest schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw export behavior, visual redesign, or user-facing output semantics.",
+        "Add or adjust focused serve tests for the touched TASK summary states, including at least one normal state and one denied, unavailable, empty, hostile-label, or token-like fallback state."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t45",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T01:36:36Z",
+      "created_by_run": "autopilot-20260428-160202-t45",
+      "created_by_turn": null,
+      "id": "TASK-0066",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active .jj/next-intent.md explicitly requests code refactoring and simplification. Current evidence shows no failing validation, blocker, CI regression, disclosure, or security boundary regression, and recent completed tasks already simplified adjacent sanitized presentation paths. The next useful one-turn task is a narrow behavior-preserving refactor of the dashboard-root TASK summary presentation path.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard TASK summary presentation logic",
+      "updated_at": "2026-04-29T01:45:17Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

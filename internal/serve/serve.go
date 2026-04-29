@@ -300,6 +300,13 @@ type nextActionLink struct {
 	URL   string
 }
 
+type dashboardTaskSummaryView struct {
+	Message      string
+	MessageMuted bool
+	Next         *taskQueueItem
+	EmptyMessage string
+}
+
 type dashboardRunActionLink struct {
 	Label string
 	URL   string
@@ -4711,6 +4718,43 @@ func nextActionURL(raw string) string {
 	}
 }
 
+func dashboardTaskSummary(summary taskQueueSummary) dashboardTaskSummaryView {
+	view := dashboardTaskSummaryView{
+		Message:      dashboardTaskSummaryMessage(summary.Message, "TASK.md unavailable."),
+		MessageMuted: !summary.Available,
+	}
+	if !summary.Available {
+		return view
+	}
+	view.Message = dashboardTaskSummaryMessage(summary.Message, "TASK.md task summary unknown.")
+	if task := dashboardTaskSummaryNext(summary.Next); task != nil {
+		view.Next = task
+		return view
+	}
+	view.EmptyMessage = "No runnable tasks."
+	return view
+}
+
+func dashboardTaskSummaryMessage(message, fallback string) string {
+	text := strings.TrimSpace(sanitizeRunDetailText(message))
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" || text == "unsafe value removed" || text == "sensitive value removed" || strings.Contains(text, security.RedactionMarker) || unsafeRunDetailText(text) {
+		return fallback
+	}
+	return text
+}
+
+func dashboardTaskSummaryNext(task *taskQueueItem) *taskQueueItem {
+	if task == nil {
+		return nil
+	}
+	safe := sanitizeNextActionTask(*task)
+	if safe.ID == "" || !taskActionable(safe.Status) {
+		return nil
+	}
+	return &safe
+}
+
 func dashboardRunActions(detailURL, auditURL string) []dashboardRunActionLink {
 	return dashboardRunActionLinks(
 		dashboardRunActionLink{Label: "Run detail", URL: detailURL},
@@ -6148,6 +6192,7 @@ func renderMarkdown(content string) template.HTML {
 var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	"dashboardLatestRunActions": dashboardLatestRunActions,
 	"dashboardRunActions":       dashboardRunActions,
+	"dashboardTaskSummary":      dashboardTaskSummary,
 	"q":                         func(s string) string { return template.URLQueryEscaper(s) },
 }).Parse(`<!doctype html>
 <html lang="ko">
@@ -6608,15 +6653,12 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	    {{else}}
 	      <section>
 	        <h2>Current TASK</h2>
-	        {{if .TaskQueue.Available}}
-	          <p>{{.TaskQueue.Message}}</p>
-	          {{if .TaskQueue.Next}}
-	            <p>Next: <strong>{{.TaskQueue.Next.ID}}</strong> <span class="muted">{{.TaskQueue.Next.Category}} · {{.TaskQueue.Next.Status}}</span> {{.TaskQueue.Next.Title}}</p>
-	          {{else}}
-	            <p class="muted">No runnable tasks.</p>
-	          {{end}}
+	        {{$taskSummary := dashboardTaskSummary .TaskQueue}}
+	        {{if $taskSummary.MessageMuted}}<p class="muted">{{$taskSummary.Message}}</p>{{else}}<p>{{$taskSummary.Message}}</p>{{end}}
+	        {{with $taskSummary.Next}}
+	          <p>Next: <strong>{{.ID}}</strong> <span class="muted">{{.Category}} · {{.Status}}</span> {{.Title}}</p>
 	        {{else}}
-	          <p class="muted">{{.TaskQueue.Message}}</p>
+	          {{if $taskSummary.EmptyMessage}}<p class="muted">{{$taskSummary.EmptyMessage}}</p>{{end}}
 	        {{end}}
 	      </section>
 	      <section>

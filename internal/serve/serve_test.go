@@ -1566,6 +1566,7 @@ func TestDashboardShowsTaskMarkdownQueueSummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, body)
 	}
+	taskSection := htmlSection(body, "Current TASK", "Latest Run")
 	for _, want := range []string{
 		"Current TASK",
 		"TASK.md: 4 total, 1 done, 1 in progress, 1 pending, 1 blocked.",
@@ -1575,8 +1576,8 @@ func TestDashboardShowsTaskMarkdownQueueSummary(t *testing.T) {
 		"in-progress",
 		"Show sanitized TASK.md work queue",
 	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("dashboard task summary missing %q:\n%s", want, body)
+		if !strings.Contains(taskSection, want) {
+			t.Fatalf("dashboard task summary missing %q:\n%s", want, taskSection)
 		}
 	}
 }
@@ -1605,6 +1606,65 @@ func TestTaskQueueSummaryParsesCommonTaskMarkdownFormats(t *testing.T) {
 	}
 }
 
+func TestDashboardTaskSummaryPreservesNormalAndFallbackStates(t *testing.T) {
+	normalNext := &taskQueueItem{
+		ID:       "TASK-0066",
+		Category: "quality",
+		Status:   "in-progress",
+		Title:    "Simplify sanitized dashboard TASK summary presentation logic",
+	}
+	normal := dashboardTaskSummary(taskQueueSummary{
+		State:     "available",
+		Available: true,
+		Message:   "TASK.md: 1 total, 0 done, 1 in progress, 0 pending, 0 blocked.",
+		Next:      normalNext,
+	})
+	if normal.MessageMuted || normal.Message != "TASK.md: 1 total, 0 done, 1 in progress, 0 pending, 0 blocked." {
+		t.Fatalf("normal task summary message changed: %#v", normal)
+	}
+	if normal.Next == nil || *normal.Next != *normalNext || normal.EmptyMessage != "" {
+		t.Fatalf("normal next task changed: %#v", normal)
+	}
+
+	denied := dashboardTaskSummary(unavailableTaskQueueSummary("denied"))
+	if !denied.MessageMuted || denied.Message != "TASK.md unavailable." || denied.Next != nil || denied.EmptyMessage != "" {
+		t.Fatalf("denied task summary fallback changed: %#v", denied)
+	}
+
+	empty := dashboardTaskSummary(taskQueueSummary{
+		State:     "available",
+		Available: true,
+		Message:   "TASK.md: 1 total, 0 done, 0 in progress, 0 pending, 1 blocked. No pending or in-progress tasks.",
+	})
+	if empty.MessageMuted || empty.EmptyMessage != "No runnable tasks." || empty.Next != nil {
+		t.Fatalf("empty task summary fallback changed: %#v", empty)
+	}
+
+	secret := "sk-proj-tasksummaryhelper1234567890"
+	hostile := dashboardTaskSummary(taskQueueSummary{
+		State:     "available",
+		Available: true,
+		Message:   "Authorization: Bearer " + secret,
+		Next: &taskQueueItem{
+			ID:       "TASK-0067",
+			Category: "token=" + secret,
+			Status:   "in_progress",
+			Title:    "raw artifact body token=" + secret,
+		},
+	})
+	if hostile.Message != "TASK.md task summary unknown." || hostile.Next == nil {
+		t.Fatalf("hostile task summary fallback changed: %#v", hostile)
+	}
+	if hostile.Next.Category != "unknown" || hostile.Next.Status != "in-progress" || hostile.Next.Title != "unsafe value removed" {
+		t.Fatalf("hostile task summary did not sanitize next task: %#v", hostile.Next)
+	}
+	for _, leaked := range []string{secret, "Authorization: Bearer", "token=", "raw artifact body", security.RedactionMarker, "[omitted]"} {
+		if strings.Contains(hostile.Message, leaked) || strings.Contains(hostile.Next.Category, leaked) || strings.Contains(hostile.Next.Title, leaked) {
+			t.Fatalf("hostile task summary leaked %q: %#v", leaked, hostile)
+		}
+	}
+}
+
 func TestDashboardTaskMarkdownAllDoneShowsNoRunnableTasks(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "docs/TASK.md", `# Work Queue
@@ -1624,16 +1684,17 @@ func TestDashboardTaskMarkdownAllDoneShowsNoRunnableTasks(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, body)
 	}
+	taskSection := htmlSection(body, "Current TASK", "Latest Run")
 	for _, want := range []string{
 		"TASK.md: 2 total, 2 done, 0 in progress, 0 pending, 0 blocked. All TASK.md tasks are done. No runnable tasks.",
 		"No runnable tasks.",
 	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("all-done task summary missing %q:\n%s", want, body)
+		if !strings.Contains(taskSection, want) {
+			t.Fatalf("all-done task summary missing %q:\n%s", want, taskSection)
 		}
 	}
-	if strings.Contains(body, "Next:") || strings.Contains(body, "TASK-0040 [security/done]") {
-		t.Fatalf("all-done summary should not expose a runnable next task or raw body:\n%s", body)
+	if strings.Contains(taskSection, "Next:") || strings.Contains(taskSection, "TASK-0040 [security/done]") {
+		t.Fatalf("all-done summary should not expose a runnable next task or raw body:\n%s", taskSection)
 	}
 }
 
@@ -1650,8 +1711,9 @@ func TestDashboardTaskMarkdownMissingMalformedAndDeniedStatesAreSafe(t *testing.
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d body=%s", rec.Code, body)
 		}
-		if !strings.Contains(body, "TASK.md unavailable.") {
-			t.Fatalf("missing TASK.md state not shown:\n%s", body)
+		taskSection := htmlSection(body, "Current TASK", "Latest Run")
+		if !strings.Contains(taskSection, "TASK.md unavailable.") {
+			t.Fatalf("missing TASK.md state not shown:\n%s", taskSection)
 		}
 	})
 
@@ -1667,12 +1729,13 @@ func TestDashboardTaskMarkdownMissingMalformedAndDeniedStatesAreSafe(t *testing.
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d body=%s", rec.Code, body)
 		}
-		if !strings.Contains(body, "TASK.md task summary unknown.") {
-			t.Fatalf("malformed TASK.md state not shown:\n%s", body)
+		taskSection := htmlSection(body, "Current TASK", "Latest Run")
+		if !strings.Contains(taskSection, "TASK.md task summary unknown.") {
+			t.Fatalf("malformed TASK.md state not shown:\n%s", taskSection)
 		}
 		for _, leaked := range []string{secret, "raw artifact body", "Authorization: Bearer", security.RedactionMarker} {
-			if strings.Contains(body, leaked) {
-				t.Fatalf("malformed TASK.md leaked %q:\n%s", leaked, body)
+			if strings.Contains(taskSection, leaked) {
+				t.Fatalf("malformed TASK.md leaked %q:\n%s", leaked, taskSection)
 			}
 		}
 	})
@@ -1696,12 +1759,13 @@ func TestDashboardTaskMarkdownMissingMalformedAndDeniedStatesAreSafe(t *testing.
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d body=%s", rec.Code, body)
 		}
-		if !strings.Contains(body, "TASK.md unavailable.") {
-			t.Fatalf("denied TASK.md state not shown:\n%s", body)
+		taskSection := htmlSection(body, "Current TASK", "Latest Run")
+		if !strings.Contains(taskSection, "TASK.md unavailable.") {
+			t.Fatalf("denied TASK.md state not shown:\n%s", taskSection)
 		}
 		for _, leaked := range []string{secret, outside, filepath.ToSlash(outside), filepath.Join(outside, "TASK.md"), filepath.ToSlash(filepath.Join(outside, "TASK.md"))} {
-			if strings.Contains(body, leaked) {
-				t.Fatalf("denied TASK.md leaked %q:\n%s", leaked, body)
+			if strings.Contains(taskSection, leaked) {
+				t.Fatalf("denied TASK.md leaked %q:\n%s", leaked, taskSection)
 			}
 		}
 	})
@@ -1730,9 +1794,10 @@ func TestDashboardTaskMarkdownSanitizesRenderedFields(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, body)
 	}
+	taskSection := htmlSection(body, "Current TASK", "Latest Run")
 	for _, want := range []string{"TASK-0042", "unknown", "in-progress", "unsafe value removed"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("sanitized task summary missing %q:\n%s", want, body)
+		if !strings.Contains(taskSection, want) {
+			t.Fatalf("sanitized task summary missing %q:\n%s", want, taskSection)
 		}
 	}
 	for _, leaked := range []string{
@@ -1746,8 +1811,8 @@ func TestDashboardTaskMarkdownSanitizesRenderedFields(t *testing.T) {
 		security.RedactionMarker,
 		"[omitted]",
 	} {
-		if strings.Contains(body, leaked) {
-			t.Fatalf("task summary leaked %q:\n%s", leaked, body)
+		if strings.Contains(taskSection, leaked) {
+			t.Fatalf("task summary leaked %q:\n%s", leaked, taskSection)
 		}
 	}
 }
