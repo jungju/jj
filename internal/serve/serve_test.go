@@ -363,6 +363,11 @@ func TestDashboardLatestRunSummaryIsCompactSanitizedAndTimestampSelected(t *test
 			t.Fatalf("latest-run summary missing %q:\n%s", want, latest)
 		}
 	}
+	assertSubstringsInOrder(t, latest, []string{
+		`<p><a href="/runs/20260425-090000-clock-late">20260425-090000-clock-late</a> <span class="muted">complete · 2026-04-25T13:00:00Z</span></p>`,
+		`<p class="muted">provider/result openai · evaluation passed (recorded)</p>`,
+		`<p><a href="/runs/20260425-090000-clock-late">Run detail</a> · <a href="/runs">Run history</a> · <a href="/runs/audit?run=20260425-090000-clock-late">Audit export</a></p>`,
+	})
 	for _, leaked := range []string{
 		"20260425-235959-id-late",
 		secret,
@@ -397,6 +402,10 @@ func TestDashboardLatestRunSummaryUnavailableAndNoneStatesAreSafe(t *testing.T) 
 				t.Fatalf("latest none state missing %q:\n%s", want, latest)
 			}
 		}
+		assertSubstringsInOrder(t, latest, []string{
+			`<p class="muted">No jj runs found.</p>`,
+			`<p><a href="/runs">Run history</a></p>`,
+		})
 	})
 
 	t.Run("malformed", func(t *testing.T) {
@@ -419,6 +428,8 @@ func TestDashboardLatestRunSummaryUnavailableAndNoneStatesAreSafe(t *testing.T) 
 			}
 		}
 		assertSubstringsInOrder(t, latest, []string{
+			`<p><strong>20260429-120000-badjson</strong> <span class="muted">unavailable · unknown</span></p>`,
+			`<p class="error">manifest is malformed; artifact links unavailable because this run lacks a trusted top-level artifacts map or trusted manifest.</p>`,
 			`href="/runs">Run history</a>`,
 			`href="/runs/20260429-120000-badjson">Run detail</a>`,
 		})
@@ -448,6 +459,8 @@ func TestDashboardLatestRunSummaryUnavailableAndNoneStatesAreSafe(t *testing.T) 
 			}
 		}
 		assertSubstringsInOrder(t, latest, []string{
+			`<p><strong>20260429-121000-partial</strong> <span class="muted">unavailable · unknown</span></p>`,
+			`<p class="error">manifest is incomplete: missing artifacts; artifact links unavailable because this run lacks a trusted top-level artifacts map or trusted manifest.</p>`,
 			`href="/runs">Run history</a>`,
 			`href="/runs/20260429-121000-partial">Run detail</a>`,
 		})
@@ -457,6 +470,98 @@ func TestDashboardLatestRunSummaryUnavailableAndNoneStatesAreSafe(t *testing.T) 
 			}
 		}
 	})
+}
+
+func TestDashboardLatestRunPresentationHelperPreservesLinesActionsAndFallbacks(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		summary       latestRunSummary
+		wantPrimary   *dashboardLatestRunPrimaryView
+		wantSecondary string
+		wantMuted     string
+		wantError     string
+		wantActions   []dashboardRunActionLink
+	}{
+		{
+			name: "available",
+			summary: latestRunSummary{
+				State:            "available",
+				RunID:            "20260429-130000-complete",
+				Status:           "complete",
+				ProviderOrResult: "openai",
+				EvaluationState:  "passed (recorded)",
+				TimestampLabel:   "2026-04-29T13:00:00Z",
+				DetailURL:        "/runs/20260429-130000-complete",
+				HistoryURL:       "/runs",
+				AuditURL:         "/runs/audit?run=20260429-130000-complete",
+			},
+			wantPrimary:   &dashboardLatestRunPrimaryView{RunID: "20260429-130000-complete", URL: "/runs/20260429-130000-complete", Meta: "complete · 2026-04-29T13:00:00Z"},
+			wantSecondary: "provider/result openai · evaluation passed (recorded)",
+			wantActions: []dashboardRunActionLink{
+				{Label: "Run detail", URL: "/runs/20260429-130000-complete"},
+				{Label: "Run history", URL: "/runs"},
+				{Label: "Audit export", URL: "/runs/audit?run=20260429-130000-complete"},
+			},
+		},
+		{
+			name: "none",
+			summary: latestRunSummary{
+				State:      "none",
+				Message:    "No jj runs found.",
+				HistoryURL: "/runs",
+			},
+			wantMuted: "No jj runs found.",
+			wantActions: []dashboardRunActionLink{
+				{Label: "Run history", URL: "/runs"},
+			},
+		},
+		{
+			name: "unavailable",
+			summary: latestRunSummary{
+				State:          "unavailable",
+				Message:        "manifest is malformed",
+				RunID:          "20260429-120000-badjson",
+				TimestampLabel: "unknown",
+				HistoryURL:     "/runs",
+				DetailURL:      "/runs/20260429-120000-badjson",
+			},
+			wantPrimary: &dashboardLatestRunPrimaryView{RunID: "20260429-120000-badjson", Meta: "unavailable · unknown"},
+			wantError:   "manifest is malformed",
+			wantActions: []dashboardRunActionLink{
+				{Label: "Run history", URL: "/runs"},
+				{Label: "Run detail", URL: "/runs/20260429-120000-badjson"},
+			},
+		},
+		{
+			name: "unknown no link",
+			summary: latestRunSummary{
+				State:          "unknown",
+				Message:        "Latest run metadata unavailable.",
+				RunID:          "20260429-122000-unknown",
+				TimestampLabel: "2026-04-29T12:20:00Z",
+				HistoryURL:     "/runs",
+			},
+			wantPrimary: &dashboardLatestRunPrimaryView{RunID: "20260429-122000-unknown", Meta: "unknown · 2026-04-29T12:20:00Z"},
+			wantError:   "Latest run metadata unavailable.",
+			wantActions: []dashboardRunActionLink{
+				{Label: "Run history", URL: "/runs"},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := dashboardLatestRun(tc.summary)
+			if got.State != tc.summary.State || got.Secondary != tc.wantSecondary || got.MutedMessage != tc.wantMuted || got.ErrorMessage != tc.wantError {
+				t.Fatalf("latest-run view text = %#v", got)
+			}
+			if (got.Primary == nil) != (tc.wantPrimary == nil) {
+				t.Fatalf("latest-run primary = %#v, want %#v", got.Primary, tc.wantPrimary)
+			}
+			if got.Primary != nil && *got.Primary != *tc.wantPrimary {
+				t.Fatalf("latest-run primary = %#v, want %#v", got.Primary, tc.wantPrimary)
+			}
+			requireDashboardRunActions(t, got.Actions, tc.wantActions...)
+		})
+	}
 }
 
 func TestLatestRunSelectionIsDeterministicForTimestampFallbacksAndTies(t *testing.T) {

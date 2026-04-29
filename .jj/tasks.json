@@ -2701,6 +2701,33 @@
       "updated_at": "2026-04-29T08:08:24Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Only internal sanitized Latest Run dashboard presentation construction and focused tests are changed.",
+        "Duplicated or unnecessarily nested Latest Run summary, action-link, ordering, timestamp, status/evaluation, and fallback assembly is consolidated into narrow unexported helper logic.",
+        "New helpers consume only existing sanitized DTO/helper output, guarded URL decisions, fixed safe labels, timestamps, counts, status/evaluation values already normalized by existing code, or already-safe state metadata.",
+        "Dashboard Latest Run labels, action ordering, guarded URLs, visibility, fallback messages, spacing, timestamps, denied, unavailable, unknown, none, malformed, partial, stale, hostile-label, token-like, tied timestamp, missing timestamp, and internally inconsistent states remain unchanged.",
+        "No raw manifest, artifact body, raw path, command text, environment value, diff body, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, route, CLI flag, schema field, config behavior, scanner, upload, raw export, visual redesign, redaction policy, path-boundary policy, or user-facing semantic change is introduced.",
+        "Focused serve tests are preserved or strengthened for Latest Run exact rendered output, guarded action-link availability, no-link behavior, fallback behavior, denied, unavailable, unknown, none, malformed, partial, stale, hostile-label, token-like, tied timestamp, missing timestamp, and internally inconsistent metadata."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t76",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T08:15:32Z",
+      "created_by_run": "autopilot-20260428-160202-t76",
+      "created_by_turn": null,
+      "id": "TASK-0097",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent explicitly asks for code refactoring and simplification. Current evidence shows all prior tasks are complete and no concrete security, CI, validation, provider, or bug regression is present. Dashboard Latest Run presentation construction is an adjacent, small, behavior-preserving refactor target not covered by the recent completed tasks.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized dashboard Latest Run presentation construction",
+      "updated_at": "2026-04-29T08:28:12Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

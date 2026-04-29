@@ -185,6 +185,21 @@ type latestRunSummary struct {
 	AuditURL         string
 }
 
+type dashboardLatestRunView struct {
+	State        string
+	Primary      *dashboardLatestRunPrimaryView
+	Secondary    string
+	MutedMessage string
+	ErrorMessage string
+	Actions      []dashboardRunActionLink
+}
+
+type dashboardLatestRunPrimaryView struct {
+	RunID string
+	URL   string
+	Meta  string
+}
+
 type recentRunsSummary struct {
 	State      string
 	Message    string
@@ -815,7 +830,7 @@ type pageData struct {
 	CWD                string
 	SelectedRun        string
 	TaskSummary        dashboardTaskSummaryView
-	LatestRun          latestRunSummary
+	LatestRun          dashboardLatestRunView
 	RecentRuns         dashboardRecentRunsView
 	EvaluationFindings dashboardEvaluationFindingsView
 	ValidationStatus   validationStatusSummary
@@ -1009,6 +1024,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	runs = s.sanitizeRunHistoryLinks(runs)
 	latestRun := latestRunSummaryFromRuns(runs)
+	latestRunView := dashboardLatestRun(latestRun)
 	recentRuns := dashboardRecentRuns(recentRunsSummaryFromRuns(runs))
 	evaluationFindings := dashboardEvaluationFindings(evaluationFindingsSummaryFromRuns(runs))
 	validationStatus := validationStatusSummaryFromRuns(runs)
@@ -1022,7 +1038,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		CWD:                displayWorkspace,
 		SelectedRun:        s.runID,
 		TaskSummary:        taskSummary,
-		LatestRun:          latestRun,
+		LatestRun:          latestRunView,
 		RecentRuns:         recentRuns,
 		EvaluationFindings: evaluationFindings,
 		ValidationStatus:   validationStatus,
@@ -3477,6 +3493,50 @@ func latestRunSummaryFromRuns(runs []runLink) latestRunSummary {
 	summary.ProviderOrResult = latestProviderOrResult(selected)
 	summary.AuditURL = labels.AuditURL
 	return summary
+}
+
+// dashboardLatestRun consumes the shared sanitized Latest Run summary and only
+// combines fixed labels, guarded URLs, and already-normalized display values.
+func dashboardLatestRun(summary latestRunSummary) dashboardLatestRunView {
+	view := dashboardLatestRunView{
+		State:   summary.State,
+		Actions: dashboardLatestRunActions(summary),
+	}
+	switch summary.State {
+	case "available":
+		view.Primary = dashboardLatestRunAvailablePrimary(summary)
+		view.Secondary = dashboardLatestRunProviderLine(summary)
+	case "none":
+		view.MutedMessage = summary.Message
+	default:
+		view.Primary = dashboardLatestRunStatePrimary(summary)
+		view.ErrorMessage = summary.Message
+	}
+	return view
+}
+
+func dashboardLatestRunAvailablePrimary(summary latestRunSummary) *dashboardLatestRunPrimaryView {
+	return dashboardLatestRunPrimary(summary.RunID, summary.DetailURL, dashboardLatestRunMetaLine(summary.Status, summary.TimestampLabel))
+}
+
+func dashboardLatestRunStatePrimary(summary latestRunSummary) *dashboardLatestRunPrimaryView {
+	return dashboardLatestRunPrimary(summary.RunID, "", dashboardLatestRunMetaLine(summary.State, summary.TimestampLabel))
+}
+
+func dashboardLatestRunPrimary(runID, url, meta string) *dashboardLatestRunPrimaryView {
+	return &dashboardLatestRunPrimaryView{
+		RunID: runID,
+		URL:   url,
+		Meta:  meta,
+	}
+}
+
+func dashboardLatestRunMetaLine(left, timestamp string) string {
+	return left + " · " + timestamp
+}
+
+func dashboardLatestRunProviderLine(summary latestRunSummary) string {
+	return "provider/result " + summary.ProviderOrResult + " · evaluation " + summary.EvaluationState
 }
 
 func recentRunsSummaryFromRuns(runs []runLink) recentRunsSummary {
@@ -7702,17 +7762,15 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	      </section>
 	      <section>
 	        <h2>Latest Run</h2>
-	        {{$latestRunActions := dashboardLatestRunActions .LatestRun}}
-	        {{if eq .LatestRun.State "available"}}
-	          <p><a href="{{.LatestRun.DetailURL}}">{{.LatestRun.RunID}}</a> <span class="muted">{{.LatestRun.Status}} · {{.LatestRun.TimestampLabel}}</span></p>
-	          <p class="muted">provider/result {{.LatestRun.ProviderOrResult}} · evaluation {{.LatestRun.EvaluationState}}</p>
-	        {{else if eq .LatestRun.State "none"}}
-	          <p class="muted">{{.LatestRun.Message}}</p>
-	        {{else}}
-	          <p><strong>{{.LatestRun.RunID}}</strong> <span class="muted">{{.LatestRun.State}} · {{.LatestRun.TimestampLabel}}</span></p>
-	          <p class="error">{{.LatestRun.Message}}</p>
+	        {{with .LatestRun.Primary}}
+	          <p>{{if .URL}}<a href="{{.URL}}">{{.RunID}}</a>{{else}}<strong>{{.RunID}}</strong>{{end}} <span class="muted">{{.Meta}}</span></p>
 	        {{end}}
-	        <p>{{range $i, $link := $latestRunActions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</p>
+	        {{if .LatestRun.Secondary}}<p class="muted">{{.LatestRun.Secondary}}</p>{{end}}
+	        {{if .LatestRun.MutedMessage}}<p class="muted">{{.LatestRun.MutedMessage}}</p>{{end}}
+	        {{if .LatestRun.ErrorMessage}}<p class="error">{{.LatestRun.ErrorMessage}}</p>{{end}}
+	        {{if .LatestRun.Actions}}
+	        <p>{{range $i, $link := .LatestRun.Actions}}{{if $i}} · {{end}}<a href="{{$link.URL}}">{{$link.Label}}</a>{{end}}</p>
+	        {{end}}
 	      </section>
 		      <section>
 		        <h2>Risks And Failures</h2>
