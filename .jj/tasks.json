@@ -2620,6 +2620,33 @@
       "updated_at": "2026-04-29T07:31:41Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Centralize or simplify run-detail Compare Previous summary and guarded-link presentation construction through narrow unexported helper logic only where behavior is identical.",
+        "Consume only existing sanitized DTO/helper output, guarded URL decisions, fixed safe labels, timestamps or counts already normalized by existing code, and already-safe state metadata.",
+        "Preserve run-detail Compare Previous labels, ordering, visibility, spacing, guarded URLs, fallback messages, denied, unavailable, unknown, none, malformed, partial, hostile-label, token-like, missing previous-run, and unsafe guarded-link behavior.",
+        "Introduce no raw manifest, artifact body, raw path, command text, environment value, diff body, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, unsafe file read, route, CLI flag, schema field, config behavior, scanner, upload, raw export, visual redesign, redaction policy change, path-boundary policy change, or user-facing semantic change.",
+        "Preserve or strengthen focused serve coverage for Compare Previous ordering, fallback, guarded-link, denied, unavailable, unknown, malformed, partial, hostile-label, and token-like behavior.",
+        "Validation passes gofmt, focused Compare Previous serve tests, go test ./internal/serve, go test ./internal/cli ./internal/serve, go test ./..., git diff --check, and scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t73",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T07:33:51Z",
+      "created_by_run": "autopilot-20260428-160202-t73",
+      "created_by_turn": null,
+      "id": "TASK-0094",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent override asks for code refactoring and simplification. Current evidence shows no blocker, failing validation, CI failure, disclosure, or path-boundary regression, so the next work should be narrow behavior-preserving quality work. Compare Previous is a remaining sanctioned sanitized presentation-helper consolidation area and is small enough for one implementation turn.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized run-detail Compare Previous presentation construction",
+      "updated_at": "2026-04-29T07:41:56Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

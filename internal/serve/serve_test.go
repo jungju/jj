@@ -4207,6 +4207,16 @@ func TestComparePreviousPresentationBuildsGuardedVisibleSummary(t *testing.T) {
 		t.Fatalf("unsafe previous message = %q", unsafePrevious.Message)
 	}
 
+	missingPrevious := comparePreviousPresentation("available", current, "")
+	if !missingPrevious.Visible || missingPrevious.State != "unavailable" || missingPrevious.URL != "" || missingPrevious.PreviousRunID != "" {
+		t.Fatalf("missing previous run should produce unavailable state without a link: %#v", missingPrevious)
+	}
+
+	malformedState := comparePreviousPresentation("malformed", current, previous)
+	if !malformedState.Visible || malformedState.State != "unavailable" || malformedState.URL != "" || malformedState.PreviousRunID != "" {
+		t.Fatalf("malformed state should produce unavailable state without a link: %#v", malformedState)
+	}
+
 	unsafeCurrent := comparePreviousPresentation("none", "sk-proj-comparepreviouscurrent1234567890", "")
 	if unsafeCurrent.Visible || unsafeCurrent.Message != "" || unsafeCurrent.URL != "" {
 		t.Fatalf("unsafe current run should not render compare previous: %#v", unsafeCurrent)

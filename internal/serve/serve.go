@@ -3066,13 +3066,6 @@ type comparePreviousDisplayData struct {
 	PreviousRunID string
 }
 
-type comparePreviousPresentationDecision struct {
-	State         string
-	Message       string
-	PreviousRunID string
-	URL           string
-}
-
 func (s *Server) comparePreviousForInspection(inspection runInspection) comparePreviousSummary {
 	currentID := latestRunIDLabel(inspection.ID)
 	if currentID == "" {
@@ -3119,39 +3112,44 @@ func comparePreviousPresentation(state, currentID, previousID string) comparePre
 }
 
 func comparePreviousSummaryFromDisplay(display comparePreviousDisplayData) comparePreviousSummary {
-	currentID := latestRunIDLabel(display.CurrentRunID)
-	state := comparePreviousStateToken(display.State)
-	summary := comparePreviousSummary{
-		Visible:      true,
-		State:        state,
-		CurrentRunID: currentID,
-	}
+	return comparePreviousSummaryForState(display.State, display.CurrentRunID, display.PreviousRunID)
+}
+
+func comparePreviousSummaryForState(state, currentID, previousID string) comparePreviousSummary {
+	currentID = latestRunIDLabel(currentID)
+	state = comparePreviousStateToken(state)
 	if currentID == "" {
 		return comparePreviousSummary{}
 	}
-	decision := comparePreviousPresentationDecisionFor(state, currentID, display.PreviousRunID)
-	summary.State = decision.State
-	summary.Message = decision.Message
-	summary.PreviousRunID = decision.PreviousRunID
-	summary.URL = decision.URL
-	return summary
+	if state != comparePreviousStateAvailable {
+		return comparePreviousFallbackSummary(currentID, state)
+	}
+	return comparePreviousAvailableSummary(currentID, previousID)
 }
 
-func comparePreviousPresentationDecisionFor(state, currentID, previousID string) comparePreviousPresentationDecision {
-	state = comparePreviousStateToken(state)
-	if state != comparePreviousStateAvailable {
-		return comparePreviousPresentationDecision{State: state, Message: comparePreviousMessage(state)}
-	}
+func comparePreviousAvailableSummary(currentID, previousID string) comparePreviousSummary {
 	previousID = latestRunIDLabel(previousID)
 	url := guardedRunCompareURL(currentID, previousID)
 	if previousID == "" || url == "" {
-		return comparePreviousPresentationDecision{State: comparePreviousStateUnavailable, Message: comparePreviousMessage(comparePreviousStateUnavailable)}
+		return comparePreviousFallbackSummary(currentID, comparePreviousStateUnavailable)
 	}
-	return comparePreviousPresentationDecision{
+	return comparePreviousSummary{
+		Visible:       true,
 		State:         comparePreviousStateAvailable,
 		Message:       comparePreviousAvailableMessage(currentID, previousID),
+		CurrentRunID:  currentID,
 		PreviousRunID: previousID,
 		URL:           url,
+	}
+}
+
+func comparePreviousFallbackSummary(currentID, state string) comparePreviousSummary {
+	state = comparePreviousStateToken(state)
+	return comparePreviousSummary{
+		Visible:      true,
+		State:        state,
+		Message:      comparePreviousMessage(state),
+		CurrentRunID: currentID,
 	}
 }
 
