@@ -5412,22 +5412,35 @@ func dashboardRunActions(detailURL, auditURL string) []dashboardRunActionLink {
 }
 
 func dashboardLatestRunActions(summary latestRunSummary) []dashboardRunActionLink {
-	switch summary.State {
+	kinds := dashboardLatestRunActionKinds(summary.State)
+	links := make([]dashboardRunActionLink, 0, len(kinds))
+	for _, kind := range kinds {
+		links = append(links, dashboardRunAction(kind, dashboardLatestRunActionURL(summary, kind)))
+	}
+	return dashboardRunActionLinks(links...)
+}
+
+func dashboardLatestRunActionKinds(state string) []dashboardRunActionKind {
+	switch state {
 	case "available":
-		return dashboardRunActionLinks(
-			dashboardRunAction(dashboardRunActionDetail, summary.DetailURL),
-			dashboardRunAction(dashboardRunActionHistory, summary.HistoryURL),
-			dashboardRunAction(dashboardRunActionAudit, summary.AuditURL),
-		)
+		return []dashboardRunActionKind{dashboardRunActionDetail, dashboardRunActionHistory, dashboardRunActionAudit}
 	case "none":
-		return dashboardRunActionLinks(
-			dashboardRunAction(dashboardRunActionHistory, summary.HistoryURL),
-		)
+		return []dashboardRunActionKind{dashboardRunActionHistory}
 	default:
-		return dashboardRunActionLinks(
-			dashboardRunAction(dashboardRunActionHistory, summary.HistoryURL),
-			dashboardRunAction(dashboardRunActionDetail, summary.DetailURL),
-		)
+		return []dashboardRunActionKind{dashboardRunActionHistory, dashboardRunActionDetail}
+	}
+}
+
+func dashboardLatestRunActionURL(summary latestRunSummary, kind dashboardRunActionKind) string {
+	switch kind {
+	case dashboardRunActionDetail:
+		return summary.DetailURL
+	case dashboardRunActionHistory:
+		return summary.HistoryURL
+	case dashboardRunActionAudit:
+		return summary.AuditURL
+	default:
+		return ""
 	}
 }
 

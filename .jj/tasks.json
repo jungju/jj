@@ -2430,6 +2430,32 @@
       "updated_at": "2026-04-29T06:03:33Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "One narrow duplicated sanitized guarded action-link or fixed action-item construction path in internal/serve is centralized or simplified through unexported helper logic or an equivalent simple structure.",
+        "The refactor consumes only existing sanitized DTO/helper output, guarded URL decisions, fixed safe labels, or already-safe labels.",
+        "Touched dashboard-root or run-detail behavior preserves labels, ordering, visibility, guarded URLs, denied, unavailable, unknown, none, empty, hostile-label, token-like, malformed or partial metadata states, spacing, and surrounding semantics.",
+        "No raw manifest, artifact body, raw path, command text, environment value, diff body, validation payload, planner handoff payload, TASK.md body, EVAL.md body, document body, configured secret, token-like value, omission placeholder, arbitrary file read, unsafe path read, new route, CLI flag, schema field, config behavior, pagination, scanner, upload, broad file browsing, raw export, visual redesign, or user-facing semantic change is introduced.",
+        "Focused serve tests for the touched action-link or action-item states are added or preserved, and validation passes via ./scripts/validate.sh."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t66",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T06:08:17Z",
+      "created_by_run": "autopilot-20260428-160202-t66",
+      "created_by_turn": null,
+      "id": "TASK-0087",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent asks to refactor code, remove unnecessary code, and simplify complex structure. Current evidence shows no blocker, failing validation, CI failure, disclosure, or boundary regression, so the next runnable task should be a narrow behavior-preserving quality refactor rather than security or bugfix work.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify duplicated guarded presentation action construction",
+      "updated_at": "2026-04-29T06:16:50Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1
