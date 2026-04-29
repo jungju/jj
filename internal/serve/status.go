@@ -366,58 +366,62 @@ func recentRunItemFromDashboard(item recentRunItem) (RecentRunItem, bool) {
 func normalizeRecentRunDTO(item RecentRunItem) RecentRunItem {
 	switch item.State {
 	case "denied":
-		item.Status = "denied"
-		item.ProviderOrResult = "denied"
-		item.EvaluationState = "denied"
-		item.ValidationState = "denied"
+		item = recentRunDTOWithStateLabel(item, "denied")
 	case "unavailable":
-		item.Status = "unavailable"
-		item.ProviderOrResult = "unavailable"
-		if item.EvaluationState == "" || item.EvaluationState == "unknown" {
-			item.EvaluationState = "unavailable"
-		}
-		if item.ValidationState == "" || item.ValidationState == "unknown" {
-			item.ValidationState = "unavailable"
-		}
+		item = recentRunUnavailableDTO(item)
 	case "unknown":
-		item.Status = "unknown"
-		item.ProviderOrResult = "unknown"
-		item.EvaluationState = "unknown"
-		item.ValidationState = "unknown"
+		item = recentRunDTOWithStateLabel(item, "unknown")
 	}
 	switch item.Status {
 	case "stale", "malformed", "partial":
 		item.State = "unavailable"
-		item.Status = "unavailable"
-		item.ProviderOrResult = "unavailable"
-		item.EvaluationState = "unavailable"
-		item.ValidationState = "unavailable"
+		item = recentRunDTOWithStateLabel(item, "unavailable")
 	case "inconsistent":
 		item.State = "unknown"
-		item.Status = "unknown"
-		item.ProviderOrResult = "unknown"
-		item.EvaluationState = "unknown"
-		item.ValidationState = "unknown"
+		item = recentRunDTOWithStateLabel(item, "unknown")
 	}
-	if item.State == "" {
-		item.State = "unknown"
+	return recentRunDTOWithFallbacks(item)
+}
+
+func recentRunDTOWithStateLabel(item RecentRunItem, label string) RecentRunItem {
+	item.Status = label
+	item.ProviderOrResult = label
+	item.EvaluationState = label
+	item.ValidationState = label
+	return item
+}
+
+func recentRunUnavailableDTO(item RecentRunItem) RecentRunItem {
+	item.Status = "unavailable"
+	item.ProviderOrResult = "unavailable"
+	if recentRunNeedsStateFallback(item.EvaluationState) {
+		item.EvaluationState = "unavailable"
 	}
-	if item.Status == "" {
-		item.Status = "unknown"
-	}
-	if item.ProviderOrResult == "" {
-		item.ProviderOrResult = "unknown"
-	}
-	if item.EvaluationState == "" {
-		item.EvaluationState = "unknown"
-	}
-	if item.ValidationState == "" {
-		item.ValidationState = "unknown"
-	}
-	if item.TimestampLabel == "" {
-		item.TimestampLabel = "unknown"
+	if recentRunNeedsStateFallback(item.ValidationState) {
+		item.ValidationState = "unavailable"
 	}
 	return item
+}
+
+func recentRunNeedsStateFallback(value string) bool {
+	return value == "" || value == "unknown"
+}
+
+func recentRunDTOWithFallbacks(item RecentRunItem) RecentRunItem {
+	item.State = recentRunUnknownFallback(item.State)
+	item.Status = recentRunUnknownFallback(item.Status)
+	item.ProviderOrResult = recentRunUnknownFallback(item.ProviderOrResult)
+	item.EvaluationState = recentRunUnknownFallback(item.EvaluationState)
+	item.ValidationState = recentRunUnknownFallback(item.ValidationState)
+	item.TimestampLabel = recentRunUnknownFallback(item.TimestampLabel)
+	return item
+}
+
+func recentRunUnknownFallback(value string) string {
+	if value == "" {
+		return "unknown"
+	}
+	return value
 }
 
 func statusRunOrTaskID(value string) string {
