@@ -1721,6 +1721,33 @@
       "updated_at": "2026-04-29T00:42:25Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "One narrow duplicated or unnecessarily nested sanitized run-summary state-rendering path in CLI or serve presentation code is simplified through a helper, table, or equivalent structure.",
+        "The refactor consumes only existing sanitized DTO/helper output or already-safe labels.",
+        "jj status, jj runs, dashboard root, and run-detail behavior remain unchanged for labels, ordering, guarded links, empty states, denied states, unavailable states, unknown states, valid rendering, and deterministic ordering where touched.",
+        "No raw manifest, artifact body, command, environment, diff, validation output, planner handoff, TASK.md, EVAL.md, document body, arbitrary file, unsafe path, configured secret, token-like value, or omission placeholder is read or rendered.",
+        "No new CLI flags, dashboard pages, routes, manifest schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw export behavior, visual redesign, or user-facing output semantics are introduced.",
+        "Focused tests cover the touched normal and edge states, and go test ./internal/cli ./internal/serve, git diff --check, go test ./..., and ./scripts/validate.sh pass."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t40",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T00:44:31Z",
+      "created_by_run": "autopilot-20260428-160202-t40",
+      "created_by_turn": null,
+      "id": "TASK-0061",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent override asks for code refactoring and simplification. Current evidence shows no failing validation, blocker, or concrete security regression, so the next runnable task should be a narrow behavior-preserving quality refactor that reduces duplicated or unnecessarily nested sanitized presentation logic.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized run-summary state rendering branches",
+      "updated_at": "2026-04-29T00:50:20Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

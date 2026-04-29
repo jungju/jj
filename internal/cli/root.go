@@ -578,33 +578,37 @@ type cliRunSummaryFields struct {
 	IncludeValidation bool
 }
 
+type cliRunSummaryOutputField struct {
+	Key      string
+	Value    string
+	Fallback string
+}
+
 func writeCLIRunSummaryLine(w io.Writer, label string, fields cliRunSummaryFields) {
+	fmt.Fprintf(w, "%s:", label)
+	for _, field := range cliRunSummaryOutputFields(fields) {
+		fmt.Fprintf(w, " %s=%s", field.Key, statusOutputValue(field.Value, field.Fallback))
+	}
+	fmt.Fprintln(w)
+}
+
+func cliRunSummaryOutputFields(fields cliRunSummaryFields) []cliRunSummaryOutputField {
 	runFallback := fields.RunFallback
 	if runFallback == "" {
 		runFallback = "unknown"
 	}
-	if fields.IncludeValidation {
-		fmt.Fprintf(w, "%s: state=%s run=%s status=%s provider_or_result=%s evaluation=%s validation=%s timestamp=%s\n",
-			label,
-			statusOutputValue(fields.State, "unknown"),
-			statusOutputValue(fields.RunID, runFallback),
-			statusOutputValue(fields.Status, "unknown"),
-			statusOutputValue(fields.ProviderOrResult, "unknown"),
-			statusOutputValue(fields.EvaluationState, "unknown"),
-			statusOutputValue(fields.ValidationState, "unknown"),
-			statusOutputValue(fields.TimestampLabel, "unknown"),
-		)
-		return
+	out := []cliRunSummaryOutputField{
+		{Key: "state", Value: fields.State, Fallback: "unknown"},
+		{Key: "run", Value: fields.RunID, Fallback: runFallback},
+		{Key: "status", Value: fields.Status, Fallback: "unknown"},
+		{Key: "provider_or_result", Value: fields.ProviderOrResult, Fallback: "unknown"},
+		{Key: "evaluation", Value: fields.EvaluationState, Fallback: "unknown"},
 	}
-	fmt.Fprintf(w, "%s: state=%s run=%s status=%s provider_or_result=%s evaluation=%s timestamp=%s\n",
-		label,
-		statusOutputValue(fields.State, "unknown"),
-		statusOutputValue(fields.RunID, runFallback),
-		statusOutputValue(fields.Status, "unknown"),
-		statusOutputValue(fields.ProviderOrResult, "unknown"),
-		statusOutputValue(fields.EvaluationState, "unknown"),
-		statusOutputValue(fields.TimestampLabel, "unknown"),
-	)
+	if fields.IncludeValidation {
+		out = append(out, cliRunSummaryOutputField{Key: "validation", Value: fields.ValidationState, Fallback: "unknown"})
+	}
+	out = append(out, cliRunSummaryOutputField{Key: "timestamp", Value: fields.TimestampLabel, Fallback: "unknown"})
+	return out
 }
 
 func cliSummaryItemLabel(base string, total, index int) string {
