@@ -5126,20 +5126,30 @@ func (s *Server) runArtifactStatuses(manifest dashboardManifest, runDir, runID s
 func runArtifactInventoryFromRun(run runLink) []runArtifactStatus {
 	out := make([]runArtifactStatus, 0, len(run.ArtifactInventory))
 	for _, status := range run.ArtifactInventory {
-		status.Label = sanitizeRunDetailText(status.Label)
-		status.Path = sanitizeRunDetailText(status.Path)
-		status.URL = safeRunArtifactURL(status.URL)
-		status.Status = runArtifactAvailabilityLabel(status.Status)
-		if status.Label == "" || unsafeRunDetailText(status.Label) {
-			continue
+		item, ok := runArtifactInventoryItem(status)
+		if ok {
+			out = append(out, item)
 		}
-		if status.Path == "" && status.URL == "" {
-			continue
-		}
-		status.Available = status.Available && status.URL != ""
-		out = append(out, status)
 	}
 	return out
+}
+
+func runArtifactInventoryItem(status runArtifactStatus) (runArtifactStatus, bool) {
+	item := runArtifactStatus{
+		Label:     sanitizeRunDetailText(status.Label),
+		Path:      sanitizeRunDetailText(status.Path),
+		URL:       safeRunArtifactURL(status.URL),
+		Available: status.Available,
+		Status:    runArtifactAvailabilityLabel(status.Status),
+	}
+	if item.Label == "" || unsafeRunDetailText(item.Label) {
+		return runArtifactStatus{}, false
+	}
+	if item.Path == "" && item.URL == "" {
+		return runArtifactStatus{}, false
+	}
+	item.Available = item.Available && item.URL != ""
+	return item, true
 }
 
 func runArtifactAvailabilityLabel(value string) string {

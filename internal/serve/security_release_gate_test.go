@@ -273,6 +273,10 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 	if !detailCalls["runArtifactInventoryFromRun"] {
 		t.Fatalf("runDetailFromInspection must build run artifacts through the sanitized run DTO helper; calls=%v", sortedCallNames(detailCalls))
 	}
+	artifactCalls := serveFunctionCalls(t, funcs, "runArtifactInventoryFromRun")
+	if !artifactCalls["runArtifactInventoryItem"] {
+		t.Fatalf("runArtifactInventoryFromRun must build run-detail artifact items through the shared item helper; calls=%v", sortedCallNames(artifactCalls))
+	}
 
 	for _, fn := range []string{
 		"handleIndex",
@@ -296,6 +300,7 @@ func TestSecurityReleaseGateInspectionRoutesUseSharedGuardedHelpers(t *testing.T
 		"runDetailFromInspection",
 		"validationEvidenceFromRun",
 		"runArtifactInventoryFromRun",
+		"runArtifactInventoryItem",
 	} {
 		calls := serveFunctionCalls(t, funcs, fn)
 		for _, forbidden := range []string{"readRunFile", "loadDashboardManifest", "loadRunManifestResponse", "json.Unmarshal", "os.ReadFile"} {

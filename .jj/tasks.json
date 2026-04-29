@@ -1667,6 +1667,33 @@
       "updated_at": "2026-04-29T00:22:29Z",
       "validation_command": "./scripts/validate.sh",
       "verdict": "passed"
+    },
+    {
+      "acceptance_criteria": [
+        "Run-detail Run Artifacts item construction, safe availability labels, and guarded link decisions are consolidated into one narrow helper or equivalent simplified structure.",
+        "Existing Run Artifacts labels, fixed category ordering, guarded links, empty states, denied states, unavailable states, unknown states, and valid rendering remain unchanged where touched.",
+        "The change consumes only existing sanitized DTO/helper output or already-safe labels.",
+        "No raw manifest, artifact body, command, environment, diff, validation output, planner handoff, TASK.md, EVAL.md, document body, arbitrary file, unsafe path, configured secret, token-like value, or omission placeholder is read or rendered.",
+        "No new CLI flags, dashboard pages, routes, manifest schema fields, config behavior, pagination, scanners, uploads, broad file browsing, raw export behavior, visual redesign, or user-facing output semantics are introduced.",
+        "Focused serve tests cover unchanged Run Artifacts behavior for normal, missing, denied, malformed, stale, partial, hostile-label, token-like, unavailable, and internally inconsistent metadata where existing fixtures allow."
+      ],
+      "commit": null,
+      "completed_by_run": "autopilot-20260428-160202-t38",
+      "completed_by_turn": null,
+      "created_at": "2026-04-29T00:24:20Z",
+      "created_by_run": "autopilot-20260428-160202-t38",
+      "created_by_turn": null,
+      "id": "TASK-0059",
+      "mode": "quality",
+      "priority": "high",
+      "reason": "The active next-intent asks for code refactoring and simplification. Current evidence shows no failing validation, blocker, CI failure, disclosure, or concrete security regression, so the best next task is a narrow behavior-preserving quality refactor in the remaining run-detail Run Artifacts presentation path.",
+      "resolved_task_proposal_mode": "feature",
+      "selected_task_proposal_mode": "auto",
+      "status": "done",
+      "title": "Simplify sanitized Run Artifacts presentation logic",
+      "updated_at": "2026-04-29T00:32:19Z",
+      "validation_command": "./scripts/validate.sh",
+      "verdict": "passed"
     }
   ],
   "version": 1

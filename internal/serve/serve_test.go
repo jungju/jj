@@ -3498,6 +3498,20 @@ func TestRunDetailRunArtifactsSafeStates(t *testing.T) {
 			forbidden: []string{"codex/summary.md"},
 		},
 		{
+			name:        "partial metadata",
+			runID:       "20260429-173500-partial",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete"}`)
+			},
+			want: []string{
+				"manifest is incomplete: missing artifacts",
+				"artifact links unavailable because this run lacks a trusted top-level artifacts map or trusted manifest",
+				"No allowlisted run artifacts recorded.",
+			},
+		},
+		{
 			name:        "hostile and token-like metadata",
 			runID:       "20260429-174000-hostile",
 			status:      http.StatusOK,
@@ -3522,6 +3536,19 @@ func TestRunDetailRunArtifactsSafeStates(t *testing.T) {
 				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","artifacts":{"manifest":"manifest.json"},"validation":{"status":"passed","summary_path":"validation/summary.md"}}`)
 			},
 			want: []string{"Evaluation", "validation/summary.md", "not listed", "Manifest summary"},
+		},
+		{
+			name:        "unavailable artifact metadata",
+			runID:       "20260429-175500-unavailable",
+			status:      http.StatusOK,
+			wantSection: true,
+			setup: func(t *testing.T, dir, runID string) {
+				writeFile(t, dir, ".jj/runs/"+runID+"/manifest.json", `{"run_id":"`+runID+`","status":"complete","artifacts":{"manifest":"manifest.json","codex_summary":"codex/summary.md"}}`)
+				if err := os.MkdirAll(filepath.Join(dir, ".jj/runs", runID, "codex", "summary.md"), 0o755); err != nil {
+					t.Fatalf("mkdir artifact directory: %v", err)
+				}
+			},
+			want: []string{"Manifest summary", "Codex summary", "codex/summary.md", "unavailable"},
 		},
 		{
 			name:   "denied run root",
