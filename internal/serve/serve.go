@@ -2,6 +2,8 @@ package serve
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -29,6 +32,10 @@ const displayWorkspace = "[workspace]"
 
 const workspaceEvalMarkdownPath = "docs/EVAL.md"
 
+const workspacePRDMarkdownPath = "docs/PRD.md"
+
+const projectWorkspaceID = "workspace"
+
 const dashboardRecentRunsLimit = 5
 
 const dashboardEvaluationFindingsLimit = 3
@@ -36,6 +43,7 @@ const dashboardEvaluationFindingsLimit = 3
 var allowedProjectDocPaths = []string{
 	"README.md",
 	"plan.md",
+	workspacePRDMarkdownPath,
 	"docs/SPEC.md",
 	"docs/TASK.md",
 	runpkg.DefaultSpecStatePath,
@@ -44,6 +52,7 @@ var allowedProjectDocPaths = []string{
 
 var projectDocShortcutSpecs = []projectDocShortcutSpec{
 	{Label: "plan.md", Path: "plan.md"},
+	{Label: "docs/PRD.md", Path: workspacePRDMarkdownPath},
 	{Label: "docs/SPEC.md", Path: "docs/SPEC.md"},
 	{Label: "docs/TASK.md", Path: workspaceTaskMarkdownPath},
 	{Label: "docs/EVAL.md", Path: workspaceEvalMarkdownPath},
@@ -108,6 +117,51 @@ type readinessItem struct {
 	Label string
 	Path  string
 	Ready bool
+}
+
+type flowStep struct {
+	Number    string
+	Title     string
+	Body      string
+	URL       string
+	URLLabel  string
+	Secondary string
+}
+
+type githubStatus struct {
+	State          string
+	Message        string
+	TokenEnv       string
+	TokenAvailable bool
+	LoginMode      string
+	RepoMode       string
+	EnvHint        string
+}
+
+type projectSummary struct {
+	ID           string
+	Name         string
+	RepoURL      string
+	RepoKey      string
+	URL          string
+	Source       string
+	Status       string
+	RunCount     int
+	LatestRunID  string
+	LatestRunURL string
+	PRDURL       string
+	SpecURL      string
+	TasksURL     string
+	LogsURL      string
+	Current      bool
+}
+
+type projectDetail struct {
+	Project     projectSummary
+	Docs        []projectDocShortcut
+	TaskSummary dashboardTaskSummaryView
+	Runs        []runLink
+	GitHub      githubStatus
 }
 
 type runLink struct {
@@ -892,6 +946,11 @@ type pageData struct {
 	EvaluationFindings dashboardEvaluationFindingsView
 	ValidationStatus   validationStatusSummary
 	NextAction         dashboardNextActionView
+	FlowSteps          []flowStep
+	GitHubStatus       *githubStatus
+	Projects           []projectSummary
+	ProjectsOnly       bool
+	ProjectDetail      *projectDetail
 	Docs               []docLink
 	ProjectDocs        []projectDocShortcut
 	Runs               []runLink
@@ -1061,6 +1120,10 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("/", s.handleIndex)
+	s.mux.HandleFunc("/flow", s.handleFlow)
+	s.mux.HandleFunc("/github", s.handleGitHub)
+	s.mux.HandleFunc("/projects", s.handleProjectsIndex)
+	s.mux.HandleFunc("/projects/", s.handleProjectPath)
 	s.mux.HandleFunc("/runs", s.handleRunsIndex)
 	s.mux.HandleFunc("/runs/audit", s.handleRunAudit)
 	s.mux.HandleFunc("/runs/compare", s.handleRunCompare)
@@ -1105,11 +1168,99 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		NextAction:         sections.NextAction,
 		Docs:               docs,
 		ProjectDocs:        sections.ProjectDocs,
+		Projects:           s.discoverProjects(runs),
 		Runs:               runs,
 		Readiness:          readiness,
 		DefaultPlan:        firstReadyPath(readiness, "Plan"),
 		ActiveRuns:         sections.ActiveRuns,
 	})
+}
+
+func (s *Server) handleFlow(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/flow" {
+		http.NotFound(w, r)
+		return
+	}
+	s.render(w, pageData{
+		Title:     "development flow",
+		CWD:       displayWorkspace,
+		FlowSteps: developmentFlowSteps(),
+	})
+}
+
+func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/github" {
+		http.NotFound(w, r)
+		return
+	}
+	status := s.githubStatus()
+	s.render(w, pageData{
+		Title:        "GitHub login",
+		CWD:          displayWorkspace,
+		GitHubStatus: &status,
+	})
+}
+
+func (s *Server) handleProjectsIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/projects" {
+		http.NotFound(w, r)
+		return
+	}
+	runs, err := s.discoverRuns()
+	if err != nil {
+		s.renderError(w, http.StatusInternalServerError, err)
+		return
+	}
+	runs = s.sanitizeRunHistoryLinks(runs)
+	s.render(w, pageData{
+		Title:        "projects",
+		CWD:          displayWorkspace,
+		Projects:     s.discoverProjects(runs),
+		ProjectsOnly: true,
+	})
+}
+
+func (s *Server) handleProjectPath(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/projects/")
+	if id == "" || strings.Contains(id, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	if !safeProjectID(id) {
+		s.renderError(w, http.StatusForbidden, errors.New("project id is not allowed"))
+		return
+	}
+	runs, err := s.discoverRuns()
+	if err != nil {
+		s.renderError(w, http.StatusInternalServerError, err)
+		return
+	}
+	runs = s.sanitizeRunHistoryLinks(runs)
+	projects := s.discoverProjects(runs)
+	for _, project := range projects {
+		if project.ID != id {
+			continue
+		}
+		projectRuns := projectRuns(project, runs)
+		projectRuns = addRunCompareLinks(projectRuns, projectRuns)
+		status := s.githubStatus()
+		detail := projectDetail{
+			Project: project,
+			GitHub:  status,
+			Runs:    projectRuns,
+		}
+		if project.Current {
+			detail.Docs = s.projectDocShortcuts()
+			detail.TaskSummary = dashboardTaskSummary(s.taskQueueSummary())
+		}
+		s.render(w, pageData{
+			Title:         project.Name,
+			CWD:           displayWorkspace,
+			ProjectDetail: &detail,
+		})
+		return
+	}
+	s.renderError(w, http.StatusNotFound, errors.New("project not found"))
 }
 
 func dashboardRootSectionsFrom(runs []runLink, taskQueue taskQueueSummary, projectDocs []projectDocShortcut) dashboardRootSections {
@@ -1124,6 +1275,59 @@ func dashboardRootSectionsFrom(runs []runLink, taskQueue taskQueueSummary, proje
 		NextAction:         dashboardNextAction(nextAction),
 		ProjectDocs:        projectDocs,
 		ActiveRuns:         activeRunsSummaryFromRuns(runs),
+	}
+}
+
+func developmentFlowSteps() []flowStep {
+	return []flowStep{
+		{
+			Number:    "1",
+			Title:     "Product intent",
+			Body:      "Start from plan.md, docs/PRD.md, docs/SPEC.md, and docs/TASK.md. Once .jj/spec.json exists, that JSON SPEC is the planning source of truth.",
+			URL:       docURL(workspacePRDMarkdownPath),
+			URLLabel:  "Open PRD",
+			Secondary: "PRD and SPEC explain what the project is; TASK describes the work queue.",
+		},
+		{
+			Number:    "2",
+			Title:     "Bounded task selection",
+			Body:      "A jj run appends proposed work to .jj/tasks.json, selects one runnable task, and keeps the rest reviewable for later turns.",
+			URL:       docURL(runpkg.DefaultTasksStatePath),
+			URLLabel:  "Open tasks state",
+			Secondary: "Dashboard task summaries are deliberately compact so the next action is easy to scan.",
+		},
+		{
+			Number:    "3",
+			Title:     "Codex implementation",
+			Body:      "The selected task is handed to the implementation provider, Codex CLI by default, with the workspace and configured environment.",
+			URL:       "/run/new",
+			URLLabel:  "Start web run",
+			Secondary: "Full runs mutate workspace state only after explicit confirmation in the web form.",
+		},
+		{
+			Number:    "4",
+			Title:     "Validation gate",
+			Body:      "jj records validation output and reconciles .jj/spec.json only when validation succeeds. Failed validation leaves prior SPEC state intact.",
+			URL:       "/runs",
+			URLLabel:  "Open run history",
+			Secondary: "The documented release gate remains ./scripts/validate.sh.",
+		},
+		{
+			Number:    "5",
+			Title:     "Run evidence and logs",
+			Body:      "Every run stores sanitized manifests, events, summaries, validation evidence, and provider logs under .jj/runs/<run-id>/.",
+			URL:       "/runs",
+			URLLabel:  "Review logs",
+			Secondary: "Run artifact routes only expose manifest-listed files for validated run IDs.",
+		},
+		{
+			Number:    "6",
+			Title:     "Project review",
+			Body:      "The web project view treats one git repository as one project, with product docs, task state, and run logs gathered into the same review surface.",
+			URL:       "/projects",
+			URLLabel:  "Open projects",
+			Secondary: "For external GitHub workspace runs, repository URLs are redacted before display.",
+		},
 	}
 }
 
@@ -2575,6 +2779,7 @@ func (s *Server) workspaceReadiness() []readinessItem {
 	items := []readinessItem{
 		{Label: "Plan", Path: "plan.md"},
 		{Label: "README", Path: "README.md"},
+		{Label: "PRD", Path: workspacePRDMarkdownPath},
 		{Label: "SPEC", Path: runpkg.DefaultSpecStatePath},
 		{Label: "TASK", Path: runpkg.DefaultTasksStatePath},
 	}
@@ -2852,6 +3057,252 @@ func (s *Server) discoverRuns() ([]runLink, error) {
 		return runs[i].ID > runs[j].ID
 	})
 	return runs, nil
+}
+
+func (s *Server) discoverProjects(runs []runLink) []projectSummary {
+	roots := []security.CommandPathRoot{{Path: s.cwd, Label: displayWorkspace}}
+	workspaceRepoURL := safeRepositoryURLForDisplay(gitRemoteURL(s.cwd), roots...)
+	workspaceKey := canonicalProjectRepoKey(workspaceRepoURL)
+	workspace := projectSummary{
+		ID:       projectWorkspaceID,
+		Name:     workspaceProjectName(s.cwd, workspaceRepoURL, roots...),
+		RepoURL:  workspaceRepoURL,
+		RepoKey:  workspaceKey,
+		URL:      "/projects/" + projectWorkspaceID,
+		Source:   "served workspace",
+		Current:  true,
+		PRDURL:   s.projectDocURL(workspacePRDMarkdownPath),
+		SpecURL:  s.projectDocURL("docs/SPEC.md"),
+		TasksURL: s.projectDocURL(workspaceTaskMarkdownPath),
+		LogsURL:  "/projects/" + projectWorkspaceID + "#logs",
+	}
+	byID := map[string]*projectSummary{
+		projectWorkspaceID: &workspace,
+	}
+	var external []*projectSummary
+	for _, run := range runs {
+		repoURL := strings.TrimSpace(run.RepositoryURL)
+		repoKey := canonicalProjectRepoKey(repoURL)
+		if projectRunBelongsToWorkspace(repoKey, workspaceKey) {
+			addProjectRun(byID[projectWorkspaceID], run)
+			continue
+		}
+		if repoKey == "" {
+			continue
+		}
+		id := projectIDFromKey(repoKey)
+		project := byID[id]
+		if project == nil {
+			displayURL := safeRepositoryURLForDisplay(repoURL, roots...)
+			project = &projectSummary{
+				ID:      id,
+				Name:    projectNameFromRepoURL(displayURL, roots...),
+				RepoURL: displayURL,
+				RepoKey: repoKey,
+				URL:     "/projects/" + id,
+				Source:  "run history",
+				LogsURL: "/projects/" + id + "#logs",
+			}
+			if project.Name == "" {
+				project.Name = "Git repository"
+			}
+			byID[id] = project
+			external = append(external, project)
+		}
+		addProjectRun(project, run)
+	}
+	projects := []projectSummary{workspace}
+	sort.SliceStable(external, func(i, j int) bool {
+		if external[i].Name == external[j].Name {
+			return external[i].ID < external[j].ID
+		}
+		return external[i].Name < external[j].Name
+	})
+	for _, project := range external {
+		projects = append(projects, *project)
+	}
+	return projects
+}
+
+func (s *Server) projectDocURL(rel string) string {
+	state, url := s.projectDocShortcutState(rel)
+	if state != "available" {
+		return ""
+	}
+	return url
+}
+
+func addProjectRun(project *projectSummary, run runLink) {
+	if project == nil {
+		return
+	}
+	project.RunCount++
+	if project.LatestRunID == "" {
+		project.LatestRunID = run.ID
+		project.LatestRunURL = "/runs/" + template.URLQueryEscaper(run.ID)
+		project.Status = run.Status
+	}
+}
+
+func projectRuns(project projectSummary, runs []runLink) []runLink {
+	out := make([]runLink, 0, len(runs))
+	for _, run := range runs {
+		repoKey := canonicalProjectRepoKey(run.RepositoryURL)
+		if project.Current {
+			if projectRunBelongsToWorkspace(repoKey, project.RepoKey) {
+				out = append(out, run)
+			}
+			continue
+		}
+		if repoKey != "" && repoKey == project.RepoKey {
+			out = append(out, run)
+		}
+	}
+	return out
+}
+
+func projectRunBelongsToWorkspace(runRepoKey, workspaceRepoKey string) bool {
+	if workspaceRepoKey == "" {
+		return runRepoKey == ""
+	}
+	return runRepoKey == "" || runRepoKey == workspaceRepoKey
+}
+
+func safeProjectID(id string) bool {
+	if id == "" || id == "." || id == ".." {
+		return false
+	}
+	for _, r := range id {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func projectIDFromKey(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return "repo-" + hex.EncodeToString(sum[:])[:12]
+}
+
+func workspaceProjectName(cwd, repoURL string, roots ...security.CommandPathRoot) string {
+	if name := projectNameFromRepoURL(repoURL, roots...); name != "" {
+		return name
+	}
+	base := strings.TrimSpace(filepath.Base(cwd))
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return "workspace"
+	}
+	return sanitizeProjectDocLabel(base, roots...)
+}
+
+func projectNameFromRepoURL(repoURL string, roots ...security.CommandPathRoot) string {
+	repoURL = strings.TrimSpace(repoURL)
+	if repoURL == "" {
+		return ""
+	}
+	normalized := strings.TrimSuffix(strings.TrimRight(repoURL, "/"), ".git")
+	if strings.HasPrefix(normalized, "git@") {
+		if colon := strings.Index(normalized, ":"); colon >= 0 && colon+1 < len(normalized) {
+			normalized = normalized[colon+1:]
+		}
+	} else if parsed, err := url.Parse(normalized); err == nil && parsed.Host != "" {
+		normalized = strings.Trim(parsed.Path, "/")
+	}
+	parts := strings.Split(strings.Trim(normalized, "/"), "/")
+	if len(parts) >= 2 {
+		normalized = parts[len(parts)-2] + "/" + parts[len(parts)-1]
+	}
+	name := strings.TrimSpace(sanitizeRunDetailText(normalized, roots...))
+	if name == "" || strings.Contains(name, "sensitive value removed") || strings.Contains(name, "unsafe value removed") {
+		return ""
+	}
+	return name
+}
+
+func canonicalProjectRepoKey(repoURL string) string {
+	repoURL = strings.TrimSpace(repoURL)
+	if repoURL == "" {
+		return ""
+	}
+	repoURL = strings.TrimSpace(secrets.Redact(repoURL))
+	if repoURL == "" || strings.Contains(repoURL, security.RedactionMarker) {
+		return ""
+	}
+	if strings.HasPrefix(repoURL, "git@") {
+		repoURL = strings.TrimPrefix(repoURL, "git@")
+		repoURL = strings.Replace(repoURL, ":", "/", 1)
+		repoURL = "ssh://" + repoURL
+	}
+	if parsed, err := url.Parse(repoURL); err == nil && parsed.Host != "" {
+		parsed.User = nil
+		host := strings.ToLower(parsed.Host)
+		path := strings.TrimSuffix(strings.TrimRight(strings.TrimPrefix(parsed.Path, "/"), "/"), ".git")
+		if host == "" || path == "" {
+			return ""
+		}
+		return strings.ToLower(host + "/" + path)
+	}
+	repoURL = strings.TrimSuffix(strings.TrimRight(repoURL, "/"), ".git")
+	return strings.ToLower(repoURL)
+}
+
+func safeRepositoryURLForDisplay(raw string, roots ...security.CommandPathRoot) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(raw); err == nil && parsed.Host != "" {
+		parsed.User = nil
+		raw = parsed.String()
+	}
+	text := strings.TrimSpace(sanitizeRunDetailText(secrets.Redact(raw), roots...))
+	if text == "" || strings.Contains(text, "sensitive value removed") || strings.Contains(text, "unsafe value removed") {
+		return ""
+	}
+	return text
+}
+
+func gitRemoteURL(cwd string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
+	cmd.Dir = cwd
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func (s *Server) githubStatus() githubStatus {
+	for _, envName := range []string{runpkg.DefaultGitHubTokenEnv, "GITHUB_TOKEN", "GH_TOKEN"} {
+		envName = strings.TrimSpace(envName)
+		if envName == "" {
+			continue
+		}
+		if strings.TrimSpace(os.Getenv(envName)) == "" {
+			continue
+		}
+		return githubStatus{
+			State:          "configured",
+			Message:        "GitHub token environment is configured for local repository mode.",
+			TokenEnv:       sanitizeRunDetailText(envName),
+			TokenAvailable: true,
+			LoginMode:      "environment token",
+			RepoMode:       "clone/update, branch, optional push",
+			EnvHint:        "Token values are never rendered by the dashboard.",
+		}
+	}
+	return githubStatus{
+		State:     "missing",
+		Message:   "GitHub login is not configured for this server process.",
+		TokenEnv:  runpkg.DefaultGitHubTokenEnv,
+		LoginMode: "set an environment token",
+		RepoMode:  "local workspace only until a token is available",
+		EnvHint:   "Add JJ_GITHUB_TOKEN to the shell or workspace .env, then restart jj serve.",
+	}
 }
 
 func safeDisplayRunID(runID string) bool {
@@ -7346,7 +7797,7 @@ func cleanAllowedProjectPath(rel string) (string, error) {
 
 func isProjectDocPath(rel string) bool {
 	switch rel {
-	case "README.md", "plan.md", "docs/SPEC.md", "docs/TASK.md", workspaceEvalMarkdownPath, runpkg.DefaultSpecStatePath, runpkg.DefaultTasksStatePath:
+	case "README.md", "plan.md", workspacePRDMarkdownPath, "docs/SPEC.md", "docs/TASK.md", workspaceEvalMarkdownPath, runpkg.DefaultSpecStatePath, runpkg.DefaultTasksStatePath:
 		return true
 	default:
 		return false
@@ -7626,6 +8077,8 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
     .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: color-mix(in srgb, CanvasText 5%, Canvas); color: CanvasText; text-decoration: none; font: inherit; cursor: pointer; }
     .button.primary { background: LinkText; color: Canvas; border-color: LinkText; }
     .button:hover { text-decoration: none; border-color: color-mix(in srgb, LinkText 55%, var(--line)); }
+    .top-nav { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 12px; font-size: 13px; }
+    .top-nav a { font-weight: 600; }
     form { max-width: 760px; display: grid; gap: 14px; }
     form.filters { max-width: none; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end; margin: 12px 0 18px; }
     form.filters .actions { margin: 0; }
@@ -7679,6 +8132,8 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
     .run-detail-inline-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
     .run-detail-inline-actions .button { min-height: 32px; padding-inline: 10px; font-size: 13px; font-weight: 600; }
     .run-detail-fallback { padding: 10px 12px; border: 1px dashed var(--line); border-radius: 6px; background: var(--surface-soft); }
+    .project-list li, .flow-list li { display: grid; gap: 4px; padding-block: 12px; }
+    .project-kicker { font-size: 12px; color: var(--muted-text); text-transform: uppercase; letter-spacing: 0; font-weight: 700; }
     @media (max-width: 700px) {
       header { padding: 16px; }
       main { padding: 20px 16px 36px; }
@@ -7695,6 +8150,14 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
   <header>
     <h1>{{.Title}}</h1>
     <div class="muted">{{.CWD}}</div>
+    <nav class="top-nav" aria-label="Dashboard navigation">
+      <a href="/">Dashboard</a>
+      <a href="/flow">Flow</a>
+      <a href="/github">GitHub</a>
+      <a href="/projects">Projects</a>
+      <a href="/runs">Runs</a>
+      <a href="/run/new">New Run</a>
+    </nav>
   </header>
   <main>
     {{if .Error}}
@@ -7865,6 +8328,100 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
         {{end}}
         <button class="button primary" type="submit">Start Run</button>
       </form>
+    {{else if .FlowSteps}}
+      <p><a href="/">← dashboard</a></p>
+      <p class="muted">This page summarizes how jj turns product documents and a Git repository into one auditable development turn.</p>
+      <ul class="flow-list">
+      {{range .FlowSteps}}
+        <li>
+          <span class="project-kicker">Step {{.Number}}</span>
+          <strong>{{.Title}}</strong>
+          <span>{{.Body}}</span>
+          {{if .Secondary}}<span class="muted">{{.Secondary}}</span>{{end}}
+          {{if .URL}}<span><a href="{{.URL}}">{{.URLLabel}}</a></span>{{end}}
+        </li>
+      {{end}}
+      </ul>
+    {{else if .GitHubStatus}}
+      <p><a href="/">← dashboard</a></p>
+      <section>
+        <h2>Status</h2>
+        <p><strong>{{.GitHubStatus.State}}</strong> <span class="muted">{{.GitHubStatus.Message}}</span></p>
+        <ul>
+          <li>Login mode <span class="muted">{{.GitHubStatus.LoginMode}}</span></li>
+          <li>Repository mode <span class="muted">{{.GitHubStatus.RepoMode}}</span></li>
+          <li>Token env <span class="muted">{{.GitHubStatus.TokenEnv}}</span></li>
+          <li>Token available <span class="muted">{{.GitHubStatus.TokenAvailable}}</span></li>
+        </ul>
+        <p class="muted">{{.GitHubStatus.EnvHint}}</p>
+      </section>
+      <section>
+        <h2>Repository Work</h2>
+        <p class="muted">GitHub workspace runs can clone or update a repository, create a work branch, run one jj task, and optionally push only when push is explicitly enabled.</p>
+        <div class="actions"><a class="button" href="/run/new">Start GitHub workspace run</a><a class="button" href="/projects">Open projects</a></div>
+      </section>
+    {{else if .ProjectsOnly}}
+      <p><a href="/">← dashboard</a></p>
+      <p class="muted">Each git repository is shown as one project. The served workspace is always listed; GitHub workspace repositories also appear when run history records a sanitized repository URL.</p>
+      <ul class="project-list">
+      {{range .Projects}}
+        <li>
+          <span class="project-kicker">{{.Source}}{{if .Current}} · current{{end}}</span>
+          <strong><a href="{{.URL}}">{{.Name}}</a></strong>
+          {{if .RepoURL}}<span class="muted">{{.RepoURL}}</span>{{else}}<span class="muted">local workspace</span>{{end}}
+          <span class="muted">{{.RunCount}} runs{{if .LatestRunID}} · latest {{.LatestRunID}} {{.Status}}{{end}}</span>
+          <span>{{if .PRDURL}}<a href="{{.PRDURL}}">PRD</a> · {{end}}{{if .SpecURL}}<a href="{{.SpecURL}}">SPEC</a> · {{end}}{{if .TasksURL}}<a href="{{.TasksURL}}">Tasks</a> · {{end}}<a href="{{.LogsURL}}">Logs</a></span>
+        </li>
+      {{else}}
+        <li class="muted">No projects discovered.</li>
+      {{end}}
+      </ul>
+    {{else if .ProjectDetail}}
+      <p><a href="/projects">← projects</a></p>
+      <section>
+        <h2>Project</h2>
+        <p><strong>{{.ProjectDetail.Project.Name}}</strong> <span class="muted">{{.ProjectDetail.Project.Source}}{{if .ProjectDetail.Project.Current}} · current workspace{{end}}</span></p>
+        {{if .ProjectDetail.Project.RepoURL}}<p class="muted">{{.ProjectDetail.Project.RepoURL}}</p>{{else}}<p class="muted">local workspace</p>{{end}}
+        <p class="muted">GitHub {{.ProjectDetail.GitHub.State}} · {{.ProjectDetail.GitHub.LoginMode}}</p>
+      </section>
+      {{if .ProjectDetail.Project.Current}}
+      <section>
+        <h2>Product Docs</h2>
+        <ul>
+        {{range .ProjectDetail.Docs}}
+          <li>{{if .URL}}<a href="{{.URL}}">{{.Label}}</a>{{else}}<strong>{{.Label}}</strong>{{end}} <span class="muted">{{.State}}</span></li>
+        {{else}}
+          <li class="muted">Project docs unavailable.</li>
+        {{end}}
+        </ul>
+      </section>
+      <section>
+        <h2>Tasks</h2>
+        {{$projectTaskSummary := .ProjectDetail.TaskSummary}}
+        {{if $projectTaskSummary.MessageMuted}}<p class="muted">{{$projectTaskSummary.Message}}</p>{{else}}<p>{{$projectTaskSummary.Message}}</p>{{end}}
+        {{with $projectTaskSummary.Next}}
+          <p>Next: <strong>{{.ID}}</strong> <span class="muted">{{.Category}} · {{.Status}}</span> {{.Title}}</p>
+        {{else}}
+          {{if $projectTaskSummary.EmptyMessage}}<p class="muted">{{$projectTaskSummary.EmptyMessage}}</p>{{end}}
+        {{end}}
+        {{if .ProjectDetail.Project.TasksURL}}<p><a href="{{.ProjectDetail.Project.TasksURL}}">Open TASK</a></p>{{end}}
+      </section>
+      {{else}}
+      <section>
+        <h2>Product Docs</h2>
+        <p class="muted">Docs are available when the repository is the served workspace. This project was discovered from sanitized run history.</p>
+      </section>
+      {{end}}
+      <section id="logs">
+        <h2>Logs And Runs</h2>
+        <ul>
+        {{range .ProjectDetail.Runs}}
+          <li><a href="/runs/{{q .ID}}">{{.ID}}</a> <span class="muted">{{.Status}} {{.StartedAt}}{{if .SelectedTaskID}} · task {{.SelectedTaskID}}{{end}}{{if .Validation}} · validation {{.Validation}}{{end}}</span>{{if .CompareURL}} · <a href="{{.CompareURL}}">compare</a>{{end}}{{if .ErrorSummary}} <span class="error">{{.ErrorSummary}}</span>{{end}}</li>
+        {{else}}
+          <li class="muted">No runs recorded for this project.</li>
+        {{end}}
+        </ul>
+      </section>
     {{else if .RunCompare}}
       <p><a href="/">← dashboard</a> · <a href="/runs">all runs</a></p>
       {{if .RunCompare.Notice}}<p class="muted">{{.RunCompare.Notice}}</p>{{end}}
@@ -8121,6 +8678,17 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
             <li><strong>Workspace tasks</strong><span class="muted"><code>.jj/tasks.json</code> and <code>docs/TASK.md</code> describe product work jj planned for this workspace.</span></li>
             <li><strong>Run evidence</strong><span class="muted"><code>.jj/runs/&lt;run-id&gt;</code> contains artifacts, validation, summaries, and logs from one jj execution.</span></li>
             <li><strong>Self-hosting read</strong><span class="muted">When jj uses jj to build jj, read a task as product work and a run log as evidence from the tool doing that work.</span></li>
+          </ul>
+          <p><a href="/flow">Development flow</a> · <a href="/github">GitHub login</a> · <a href="/projects">Projects</a></p>
+        </section>
+        <section class="dashboard-section dashboard-section-projects">
+          <h2>Projects</h2>
+          <ul>
+          {{range .Projects}}
+            <li><a href="{{.URL}}">{{.Name}}</a> <span class="muted">{{.Source}}{{if .Current}} · current{{end}} · {{.RunCount}} runs</span></li>
+          {{else}}
+            <li class="muted">No projects discovered.</li>
+          {{end}}
           </ul>
         </section>
 	      <section class="dashboard-section dashboard-section-task">

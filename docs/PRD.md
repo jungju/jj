@@ -122,7 +122,9 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 
 - `jj serve` must bind to localhost by default.
 - Dashboard must start with current product/workflow state rather than arbitrary file browsing.
-- Dashboard must expose current SPEC, task state, validation state, runs, risks, failures, run details, compare view, sanitized audit export, and guarded artifact links.
+- Dashboard must expose the development flow, GitHub token login status, repository projects, current PRD/SPEC/task state, validation state, runs, risks, failures, run details, compare view, sanitized audit export, and guarded artifact links.
+- Dashboard must treat one git repository as one project. The served workspace is always a project, and sanitized repositories discovered from GitHub workspace run history are grouped into separate project pages.
+- Project pages must show project docs, task summary, and run logs when the repository is the served workspace. Projects discovered only from run history must not browse outside the served workspace for docs.
 - Project document routes must be allowlisted to approved files only.
 - Run artifact routes must serve only manifest-listed artifacts for validated run IDs.
 - Dashboard responses must be redacted, HTML-escaped, and sent with `Cache-Control: no-store`.
@@ -156,7 +158,8 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
   - `./jj run plan.md`
   - `./jj serve --cwd .`
 - CLI summaries should make the next action clear after each run.
-- Dashboard root should make current task state, latest run, validation status, and recent failures easy to scan.
+- Dashboard root should make current project state, development flow, GitHub token status, latest run, validation status, and recent failures easy to scan.
+- Project pages should let a user review one repository's PRD/SPEC/TASK docs, task summary, and run logs without leaving the dashboard.
 - Run detail pages should expose validation evidence, compare-to-previous links, and artifact inventory without raw unsafe content.
 - Denied, unavailable, unknown, none, empty, malformed, stale, partial, and inconsistent metadata states should render deterministically.
 
@@ -164,7 +167,7 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 
 - A user can complete a dry-run and inspect generated planning artifacts without workspace state mutation.
 - A full run either passes validation and reconciles SPEC, or fails safely without mutating SPEC.
-- `jj serve --cwd .` exposes the current state and recent runs without unsafe file browsing.
+- `jj serve --cwd .` exposes the current project state, project docs, GitHub token status, and recent runs without unsafe file browsing.
 - `./scripts/validate.sh` passes locally and in CI for release gates.
 - Security regression tests cover redaction, path containment, symlink escapes, dashboard traversal, command metadata, validation output, and dry-run leakage.
 - Existing behavior remains stable during presentation helper maintenance and UI polish.
@@ -189,6 +192,5 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 ## 14. Open Questions
 
 - Should PRD-level product milestones be stored as Markdown only, or mirrored into `.jj/documents.sqlite3` as a first-class document type?
-- Should `jj serve` include a dedicated product-docs view for PRD, SPEC, TASK, and README, or keep the current dashboard shortcuts only?
 - Should future validation support multiple configured gates while preserving `./scripts/validate.sh` as the release default?
-- Should GitHub workspace mode expose a dashboard summary for PR creation and push status without adding new raw remote metadata surfaces?
+- Should the dashboard eventually support GitHub OAuth/device login, or keep GitHub access configured through environment tokens only?

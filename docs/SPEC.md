@@ -28,7 +28,7 @@ When the target workspace is a clean git repository, a successful full run creat
 
 `.jj/tasks.json` is append-only task proposal history. Each run appends newly proposed tasks with fresh IDs, selects the first new runnable task for full-run implementation, and updates only that selected task after validation. Existing `active` or `in_progress` tasks are returned to `queued` when a new full-run task is selected.
 
-`docs/SPEC.md` and `docs/TASK.md` are repository documentation for the current product boundary. The dashboard exposes those docs, `.jj/spec.json`, `.jj/tasks.json`, `README.md`, `plan.md`, and manifest-listed run artifacts through explicit allowlisted routes only.
+`docs/PRD.md`, `docs/SPEC.md`, and `docs/TASK.md` are repository documentation for the current product boundary. The dashboard exposes those docs, `.jj/spec.json`, `.jj/tasks.json`, `README.md`, `plan.md`, and manifest-listed run artifacts through explicit allowlisted routes only.
 
 ## Security Goals
 
@@ -78,11 +78,14 @@ Codex event and summary outputs are resolved under `.jj/runs/<run-id>/` before l
 
 The dashboard:
 
-- Serves only `README.md`, `plan.md`, `docs/SPEC.md`, `docs/TASK.md`, `.jj/spec.json`, `.jj/tasks.json`, and manifest-listed run artifacts.
+- Serves only `README.md`, `plan.md`, `docs/PRD.md`, `docs/SPEC.md`, `docs/TASK.md`, `.jj/spec.json`, `.jj/tasks.json`, and manifest-listed run artifacts.
+- Provides `/flow` for the development loop, `/github` for token-environment login status, `/projects` for repository-as-project grouping, and `/projects/<id>` for product docs, task state, and run logs for a selected project.
 - Rejects traversal, encoded traversal, dotfile browsing, malformed run IDs, and symlink escapes.
 - Redacts and HTML-escapes rendered metadata and artifact content.
 - Uses safe display labels such as `[workspace]`, `.jj/runs/<run-id>`, and `[path]` instead of raw absolute workspace paths.
 - Sends `Cache-Control: no-store` on dashboard, JSON, and artifact responses so local review pages are not cached.
+
+Project grouping treats the served workspace as the current project. Sanitized repository URLs found in run history create additional project entries, but those entries show run evidence only; project docs are served only from the current workspace boundary.
 
 Run inspection routes stay inside the guarded `.jj/runs` root:
 

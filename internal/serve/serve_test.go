@@ -33,7 +33,7 @@ func TestIndexShowsDocsAndRuns(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, body)
 	}
-	if !strings.Contains(body, "README.md") || !strings.Contains(body, "plan.md") || !strings.Contains(body, "docs/SPEC.md") || !strings.Contains(body, "docs/TASK.md") || !strings.Contains(body, ".jj/spec.json") || !strings.Contains(body, ".jj/tasks.json") || strings.Contains(body, ".jj/eval.json") {
+	if !strings.Contains(body, "README.md") || !strings.Contains(body, "plan.md") || !strings.Contains(body, "docs/PRD.md") || !strings.Contains(body, "docs/SPEC.md") || !strings.Contains(body, "docs/TASK.md") || !strings.Contains(body, ".jj/spec.json") || !strings.Contains(body, ".jj/tasks.json") || strings.Contains(body, ".jj/eval.json") {
 		t.Fatalf("index missing docs:\n%s", body)
 	}
 	for _, blocked := range []string{"docs/guide.md", "playground/plan.md"} {
@@ -41,7 +41,7 @@ func TestIndexShowsDocsAndRuns(t *testing.T) {
 			t.Fatalf("index advertised non-allowlisted doc %q:\n%s", blocked, body)
 		}
 	}
-	for _, want := range []string{"Workspace / Run Scope", "Workspace tasks", "Run evidence", "Self-hosting read", ".jj/tasks.json", ".jj/runs/&lt;run-id&gt;", "Workspace Readiness", "Risks And Failures", "Plan Ready", "README Ready", "SPEC Ready", "TASK Ready", "Latest Run", `href="/runs"`, `href="/runs/20260425-120000-bbbbbb"`, `href="/runs/audit?run=20260425-120000-bbbbbb"`, "provider/result result failed", "evaluation failed", "mode auto"} {
+	for _, want := range []string{"Workspace / Run Scope", "Workspace tasks", "Run evidence", "Self-hosting read", ".jj/tasks.json", ".jj/runs/&lt;run-id&gt;", "Development flow", "GitHub login", "Projects", "Workspace Readiness", "Risks And Failures", "Plan Ready", "README Ready", "PRD Ready", "SPEC Ready", "TASK Ready", "Latest Run", `href="/runs"`, `href="/runs/20260425-120000-bbbbbb"`, `href="/runs/audit?run=20260425-120000-bbbbbb"`, "provider/result result failed", "evaluation failed", "mode auto"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index missing %q:\n%s", want, body)
 		}
@@ -135,6 +135,7 @@ func TestDashboardRootPresentationPolishPreservesSectionsAndGuardedLinks(t *test
 	assertSubstringsInOrder(t, body, []string{
 		`<div class="dashboard-root">`,
 		`<h2>Workspace / Run Scope</h2>`,
+		`<h2>Projects</h2>`,
 		`<h2>Current TASK</h2>`,
 		`<h2>Latest Run</h2>`,
 		`<h2>Risks And Failures</h2>`,
@@ -164,6 +165,7 @@ func TestDashboardProjectDocsShortcutsPresentAndPreserveSummaries(t *testing.T) 
 	secret := "sk-proj-projectdocs1234567890"
 	writeFile(t, dir, "plan.md", "# Plan\n\n"+secret+"\n")
 	writeFile(t, dir, "README.md", "# README\n\n"+secret+"\n")
+	writeFile(t, dir, "docs/PRD.md", "# PRD\n\n"+secret+"\n")
 	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n\n"+secret+"\n")
 	writeFile(t, dir, "docs/TASK.md", `# Work Queue
 
@@ -194,6 +196,7 @@ Authorization: Bearer `+secret+`
 	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
 	assertSubstringsInOrder(t, projectDocs, []string{
 		`href="` + docURL("plan.md") + `">plan.md</a> <span class="muted">available</span>`,
+		`href="` + docURL("docs/PRD.md") + `">docs/PRD.md</a> <span class="muted">available</span>`,
 		`href="` + docURL("docs/SPEC.md") + `">docs/SPEC.md</a> <span class="muted">available</span>`,
 		`href="` + docURL("docs/TASK.md") + `">docs/TASK.md</a> <span class="muted">available</span>`,
 		`href="` + docURL("docs/EVAL.md") + `">docs/EVAL.md</a> <span class="muted">available</span>`,
@@ -260,13 +263,14 @@ func TestDashboardProjectDocsShortcutsMissingUnavailableAndDeniedAreSafe(t *test
 	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
 	expectedProjectDocs := []string{
 		`<strong>plan.md</strong> <span class="muted">missing</span>`,
+		`<strong>docs/PRD.md</strong> <span class="muted">missing</span>`,
 		`<strong>docs/SPEC.md</strong> <span class="muted">denied</span>`,
 		`<strong>docs/TASK.md</strong> <span class="muted">unavailable</span>`,
 		`<strong>docs/EVAL.md</strong> <span class="muted">missing</span>`,
 		`href="` + docURL("README.md") + `">README.md</a> <span class="muted">available</span>`,
 	}
 	assertSubstringsInOrder(t, projectDocs, expectedProjectDocs)
-	for _, blockedURL := range []string{docURL("plan.md"), docURL("docs/SPEC.md"), docURL("docs/TASK.md"), docURL("docs/EVAL.md")} {
+	for _, blockedURL := range []string{docURL("plan.md"), docURL("docs/PRD.md"), docURL("docs/SPEC.md"), docURL("docs/TASK.md"), docURL("docs/EVAL.md")} {
 		if strings.Contains(projectDocs, `href="`+blockedURL+`"`) {
 			t.Fatalf("project docs linked unavailable or denied shortcut %q:\n%s", blockedURL, projectDocs)
 		}
@@ -3696,6 +3700,98 @@ func TestServeExposesRunMutationRoutes(t *testing.T) {
 	}
 }
 
+func TestFlowPageExplainsDevelopmentFlow(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/flow", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{"development flow", "Product intent", "Bounded task selection", "Codex implementation", "Validation gate", "Run evidence and logs", "Project review", `href="/projects"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("flow page missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestGitHubPageShowsTokenStatusWithoutSecret(t *testing.T) {
+	dir := newTestWorkspace(t)
+	secret := "ghp_dashboardsecret1234567890"
+	t.Setenv(runpkg.DefaultGitHubTokenEnv, secret)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/github", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{"GitHub login", "configured", runpkg.DefaultGitHubTokenEnv, "environment token", "Token values are never rendered"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("github page missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, secret) {
+		t.Fatalf("github page leaked token:\n%s", body)
+	}
+}
+
+func TestProjectsPagesGroupReposDocsTasksAndLogs(t *testing.T) {
+	dir := newTestWorkspace(t)
+	server := newTestServer(t, dir, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/projects", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{"projects", "served workspace", "run history", "acme/app", "PRD", "SPEC", "Tasks", "Logs", `href="/projects/workspace"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("projects index missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "ghp_dashboardsecret1234567890") {
+		t.Fatalf("projects index leaked repository token:\n%s", body)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/projects/workspace", nil)
+	server.Handler().ServeHTTP(rec, req)
+	body = rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("workspace project status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{"Product Docs", "Tasks", "Logs And Runs", "docs/PRD.md", "docs/SPEC.md", "docs/TASK.md", "TASK.md task summary", "20260425-110000-aaaaaa"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("workspace project missing %q:\n%s", want, body)
+		}
+	}
+
+	repoID := projectIDFromKey(canonicalProjectRepoKey("https://github.com/acme/app.git"))
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/projects/"+repoID, nil)
+	server.Handler().ServeHTTP(rec, req)
+	body = rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("repo project status = %d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{"acme/app", "discovered from sanitized run history", "Logs And Runs", "20260425-120000-bbbbbb", "TASK-0001"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("repo project missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "ghp_dashboardsecret1234567890") {
+		t.Fatalf("repo project leaked repository token:\n%s", body)
+	}
+}
+
 func TestIndexShowsWebRunWhenPlanMissing(t *testing.T) {
 	dir := t.TempDir()
 	server := newTestServer(t, dir, "")
@@ -3747,6 +3843,7 @@ func TestProjectDocAllowlistServesOnlyDocumentedDocs(t *testing.T) {
 	}{
 		{"/doc?path=README.md", "<h1>Root</h1>"},
 		{"/doc?path=plan.md", "<h1>Product Plan</h1>"},
+		{"/doc?path=docs/PRD.md", "<h1>PRD Doc</h1>"},
 		{"/doc?path=docs/SPEC.md", "<h1>Spec Doc</h1>"},
 		{"/doc?path=docs/TASK.md", "<h1>Task Doc</h1>"},
 		{"/doc?path=docs/EVAL.md", "<h1>Eval Doc</h1>"},
@@ -7318,6 +7415,7 @@ func newTestWorkspace(t *testing.T) string {
 	dir := t.TempDir()
 	writeFile(t, dir, "README.md", "# Root\n")
 	writeFile(t, dir, "plan.md", "# Product Plan\n")
+	writeFile(t, dir, "docs/PRD.md", "# PRD Doc\n")
 	writeFile(t, dir, "docs/SPEC.md", "# Spec Doc\n")
 	writeFile(t, dir, "docs/TASK.md", "# Task Doc\n")
 	writeFile(t, dir, ".jj/spec.json", `{"version":1,"title":"SPEC","summary":"Do the spec."}`)

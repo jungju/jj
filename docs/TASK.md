@@ -19,8 +19,9 @@
 - Artifact writes reject absolute paths, traversal, unsafe segments, Windows drive prefixes, hidden artifact names, and symlink escapes.
 - Codex output artifacts must resolve under `.jj/runs/<run-id>/`, may not traverse symlinked output parents, and are revalidated before post-run fallback creation, redaction, or readback.
 - Run IDs reject traversal-like values, invalid characters, configured secret values, and common token patterns without echoing the rejected value in validation errors.
-- `jj run --dry-run` writes planning artifacts and state snapshots only under `.jj/runs/<run-id>/`; it does not write or update `.jj/spec.json`, `.jj/tasks.json`, `docs/SPEC.md`, or `docs/TASK.md`.
+- `jj run --dry-run` writes planning artifacts and state snapshots only under `.jj/runs/<run-id>/`; it does not write or update `.jj/spec.json`, `.jj/tasks.json`, `docs/PRD.md`, `docs/SPEC.md`, or `docs/TASK.md`.
 - `jj serve` defaults to a local-only bind, serves only approved project docs/state and manifest-listed run artifacts, blocks traversal and dotfile browsing, escapes rendered content, and sends `Cache-Control: no-store`.
+- `jj serve` exposes a project-oriented dashboard with development flow, GitHub token status, registered repository projects, per-project docs, per-project task summaries, and per-project run logs.
 - `jj serve` loads workspace `.env` before resolving server config, keeps shell environment precedence, supports `OPENAI_KEY` as an `OPENAI_API_KEY` alias, and allows Kubernetes-related values such as `KUBECONFIG` and `K8S_CONFIG` to be supplied without serving `.env`.
 - `jj serve` exposes guarded run history, run detail, two-run comparison, and sanitized JSON audit export routes derived from validated run IDs and sanitized manifest fields only.
 - Codex, Git, repository, and validation commands use explicit argv/env handling through `exec.CommandContext`, resolved command working directories, filtered environments, and timeouts.
@@ -41,7 +42,8 @@
 - `.jj/tasks.json` is append-only task proposal history: every run appends fresh task records, full runs select the first newly proposed task, and previous `active` or `in_progress` tasks are returned to `queued`.
 - Dashboard communication separates workspace tasks from run evidence. Workspace tasks are product work in `.jj/tasks.json` and `docs/TASK.md`; run evidence is the artifacts, validation, summaries, and logs stored under `.jj/runs/<run-id>/`.
 - When jj is used to build jj itself, workspace tasks are tasks for the jj product and run logs/artifacts are evidence from the jj execution that planned or implemented those tasks.
-- Dashboard routes are intentionally narrow: `README.md`, `plan.md`, `docs/SPEC.md`, `docs/TASK.md`, `.jj/spec.json`, `.jj/tasks.json`, and manifest-listed run artifacts.
+- Dashboard routes are intentionally narrow: `README.md`, `plan.md`, `docs/PRD.md`, `docs/SPEC.md`, `docs/TASK.md`, `.jj/spec.json`, `.jj/tasks.json`, and manifest-listed run artifacts.
+- Dashboard project routes group the served workspace and sanitized repository URLs from run history as projects, but never browse outside the served workspace to load external repo docs.
 - Run inspection routes are intentionally manifest-derived: `/runs`, `/runs/<run-id>`, `/runs/compare?left=<run-id>&right=<run-id>`, and `/runs/audit?run=<run-id>`.
 - Dashboard display paths use `[workspace]`, `.jj/runs/<run-id>`, and `[path]` instead of raw absolute workspace paths.
 - Limitation: redaction is best-effort pattern and configured-secret matching; it is not a substitute for avoiding intentional persistence of unnecessary raw credentials.
