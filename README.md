@@ -2,31 +2,6 @@
 
 `jj` is a local, document-first AI coding workflow CLI. A user writes `plan.md` as the initial product seed; after `.jj/spec.json` exists, that SPEC becomes the planning source of truth. `jj` appends proposed tasks, selects one task, asks Codex CLI or another implementation provider to do the work, runs deterministic validation, reconciles SPEC only on validation success, and stores auditable artifacts under `.jj/runs/<run-id>/`.
 
-## jjctl v1
-
-This repository also includes `jjctl`, a CLI-first GitHub/Codex/Kubernetes deployment app. Build it with:
-
-```bash
-go build -o jjctl ./cmd/jjctl
-```
-
-Core flows:
-
-```bash
-jjctl auth login
-jjctl repo add .
-jjctl docs init
-jjctl ask "이 repository의 docs를 검토해줘"
-jjctl k8s credential add dev-cluster --from-kubeconfig ~/.kube/config --context minikube --namespace jj-dev
-jjctl pool create personal-dev
-jjctl pool target add personal-dev/dev --credential dev-cluster --namespace jj-dev --environment dev --strategy apply-only
-jjctl deploy init --pool personal-dev --target dev
-jjctl deploy plan dev
-jjctl deploy run dev
-```
-
-`jjctl` stores local state in `~/.jj/jj.sqlite`; sensitive values are stored through encrypted local secret references and are not written as plaintext SQLite fields. Deployment runs always show the plan and require explicit `[y/N]` approval before `kubectl apply`.
-
 Canonical workspace state is JSON-only:
 
 - `.jj/spec.json`

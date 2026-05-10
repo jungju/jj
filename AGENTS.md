@@ -4,8 +4,8 @@
 
 This repository is managed by jj.
 
-jj is a CLI-first development and deployment tool for GitHub repositories.
-It uses Codex for development assistance and Kubernetes deployment pools for deployment.
+jj is a local, document-first AI coding workflow CLI.
+It uses Codex for local, validation-gated development assistance and auditable run artifacts.
 
 ## Working rules
 
@@ -37,11 +37,9 @@ This section applies when an agent is working on jj itself in this repository.
 ## Docs rules
 
 - Keep docs concise and implementation-oriented.
-- Use docs/product for product decisions.
-- Use docs/architecture for system design.
-- Use docs/deployment for deployment behavior.
-- Use docs/security for security and permission rules.
-- Use docs/adr for irreversible decisions.
+- Treat docs/PRD.md, docs/SPEC.md, docs/TASK.md, and README.md as the current product boundary.
+- Do not introduce new runtime surfaces that conflict with those documents.
+- Keep docs/ changes synchronized with public behavior changes.
 
 ## Git rules
 
@@ -51,14 +49,3 @@ This section applies when an agent is working on jj itself in this repository.
 - Do not amend, squash, rebase, or rewrite history unless explicitly requested.
 - Do not push unless explicitly requested.
 - If the worktree was dirty before the task and the new changes cannot be separated safely, stop before commit and explain the blocker.
-
-## Deployment rules
-
-- Do not deploy automatically.
-- Do not run kubectl apply unless the user explicitly asks.
-- Do not print kubeconfig, tokens, certificates, or registry credentials.
-- Do not create cluster-wide RBAC resources unless explicitly requested.
-- Prefer namespace-scoped manifests.
-- Before changing deployment files, update docs/deployment/.
-- Before deployment, show the deployment plan and expected resources.
-- Production deployment requires explicit user approval.
