@@ -7655,6 +7655,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
     .dashboard-root .link-row a { font-weight: 600; text-underline-offset: 3px; }
     .dashboard-root p a[href^="/runs"], .dashboard-root p a[href="/runs"] { font-weight: 600; text-underline-offset: 3px; }
     .dashboard-root .error { font-weight: 600; }
+    .scope-list li { display: grid; gap: 3px; padding-block: 8px; }
     .dashboard-section-task, .dashboard-section-latest, .dashboard-section-next-action { padding-block: 20px; }
     .dashboard-section-validation li, .dashboard-section-recent li, .dashboard-section-active li { padding-block: 10px; }
     .run-detail { display: grid; gap: 18px; }
@@ -7727,7 +7728,8 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
           <li class="muted">No turns started yet.</li>
         {{end}}
         </ul>
-        <h2>Logs</h2>
+        <h2>Run Logs</h2>
+        <p class="muted">These are operational messages from this jj execution. Workspace or product logs are separate unless a run records them as artifacts.</p>
         <pre class="logs" id="run-logs">{{range .WebRun.Logs}}{{.}}
 {{end}}</pre>
       </section>
@@ -8109,6 +8111,15 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
       </ul>
 	    {{else}}
       <div class="dashboard-root">
+        <section class="dashboard-section dashboard-section-scope">
+          <h2>Workspace / Run Scope</h2>
+          <p><strong>Workspace</strong> is the product repository selected by <code>--cwd</code>. If <code>--cwd</code> points at the jj repo, workspace tasks are tasks for building jj itself.</p>
+          <ul class="scope-list">
+            <li><strong>Workspace tasks</strong><span class="muted"><code>.jj/tasks.json</code> and <code>docs/TASK.md</code> describe product work jj planned for this workspace.</span></li>
+            <li><strong>Run evidence</strong><span class="muted"><code>.jj/runs/&lt;run-id&gt;</code> contains artifacts, validation, summaries, and logs from one jj execution.</span></li>
+            <li><strong>Self-hosting read</strong><span class="muted">When jj uses jj to build jj, read a task as product work and a run log as evidence from the tool doing that work.</span></li>
+          </ul>
+        </section>
 	      <section class="dashboard-section dashboard-section-task">
 	        <h2>Current TASK</h2>
 	        {{$taskSummary := .TaskSummary}}

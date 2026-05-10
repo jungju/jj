@@ -34,6 +34,7 @@ type Store struct {
 	RunID  string
 	RunDir string
 	stats  *storeStats
+	dbMu   *sync.Mutex
 }
 
 type storeStats struct {
@@ -66,6 +67,7 @@ func NewStore(cwd, runID string) (Store, error) {
 		RunID:  runID,
 		RunDir: runDir,
 		stats:  &storeStats{},
+		dbMu:   &sync.Mutex{},
 	}, nil
 }
 
@@ -148,6 +150,9 @@ func (s Store) Init() error {
 			return fmt.Errorf("secure artifact directory %s: %w", dir, err)
 		}
 	}
+	if err := s.InitDocumentStore(); err != nil {
+		return fmt.Errorf("init document store: %w", err)
+	}
 	return nil
 }
 
@@ -164,6 +169,9 @@ func (s Store) WriteFile(rel string, data []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if clean, err := cleanDocumentRel(rel); err == nil && isDocumentDBFileRel(clean) {
+		return "", errors.New("artifact path is reserved")
+	}
 	var report security.RedactionReport
 	data, report = security.RedactContentWithReport(rel, data)
 	s.RecordRedactionReport(report)
@@ -179,6 +187,9 @@ func (s Store) WriteFile(rel string, data []byte) (string, error) {
 	}
 	if err := AtomicWriteFile(path, data, PrivateFileMode); err != nil {
 		return "", fmt.Errorf("write artifact: %w", err)
+	}
+	if err := s.SaveDocument(rel, data); err != nil {
+		return "", fmt.Errorf("save artifact document: %w", err)
 	}
 	return path, nil
 }

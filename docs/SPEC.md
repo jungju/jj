@@ -10,6 +10,16 @@ Canonical runtime state is:
 - `.jj/tasks.json`
 - `.jj/runs/<run-id>/`
 
+The workspace maintains `.jj/documents.sqlite3` and mirrors redacted `.jj/` documents into it, including run artifacts, autopilot logs, next-intent input, SPEC/TASK snapshots, rule or policy artifacts, validation summaries, manifest updates, and workspace `.jj/spec.json` or `.jj/tasks.json` writes. File artifacts remain for dashboard compatibility and guarded review.
+
+Terminology is intentionally scoped for self-hosted development:
+
+- Workspace means the product repository selected by `--cwd`.
+- Workspace tasks means `.jj/tasks.json` and `docs/TASK.md`; these are product work items planned for that workspace.
+- Run evidence means `.jj/runs/<run-id>/`; these are artifacts, validation, summaries, and logs from one jj execution.
+
+When jj is used to build jj itself, workspace tasks are tasks for the jj product and run logs/artifacts are evidence produced by the jj execution that planned or implemented those tasks.
+
 Dry-runs write planning artifacts and state snapshots only under `.jj/runs/<run-id>/`; they do not update `.jj/spec.json`, `.jj/tasks.json`, or workspace documentation. Dry-run `snapshots/spec.after.json` remains the proposed preview for compatibility.
 
 Full runs append `.jj/tasks.json` during planning, but do not write workspace `.jj/spec.json` before implementation. When validation passes, jj reconciles the previous SPEC, planned SPEC, selected task, Codex summary, git diff summary, and validation summary into the final `.jj/spec.json`. If validation fails, is missing, or is skipped, the previous workspace SPEC remains unchanged and `snapshots/spec.after.json` records that unchanged state.
@@ -24,6 +34,7 @@ When the target workspace is a clean git repository, a successful full run creat
 
 - Redact secrets before data is persisted, rendered, logged, or sent to model/provider prompts.
 - Keep all run artifacts under `.jj/runs/<run-id>/`.
+- Store redacted generated documents in the workspace SQLite document mirror as well as the existing guarded file artifacts.
 - Keep workspace state writes under the resolved workspace root.
 - Preserve dry-run as an artifact-only planning mode with no workspace state or docs writes.
 - Prevent traversal, hidden artifact paths, Windows drive prefixes, encoded path escapes, and symlink escapes.

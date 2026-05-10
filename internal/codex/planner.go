@@ -143,13 +143,11 @@ func sanitizePlannerArtifact(store artifact.Store, rel string) error {
 	redacted, report := security.SanitizeHandoffContentWithReport(rel, data, plannerHandoffRoots(store, store.CWD)...)
 	store.RecordRedactionReport(report)
 	if string(redacted) == string(data) {
-		return nil
-	}
-	path, err = store.Path(rel)
-	if err != nil {
+		_, err := store.RecordFile(rel)
 		return err
 	}
-	return artifact.AtomicWriteFile(path, redacted, artifact.PrivateFileMode)
+	_, err = store.WriteFile(rel, redacted)
+	return err
 }
 
 func plannerHandoffRoots(store artifact.Store, cwd string) []security.CommandPathRoot {

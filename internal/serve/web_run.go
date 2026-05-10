@@ -3,6 +3,7 @@ package serve
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -352,7 +353,16 @@ func (r *webRunState) persistLog() {
 	if err != nil {
 		return
 	}
-	_ = artifact.AtomicWriteFile(path, []byte(secrets.Redact(data)), artifact.PrivateFileMode)
+	redacted := []byte(secrets.Redact(data))
+	if err := artifact.AtomicWriteFile(path, redacted, artifact.PrivateFileMode); err != nil {
+		return
+	}
+	runID := filepath.Base(runDir)
+	cwd := filepath.Dir(filepath.Dir(filepath.Dir(runDir)))
+	store, err := artifact.NewStore(cwd, runID)
+	if err == nil {
+		_ = store.SaveDocument("web-run.log", redacted)
+	}
 }
 
 func displayRunDir(runDir, runID string) string {

@@ -104,16 +104,38 @@ func readWorkspaceJSON(cwd, rel string, target any) error {
 }
 
 func writeWorkspaceJSON(cwd, rel string, value any) error {
+	data, err := marshalWorkspaceJSON(value)
+	if err != nil {
+		return err
+	}
+	return writeWorkspaceJSONData(cwd, rel, data)
+}
+
+func writeWorkspaceJSONAndStore(cwd, rel string, value any, store artifact.Store) error {
+	data, err := marshalWorkspaceJSON(value)
+	if err != nil {
+		return err
+	}
+	if err := writeWorkspaceJSONData(cwd, rel, data); err != nil {
+		return err
+	}
+	return store.SaveDocument(rel, data)
+}
+
+func marshalWorkspaceJSON(value any) ([]byte, error) {
+	redacted, _ := security.RedactJSONValueWithCount(value)
+	data, err := json.MarshalIndent(redacted, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(redactSecrets(string(data))), '\n'), nil
+}
+
+func writeWorkspaceJSONData(cwd, rel string, data []byte) error {
 	path, err := security.SafeJoinNoSymlinks(cwd, rel, security.PathPolicy{AllowHidden: true})
 	if err != nil {
 		return err
 	}
-	redacted, _ := security.RedactJSONValueWithCount(value)
-	data, err := json.MarshalIndent(redacted, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append([]byte(redactSecrets(string(data))), '\n')
 	if err := os.MkdirAll(filepath.Dir(path), artifact.PrivateDirMode); err != nil {
 		return err
 	}

@@ -928,7 +928,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		return &Result{RunID: cfg.RunID, RunDir: store.RunDir}, nil
 	}
 
-	if err := writeWorkspaceJSON(cfg.CWD, taskRel, tasksState); err != nil {
+	if err := writeWorkspaceJSONAndStore(cfg.CWD, taskRel, tasksState, store); err != nil {
 		return fail(StatusPlanningFailed, fmt.Errorf("write %s: %w", taskRel, err))
 	}
 	workspaceModified = true
@@ -1097,7 +1097,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	} else {
 		record("snapshot_tasks_after", p)
 	}
-	if err := writeWorkspaceJSON(cfg.CWD, taskRel, tasksState); err != nil {
+	if err := writeWorkspaceJSONAndStore(cfg.CWD, taskRel, tasksState, store); err != nil {
 		return fail(StatusImplementationFailed, fmt.Errorf("write %s: %w", taskRel, err))
 	}
 	manifest.Workspace.TaskWritten = true
@@ -1125,7 +1125,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 		if err != nil {
 			return fail(StatusPartial, err)
 		}
-		if err := writeWorkspaceJSON(cfg.CWD, specRel, finalSpecState); err != nil {
+		if err := writeWorkspaceJSONAndStore(cfg.CWD, specRel, finalSpecState, store); err != nil {
 			return fail(StatusPartial, fmt.Errorf("write %s: %w", specRel, err))
 		}
 		workspaceModified = true
@@ -1403,13 +1403,11 @@ func redactArtifactFile(store artifact.Store, rel string) error {
 	)
 	store.RecordRedactionReport(report)
 	if string(redacted) == string(data) {
-		return nil
-	}
-	path, err = store.Path(rel)
-	if err != nil {
+		_, err := store.RecordFile(rel)
 		return err
 	}
-	return artifact.AtomicWriteFile(path, redacted, artifact.PrivateFileMode)
+	_, err = store.WriteFile(rel, redacted)
+	return err
 }
 
 func ensureCodexArtifacts(store artifact.Store, result codex.Result, runErr error) error {
@@ -1448,22 +1446,17 @@ func ensureArtifactFileIfMissing(store artifact.Store, rel, content string) erro
 		if info.Mode()&os.ModeSymlink != 0 {
 			return security.ErrSymlinkPath
 		}
-		return nil
+		_, err := store.RecordFile(rel)
+		return err
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), artifact.PrivateDirMode); err != nil {
-		return err
-	}
-	path, err = store.Path(rel)
-	if err != nil {
 		return err
 	}
 	safeContent := sanitizeHandoffText(content,
 		security.CommandPathRoot{Path: store.RunDir, Label: "[run]"},
 		security.CommandPathRoot{Path: store.CWD, Label: "[workspace]"},
 	)
-	return artifact.AtomicWriteFile(path, []byte(safeContent), artifact.PrivateFileMode)
+	_, err = store.WriteString(rel, safeContent)
+	return err
 }
 
 func redactBytes(data []byte) []byte {

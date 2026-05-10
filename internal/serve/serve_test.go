@@ -41,7 +41,7 @@ func TestIndexShowsDocsAndRuns(t *testing.T) {
 			t.Fatalf("index advertised non-allowlisted doc %q:\n%s", blocked, body)
 		}
 	}
-	for _, want := range []string{"Workspace Readiness", "Risks And Failures", "Plan Ready", "README Ready", "SPEC Ready", "TASK Ready", "Latest Run", `href="/runs"`, `href="/runs/20260425-120000-bbbbbb"`, `href="/runs/audit?run=20260425-120000-bbbbbb"`, "provider/result result failed", "evaluation failed", "mode auto"} {
+	for _, want := range []string{"Workspace / Run Scope", "Workspace tasks", "Run evidence", "Self-hosting read", ".jj/tasks.json", ".jj/runs/&lt;run-id&gt;", "Workspace Readiness", "Risks And Failures", "Plan Ready", "README Ready", "SPEC Ready", "TASK Ready", "Latest Run", `href="/runs"`, `href="/runs/20260425-120000-bbbbbb"`, `href="/runs/audit?run=20260425-120000-bbbbbb"`, "provider/result result failed", "evaluation failed", "mode auto"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index missing %q:\n%s", want, body)
 		}
@@ -121,8 +121,10 @@ func TestDashboardRootPresentationPolishPreservesSectionsAndGuardedLinks(t *test
 		`.dashboard-root {`,
 		`.dashboard-root > .dashboard-section`,
 		`.dashboard-root p a[href^="/runs"], .dashboard-root p a[href="/runs"]`,
+		`.scope-list li`,
 		`@media (max-width: 700px)`,
 		`<div class="dashboard-root">`,
+		`<section class="dashboard-section dashboard-section-scope">`,
 		`<section class="dashboard-section dashboard-section-task">`,
 		`<section class="dashboard-section dashboard-section-next-action">`,
 	} {
@@ -132,6 +134,7 @@ func TestDashboardRootPresentationPolishPreservesSectionsAndGuardedLinks(t *test
 	}
 	assertSubstringsInOrder(t, body, []string{
 		`<div class="dashboard-root">`,
+		`<h2>Workspace / Run Scope</h2>`,
 		`<h2>Current TASK</h2>`,
 		`<h2>Latest Run</h2>`,
 		`<h2>Risks And Failures</h2>`,
