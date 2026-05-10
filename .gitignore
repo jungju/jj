@@ -1,5 +1,8 @@
 .jj/
 .jjrc.local
+.env
+.env.local
+.env.*.local
 /jj
 *.test
 playground/workspace/.jj/

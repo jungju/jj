@@ -58,6 +58,7 @@ type Config struct {
 	Host        string
 	Port        int
 	RunID       string
+	EnvFile     string
 	Stdout      io.Writer
 	Context     context.Context
 	RunExecutor RunExecutor
@@ -68,6 +69,8 @@ type Config struct {
 	AddrExplicit    bool
 	HostExplicit    bool
 	PortExplicit    bool
+	EnvFileExplicit bool
+	NoEnvFile       bool
 }
 
 type Server struct {

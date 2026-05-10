@@ -809,8 +809,8 @@ func assertStatusOutputSafe(t *testing.T, out string, forbidden ...string) {
 }
 
 func TestServeCommandParsesFlags(t *testing.T) {
-	var gotCWD, gotAddr, gotRunID string
-	var gotAddrExplicit bool
+	var gotCWD, gotAddr, gotRunID, gotEnvFile string
+	var gotAddrExplicit, gotEnvFileExplicit bool
 	cmd := newRootCommandWithServe(
 		func(_ context.Context, cfg run.Config) (*run.Result, error) {
 			t.Fatal("run executor should not be called")
@@ -820,13 +820,15 @@ func TestServeCommandParsesFlags(t *testing.T) {
 			gotCWD = cfg.CWD
 			gotAddr = cfg.Addr
 			gotRunID = cfg.RunID
+			gotEnvFile = cfg.EnvFile
 			gotAddrExplicit = cfg.AddrExplicit
+			gotEnvFileExplicit = cfg.EnvFileExplicit
 			return nil
 		},
 	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"serve", "--cwd", "/tmp/repo", "--addr", "127.0.0.1:0", "--run-id", "run-1"})
+	cmd.SetArgs([]string{"serve", "--cwd", "/tmp/repo", "--addr", "127.0.0.1:0", "--run-id", "run-1", "--env-file", "/tmp/repo/.env"})
 
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("execute command: %v", err)
@@ -834,8 +836,11 @@ func TestServeCommandParsesFlags(t *testing.T) {
 	if gotCWD != "/tmp/repo" || gotAddr != "127.0.0.1:0" || gotRunID != "run-1" {
 		t.Fatalf("unexpected serve config: cwd=%q addr=%q runID=%q", gotCWD, gotAddr, gotRunID)
 	}
-	if !gotAddrExplicit {
-		t.Fatalf("expected addr explicit marker")
+	if gotEnvFile != "/tmp/repo/.env" {
+		t.Fatalf("unexpected env file: %q", gotEnvFile)
+	}
+	if !gotAddrExplicit || !gotEnvFileExplicit {
+		t.Fatalf("expected explicit markers addr=%t env=%t", gotAddrExplicit, gotEnvFileExplicit)
 	}
 }
 
@@ -876,7 +881,7 @@ func TestServeCommandHelp(t *testing.T) {
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("help failed: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "--addr") || !strings.Contains(stdout.String(), "--run-id") {
+	if !strings.Contains(stdout.String(), "--addr") || !strings.Contains(stdout.String(), "--run-id") || !strings.Contains(stdout.String(), "--env-file") {
 		t.Fatalf("help output missing expected flags:\n%s", stdout.String())
 	}
 }

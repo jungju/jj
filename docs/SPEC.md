@@ -97,6 +97,8 @@ Codex, Git, validation, and repository commands are launched through structured 
 
 Command metadata stored in artifacts includes sanitized argv, safe path labels, filtered environments, exit status, duration, and redacted errors. Sensitive flag values such as `--token <value>`, `--api-key <value>`, and `--api-key=value` are replaced with `[jj-omitted]`. Raw environment dumps are not persisted.
 
+`jj serve` loads `.env` from the selected workspace by default before resolving serve host/port or starting web-triggered runs. An explicit `--env-file` can point to another dotenv file, and `--no-env-file` disables this behavior. Existing shell environment variables take precedence over `.env` values. `OPENAI_KEY` is treated as a convenience alias for `OPENAI_API_KEY` when the canonical variable is unset. Other values, including `KUBECONFIG`, `K8S_CONFIG`, and `K8S_CONFIG_B64`, are loaded as process environment variables without being persisted or rendered.
+
 ## Manifest Policy
 
 `manifest.json` includes sanitized run status, SafeConfig configuration metadata, git metadata, planner provider, Codex result, validation result, artifacts, risks, errors, and security metadata.

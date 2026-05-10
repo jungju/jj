@@ -376,6 +376,7 @@ func newServeCommand(exec serveExecutor, stdout io.Writer) *cobra.Command {
 			cfg.AddrExplicit = addrChanged
 			cfg.HostExplicit = hostChanged
 			cfg.PortExplicit = portChanged
+			cfg.EnvFileExplicit = cmd.Flags().Changed("env-file")
 			if cwd, err := os.Getwd(); err == nil {
 				cfg.ConfigSearchDir = cwd
 			} else {
@@ -397,6 +398,8 @@ func newServeCommand(exec serveExecutor, stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&cfg.Host, "host", serve.DefaultHost, "host for the local dashboard server")
 	cmd.Flags().IntVar(&cfg.Port, "port", serve.DefaultPort, "port for the local dashboard server")
 	cmd.Flags().StringVar(&cfg.RunID, "run-id", "", "run id to highlight by default")
+	cmd.Flags().StringVar(&cfg.EnvFile, "env-file", "", "dotenv file to load before starting the server (defaults to .env in the workspace)")
+	cmd.Flags().BoolVar(&cfg.NoEnvFile, "no-env-file", false, "disable automatic .env loading for the server")
 
 	return cmd
 }

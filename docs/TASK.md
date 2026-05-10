@@ -21,6 +21,7 @@
 - Run IDs reject traversal-like values, invalid characters, configured secret values, and common token patterns without echoing the rejected value in validation errors.
 - `jj run --dry-run` writes planning artifacts and state snapshots only under `.jj/runs/<run-id>/`; it does not write or update `.jj/spec.json`, `.jj/tasks.json`, `docs/SPEC.md`, or `docs/TASK.md`.
 - `jj serve` defaults to a local-only bind, serves only approved project docs/state and manifest-listed run artifacts, blocks traversal and dotfile browsing, escapes rendered content, and sends `Cache-Control: no-store`.
+- `jj serve` loads workspace `.env` before resolving server config, keeps shell environment precedence, supports `OPENAI_KEY` as an `OPENAI_API_KEY` alias, and allows Kubernetes-related values such as `KUBECONFIG` and `K8S_CONFIG` to be supplied without serving `.env`.
 - `jj serve` exposes guarded run history, run detail, two-run comparison, and sanitized JSON audit export routes derived from validated run IDs and sanitized manifest fields only.
 - Codex, Git, repository, and validation commands use explicit argv/env handling through `exec.CommandContext`, resolved command working directories, filtered environments, and timeouts.
 - Command and environment metadata is sanitized before persistence, including paired sensitive argv fragments such as `--token <value>` and inline values such as `--api-key=value`.
@@ -32,6 +33,7 @@
 - Redaction lives in `internal/security` and is re-exported by `internal/secrets`.
 - Central helper APIs include `RedactString`, `RedactBytes`, `RedactMap`, `NewSafeConfig`, `SafeJoin`, and `SafeJoinNoSymlinks`.
 - Configured sensitive literals use the same low-information filtering as environment-derived secrets so values such as `true`, `false`, `null`, and `none` do not become global redaction traps.
+- Server dotenv loading is startup-only process environment hydration; raw `.env` contents are not persisted into run artifacts or exposed through dashboard document routes.
 - Artifact safety lives in `internal/artifact.Store` and `security.SafeJoin`.
 - `internal/artifact.Store` mirrors every redacted generated document it writes into `.jj/documents.sqlite3`; existing `.jj/` files, externally generated Codex logs/summaries, autopilot logs, web-run logs, next-intent input, and workspace `.jj/spec.json` or `.jj/tasks.json` writes are imported into the same SQLite document mirror after sanitization.
 - `plan.md` bootstraps the first product direction. After `.jj/spec.json` exists, planning treats it as source of truth and keeps `plan.md` as background product vision.

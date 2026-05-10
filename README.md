@@ -137,10 +137,14 @@ The image includes the latest Codex CLI from `@openai/codex`, and `JJ_CODEX_BIN`
 
 ```text
 OPENAI_API_KEY
+OPENAI_KEY
 JJ_OPENAI_API_KEY_ENV
 JJ_OPENAI_MODEL
 JJ_CODEX_MODEL
 JJ_CODEX_BIN
+KUBECONFIG
+K8S_CONFIG
+K8S_CONFIG_B64
 JJ_TASK_PROPOSAL_MODE
 JJ_CWD
 JJ_RUN_ID
@@ -318,6 +322,19 @@ The workspace SQLite document mirror at `.jj/documents.sqlite3` stores redacted 
 jj serve --cwd .
 jj serve --cwd . --host 127.0.0.1 --port 7331
 ```
+
+`jj serve` automatically loads `.env` from the selected workspace before resolving server configuration or launching web-triggered runs. Existing shell environment variables win over `.env` values. Use `--env-file <path>` for a specific file, or `--no-env-file` to disable loading.
+
+Example `.env`:
+
+```dotenv
+OPENAI_KEY=sk-...
+JJ_SERVE_PORT=7331
+KUBECONFIG=/home/me/.kube/config
+K8S_CONFIG="apiVersion: v1\nkind: Config\n"
+```
+
+`OPENAI_KEY` is accepted as a convenience alias and is exposed to jj as `OPENAI_API_KEY` when `OPENAI_API_KEY` is otherwise unset. Kubernetes values such as `KUBECONFIG` or `K8S_CONFIG` are loaded as process environment variables for local tools that need them. `.env` itself is not served by the dashboard and should stay uncommitted.
 
 The dashboard reads `.jj/spec.json`, `.jj/tasks.json`, and run manifests directly. Project state routes are limited to `README.md`, `plan.md`, `docs/SPEC.md`, `docs/TASK.md`, `.jj/spec.json`, and `.jj/tasks.json`.
 

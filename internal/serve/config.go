@@ -16,6 +16,9 @@ const (
 )
 
 func ResolveConfig(cfg Config) (Config, error) {
+	if err := loadServeEnvFiles(cfg, false); err != nil {
+		return cfg, err
+	}
 	fileCfg, err := loadProjectConfig(cfg)
 	if err != nil {
 		return cfg, err
@@ -31,6 +34,10 @@ func ResolveConfig(cfg Config) (Config, error) {
 			cfg.CWD = v
 		}
 	}
+	if err := loadServeEnvFiles(cfg, true); err != nil {
+		return cfg, err
+	}
+	applyServeEnvAliases()
 
 	envAddr := firstEnv("JJ_SERVE_ADDR", "JJ_SERVER_ADDR", "JJ_ADDR")
 	envHost := firstEnv("JJ_SERVE_HOST", "JJ_SERVER_HOST", "JJ_HOST")

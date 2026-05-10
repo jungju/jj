@@ -126,6 +126,8 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 - Project document routes must be allowlisted to approved files only.
 - Run artifact routes must serve only manifest-listed artifacts for validated run IDs.
 - Dashboard responses must be redacted, HTML-escaped, and sent with `Cache-Control: no-store`.
+- `jj serve` must load workspace `.env` values before resolving server config and web-triggered run environment, while preserving explicit shell environment precedence.
+- `jj serve` must accept `OPENAI_KEY` as an alias for `OPENAI_API_KEY` when the canonical variable is unset, and must allow Kubernetes-related values such as `KUBECONFIG` and `K8S_CONFIG` to be supplied through `.env`.
 
 ### 8.7 GitHub Workspace Mode
 
@@ -144,6 +146,7 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 - Run IDs must reject traversal-like, path-shaped, secret-looking, or token-like values.
 - Dashboard and CLI errors must avoid echoing attacker-controlled denied path payloads or secret-like inputs.
 - Raw commands, raw environments, raw manifests, raw artifact bodies, raw diffs, raw validation payloads, and raw prompt handoffs must not be exposed in unsafe surfaces.
+- `.env` files may contain secrets and must not be served through dashboard document or artifact routes.
 
 ## 10. UX Requirements
 
@@ -189,4 +192,3 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 - Should `jj serve` include a dedicated product-docs view for PRD, SPEC, TASK, and README, or keep the current dashboard shortcuts only?
 - Should future validation support multiple configured gates while preserving `./scripts/validate.sh` as the release default?
 - Should GitHub workspace mode expose a dashboard summary for PR creation and push status without adding new raw remote metadata surfaces?
-

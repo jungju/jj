@@ -3565,6 +3565,58 @@ func TestResolveConfigEnvOverridesServeJJRC(t *testing.T) {
 	}
 }
 
+func TestResolveConfigLoadsWorkspaceDotenv(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("JJ_SERVE_PORT", "")
+	t.Setenv("OPENAI_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("K8S_CONFIG", "")
+	writeFile(t, dir, ".env", strings.Join([]string{
+		"JJ_SERVE_PORT=0",
+		"OPENAI_KEY=sk-proj-dotenv1234567890",
+		`K8S_CONFIG="apiVersion: v1\nkind: Config\n"`,
+		"",
+	}, "\n"))
+
+	cfg, err := ResolveConfig(Config{CWD: dir, CWDExplicit: true, ConfigSearchDir: dir})
+	if err != nil {
+		t.Fatalf("resolve serve config: %v", err)
+	}
+	if cfg.Addr != "127.0.0.1:0" {
+		t.Fatalf("expected .env port to apply, got %#v", cfg)
+	}
+	if os.Getenv("OPENAI_API_KEY") != "sk-proj-dotenv1234567890" {
+		t.Fatalf("OPENAI_KEY was not aliased to OPENAI_API_KEY")
+	}
+	if got := os.Getenv("K8S_CONFIG"); got != "apiVersion: v1\nkind: Config\n" {
+		t.Fatalf("K8S_CONFIG did not preserve escaped newlines: %q", got)
+	}
+}
+
+func TestResolveConfigDotenvDoesNotOverrideExistingEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("JJ_SERVE_PORT", "1234")
+	t.Setenv("OPENAI_API_KEY", "sk-proj-shell1234567890")
+	t.Setenv("OPENAI_KEY", "")
+	writeFile(t, dir, ".env", strings.Join([]string{
+		"JJ_SERVE_PORT=0",
+		"OPENAI_API_KEY=sk-proj-file1234567890",
+		"OPENAI_KEY=sk-proj-alias1234567890",
+		"",
+	}, "\n"))
+
+	cfg, err := ResolveConfig(Config{CWD: dir, CWDExplicit: true, ConfigSearchDir: dir})
+	if err != nil {
+		t.Fatalf("resolve serve config: %v", err)
+	}
+	if cfg.Addr != "127.0.0.1:1234" {
+		t.Fatalf("shell env should override .env port: %#v", cfg)
+	}
+	if os.Getenv("OPENAI_API_KEY") != "sk-proj-shell1234567890" {
+		t.Fatalf(".env overwrote existing OPENAI_API_KEY")
+	}
+}
+
 func TestNewWithConfigRequiresExplicitExternalBind(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := NewWithConfig(Config{CWD: dir, Addr: "0.0.0.0:0"}); err == nil || !strings.Contains(err.Error(), "external dashboard binding requires explicit") {
@@ -3717,6 +3769,7 @@ func TestProjectDocAllowlistServesOnlyDocumentedDocs(t *testing.T) {
 func TestProjectDocRejectsUnlistedAndUnsafePathsWithoutLeaks(t *testing.T) {
 	dir := newTestWorkspace(t)
 	secret := "serve-doc-secret-1234567890"
+	t.Setenv("API_KEY", "")
 	writeFile(t, dir, "docs/PRIVATE.md", "# Private\n"+secret+"\n")
 	writeFile(t, dir, "playground/secret.md", "# Playground\n"+secret+"\n")
 	writeFile(t, dir, "cmd/app/main.go", "package main\n// "+secret+"\n")
