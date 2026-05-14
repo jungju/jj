@@ -35,7 +35,7 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 - Select one bounded runnable task per full run and preserve append-only task history.
 - Update `.jj/spec.json` only after validation succeeds.
 - Store redacted, reviewable run evidence under `.jj/runs/<run-id>/`.
-- Mirror redacted `.jj/` documents into `.jj/documents.sqlite3` for local document history.
+- Mirror redacted `.jj/` documents into `.jj/documents.sqlite3` for local document history without replacing the canonical JSON state files.
 - Provide a local dashboard-first `jj serve` experience for SPEC, tasks, validation, runs, risks, failures, and artifacts.
 - Apply shared redaction and workspace boundary guardrails before persistence, model handoff, CLI output, or dashboard rendering.
 - Keep validation deterministic and independent of live model output.
@@ -49,6 +49,7 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 - `jj` does not guarantee AI output correctness.
 - `jj` does not serve arbitrary workspace files through the dashboard.
 - `jj` does not treat `docs/` Markdown files as canonical runtime state.
+- `jj` does not use `.jj/documents.sqlite3` as the planning source of truth.
 
 ## 6. Product Principles
 
@@ -115,7 +116,7 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
   - `.jj/tasks.json`
   - `.jj/runs/<run-id>/`
 - Run artifacts must include manifest, events, input snapshot, SPEC/TASK snapshots, git evidence, validation evidence, and command/provider summaries where applicable.
-- `.jj/documents.sqlite3` must mirror redacted `.jj/` documents for local document history.
+- `.jj/documents.sqlite3` must mirror redacted `.jj/` documents for local document history, but it must remain a derived local mirror rather than the authoritative workspace state.
 - Raw `.jj/runs/<run-id>/` artifacts must remain local and uncommitted by default.
 
 ### 8.6 Dashboard

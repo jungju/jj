@@ -10,12 +10,12 @@ Canonical runtime state is:
 - `.jj/tasks.json`
 - `.jj/runs/<run-id>/`
 
-The workspace maintains `.jj/documents.sqlite3` and mirrors redacted `.jj/` documents into it, including run artifacts, autopilot logs, next-intent input, SPEC/TASK snapshots, rule or policy artifacts, validation summaries, manifest updates, and workspace `.jj/spec.json` or `.jj/tasks.json` writes. File artifacts remain for dashboard compatibility and guarded review.
+The workspace maintains `.jj/documents.sqlite3` and mirrors redacted `.jj/` documents into it, including run artifacts, autopilot logs, next-intent input, SPEC/TASK snapshots, rule or policy artifacts, validation summaries, manifest updates, and workspace `.jj/spec.json` or `.jj/tasks.json` writes. File artifacts remain for dashboard compatibility and guarded review. The SQLite file is a derived local mirror, not the authoritative planning input and not a replacement for `.jj/spec.json` or `.jj/tasks.json`.
 
 Terminology is intentionally scoped for self-hosted development:
 
 - Workspace means the product repository selected by `--cwd`.
-- Workspace tasks means `.jj/tasks.json` and `docs/TASK.md`; these are product work items planned for that workspace.
+- Workspace task state means `.jj/tasks.json`; this is the product work history planned for that workspace. `docs/TASK.md` is a human-maintained product-boundary document, not the runtime task source.
 - Run evidence means `.jj/runs/<run-id>/`; these are artifacts, validation, summaries, and logs from one jj execution.
 
 When jj is used to build jj itself, workspace tasks are tasks for the jj product and run logs/artifacts are evidence produced by the jj execution that planned or implemented those tasks.
