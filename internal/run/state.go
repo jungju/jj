@@ -831,7 +831,7 @@ Task Proposal Mode:
 Requirements:
 - Work in this repository only.
 - Keep changes focused on the selected task and its acceptance criteria.
-- Do not rewrite jj workspace state (.jj/documents.sqlite3 or legacy .jj/spec.json/.jj/tasks.json), or .jj/runs; jj owns those state files.
+- Do not rewrite jj workspace state (data/documents.sqlite3 or legacy .jj/spec.json/.jj/tasks.json), or .jj/runs; jj owns those state files.
 - Choose and run relevant tests yourself.
 - In your final response, include changed files, tests run with results, and remaining risks.
 `, specSummary, taskJSON, proposal.Selected, proposal.Resolved))

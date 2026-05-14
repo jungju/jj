@@ -56,6 +56,9 @@ func CaptureUntrackedEvidence(ctx context.Context, cwd string, available bool, r
 			evidence.Skipped = append(evidence.Skipped, UntrackedSkippedFile{Path: displayPath, Reason: redactSecrets(reason)})
 			continue
 		}
+		if isWorkspaceStateDatabaseRel(cleanRel) {
+			continue
+		}
 		if !seenFiles[cleanRel] {
 			evidence.Files = append(evidence.Files, displayUntrackedPath(cleanRel))
 			seenFiles[cleanRel] = true
@@ -75,6 +78,14 @@ func CaptureUntrackedEvidence(ctx context.Context, cwd string, available bool, r
 	evidence.Patch = patch.String()
 	evidence.Summary = renderUntrackedSummary(evidence)
 	return evidence, nil
+}
+
+func isWorkspaceStateDatabaseRel(rel string) bool {
+	clean := filepath.ToSlash(strings.TrimSpace(rel))
+	return clean == WorkspaceStateDBPath ||
+		strings.HasPrefix(clean, WorkspaceStateDBPath+"-") ||
+		clean == legacyWorkspaceStateDBPath ||
+		strings.HasPrefix(clean, legacyWorkspaceStateDBPath+"-")
 }
 
 func parseNULPaths(out string) []string {

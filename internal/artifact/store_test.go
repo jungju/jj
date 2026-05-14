@@ -126,7 +126,7 @@ func TestStoreMirrorsWrittenArtifactsToSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("document db path: %v", err)
 	}
-	if want := filepath.Join(store.CWD, ".jj", "documents.sqlite3"); dbPath != want {
+	if want := filepath.Join(store.CWD, "data", "documents.sqlite3"); dbPath != want {
 		t.Fatalf("document db should be workspace scoped: got %s want %s", dbPath, want)
 	}
 	if _, err := os.Stat(filepath.Join(store.RunDir, legacyDocumentsDBRel)); !os.IsNotExist(err) {

@@ -4,7 +4,7 @@ Last updated: 2026-05-14
 
 ## 1. Summary
 
-`jj` is a local, document-first AI coding workflow CLI. It turns a product seed such as `docs/PLAN.md` into canonical local SQLite product state, implementation-ready tasks, Codex execution, deterministic validation, and auditable run artifacts.
+`jj` is a local, document-first AI coding workflow CLI. It turns a product seed such as `docs/PLAN.md` into canonical source-controlled SQLite product state, implementation-ready tasks, Codex execution, deterministic validation, and auditable run artifacts.
 
 The product promise is simple: a developer should be able to state intent once, let `jj` plan and execute one bounded task, then inspect exactly what happened through local files and a dashboard without exposing secrets or unsafe workspace paths.
 
@@ -30,12 +30,12 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 ## 4. Goals
 
 - Provide a single CLI flow from product intent to planned task, implementation, validation, and evidence capture.
-- Treat `.jj/documents.sqlite3` and `.jj/runs/<run-id>/` as local runtime state, with `.jj/spec.json`/`.jj/tasks.json` kept as legacy import and virtual JSON view paths.
+- Treat `data/documents.sqlite3` and `.jj/runs/<run-id>/` as runtime state, with `.jj/spec.json`/`.jj/tasks.json` kept as legacy import and virtual JSON view paths.
 - Keep `docs/PLAN.md` as the initial product seed and later background vision once SQLite workspace SPEC exists.
 - Select one bounded runnable task per full run and preserve append-only task history.
 - Update SQLite workspace SPEC only after validation succeeds.
 - Store redacted, reviewable run evidence under `.jj/runs/<run-id>/`.
-- Store current SPEC/task state and redacted `.jj/` document history in `.jj/documents.sqlite3`.
+- Store current SPEC/task state and redacted `.jj/` document history in `data/documents.sqlite3`.
 - Provide a local dashboard-first `jj serve` experience for SPEC, tasks, validation, runs, risks, failures, and artifacts.
 - Apply shared redaction and workspace boundary guardrails before persistence, model handoff, CLI output, or dashboard rendering.
 - Keep validation deterministic and independent of live model output.
@@ -49,7 +49,7 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 - `jj` does not guarantee AI output correctness.
 - `jj` does not serve arbitrary workspace files through the dashboard.
 - `jj` does not treat `docs/` Markdown files as canonical runtime state.
-- `jj` does not require committing local SQLite workspace state.
+- `jj` does not commit `.jj/runs/` artifact history by default.
 
 ## 6. Product Principles
 
@@ -82,7 +82,7 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 - Relative plan paths must continue to resolve from the invocation directory, then be validated inside `--cwd`.
 - `--dry-run` must write planning artifacts and state snapshots only under `.jj/runs/<run-id>/`.
 - Full runs must append SQLite workspace task state during planning, run implementation, execute validation, then reconcile SQLite workspace SPEC only on validation success.
-- When the workspace starts clean and validation passes, `jj` should create a local commit containing validated source/doc changes while leaving `.jj/documents.sqlite3` and `.jj/runs/` local.
+- When the workspace starts clean and validation passes, `jj` should create a local commit containing validated source/doc changes plus `data/documents.sqlite3`, while leaving `.jj/runs/` local.
 - When the workspace starts dirty, `jj` should skip auto-commit and leave changes reviewable.
 
 ### 8.2 Planning And Task Selection
@@ -112,7 +112,7 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 ### 8.5 State And Artifacts
 
 - Canonical runtime state must be local and explicit:
-  - `.jj/documents.sqlite3` for current SPEC, append-only task records, and redacted document history/search metadata
+  - `data/documents.sqlite3` for current SPEC, append-only task records, and redacted document history/search metadata
   - `.jj/runs/<run-id>/`
 - Legacy `.jj/spec.json` and `.jj/tasks.json` files must be imported when present and exposed as SQLite-backed virtual JSON routes, but current runs must not write them as canonical files.
 - Run artifacts must include manifest, events, input snapshot, SPEC/TASK snapshots, git evidence, validation evidence, and command/provider summaries where applicable.
@@ -191,6 +191,6 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 
 ## 14. Open Questions
 
-- Should PRD-level product milestones be stored as Markdown only, or mirrored into `.jj/documents.sqlite3` as a first-class document type?
+- Should PRD-level product milestones be stored as Markdown only, or mirrored into `data/documents.sqlite3` as a first-class document type?
 - Should future validation support multiple configured gates while preserving `./scripts/validate.sh` as the release default?
 - Should the dashboard eventually support GitHub OAuth/device login, or keep GitHub access configured through environment tokens only?

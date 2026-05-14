@@ -54,9 +54,15 @@ func TestCaptureGitDiff(t *testing.T) {
 
 func TestCaptureUntrackedEvidenceSkipsDeletedOutsideAndInternalPaths(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o755); err != nil {
+		t.Fatalf("mkdir data: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "data", "documents.sqlite3"), []byte("sqlite state"), 0o600); err != nil {
+		t.Fatalf("write state db: %v", err)
+	}
 	evidence, err := CaptureUntrackedEvidence(context.Background(), dir, true, fakeGitRunner{
 		outputs: map[string]string{
-			"ls-files --others --exclude-standard -z": "gone.txt\x00../outside.txt\x00.jj/runs/current/input.md\x00",
+			"ls-files --others --exclude-standard -z": "gone.txt\x00../outside.txt\x00.jj/runs/current/input.md\x00data/documents.sqlite3\x00",
 		},
 	})
 	if err != nil {

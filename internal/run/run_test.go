@@ -1462,14 +1462,14 @@ func TestExecuteNonDryRunCommitsCleanGitWorkspace(t *testing.T) {
 		t.Fatalf("unexpected commit subject: %q", subject)
 	}
 	committedFiles := runGitOutput(t, dir, "show", "--name-only", "--pretty=format:", "HEAD")
-	for _, want := range []string{"fake.go"} {
+	for _, want := range []string{"fake.go", "data/documents.sqlite3"} {
 		if !strings.Contains(committedFiles, want) {
 			t.Fatalf("commit should include %s, files:\n%s", want, committedFiles)
 		}
 	}
 	for _, unwanted := range []string{".jj/spec.json", ".jj/tasks.json", ".jj/documents.sqlite3"} {
 		if strings.Contains(committedFiles, unwanted) {
-			t.Fatalf("commit should not include local SQLite state %s, files:\n%s", unwanted, committedFiles)
+			t.Fatalf("commit should not include legacy workspace state %s, files:\n%s", unwanted, committedFiles)
 		}
 	}
 	if strings.Contains(committedFiles, ".jj/runs/") {

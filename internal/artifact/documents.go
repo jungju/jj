@@ -19,14 +19,15 @@ import (
 )
 
 const (
-	DocumentsDBRel          = ".jj/documents.sqlite3"
-	legacyDocumentsDBRel    = "documents.sqlite3"
-	workspaceDocumentsRunID = "workspace"
+	DocumentsDBRel                = "data/documents.sqlite3"
+	legacyWorkspaceDocumentsDBRel = ".jj/documents.sqlite3"
+	legacyDocumentsDBRel          = "documents.sqlite3"
+	workspaceDocumentsRunID       = "workspace"
 )
 
 // InitDocumentStore prepares the workspace SQLite document mirror. File
 // artifacts remain the compatibility surface, while this database stores the
-// same redacted generated documents for structured local retention and search.
+// same redacted generated documents for structured retention and search.
 func (s Store) InitDocumentStore() error {
 	dbPath, err := s.DocumentsDBPath()
 	if err != nil {
@@ -36,6 +37,9 @@ func (s Store) InitDocumentStore() error {
 		return err
 	}
 	if err := s.withDocumentDB(func(db *sql.DB) error {
+		if err := s.migrateLegacyWorkspaceDocumentStore(db); err != nil {
+			return err
+		}
 		if err := s.migrateLegacyDocumentStores(db); err != nil {
 			return err
 		}
@@ -406,6 +410,40 @@ func (s Store) migrateLegacyDocumentStores(target *sql.DB) error {
 	return nil
 }
 
+func (s Store) migrateLegacyWorkspaceDocumentStore(target *sql.DB) error {
+	legacyPath, err := security.SafeJoinNoSymlinks(s.CWD, legacyWorkspaceDocumentsDBRel, security.PathPolicy{AllowHidden: true})
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	currentPath, err := s.DocumentsDBPath()
+	if err != nil {
+		return err
+	}
+	if filepath.Clean(legacyPath) == filepath.Clean(currentPath) {
+		return nil
+	}
+	info, err := os.Lstat(legacyPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
+		return security.ErrSymlinkPath
+	}
+	if err := migrateLegacyDocumentStore(target, legacyPath, workspaceDocumentsRunID); err != nil {
+		if isMissingSQLiteTableError(err) {
+			return nil
+		}
+		return fmt.Errorf("migrate legacy workspace document store: %w", err)
+	}
+	return nil
+}
+
 func migrateLegacyDocumentStore(target *sql.DB, legacyPath, fallbackRunID string) error {
 	ctx := context.Background()
 	legacy, err := sql.Open("sqlite", sqliteDSN(legacyPath))
@@ -447,6 +485,10 @@ func migrateLegacyDocumentStore(target *sql.DB, legacyPath, fallbackRunID string
 	return tx.Commit()
 }
 
+func isMissingSQLiteTableError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no such table")
+}
+
 func removeLegacyDocumentStoreFiles(legacyPath string) error {
 	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
 		err := os.Remove(legacyPath + suffix)
@@ -465,6 +507,8 @@ func isDocumentDBFileRel(rel string) bool {
 	base := filepath.Base(rel)
 	return rel == DocumentsDBRel ||
 		strings.HasPrefix(rel, DocumentsDBRel+"-") ||
+		rel == legacyWorkspaceDocumentsDBRel ||
+		strings.HasPrefix(rel, legacyWorkspaceDocumentsDBRel+"-") ||
 		base == legacyDocumentsDBRel ||
 		strings.HasPrefix(base, legacyDocumentsDBRel+"-")
 }

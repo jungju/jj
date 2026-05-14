@@ -233,6 +233,7 @@ func TestReleaseValidationWorkflowUsesSanitizedValidateGate(t *testing.T) {
 		`- "**/*.go"`,
 		`- "scripts/**"`,
 		`- "docs/**"`,
+		`- "data/documents.sqlite3"`,
 		`- "README.md"`,
 		`- ".jjrc"`,
 		"persist-credentials: false",

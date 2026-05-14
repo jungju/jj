@@ -4,12 +4,12 @@
 
 AI 코딩 워크플로우에서는 기획, 구현, 테스트, 평가가 서로 다른 프롬프트와 파일, 터미널 세션에 흩어지기 쉽습니다. 이러면 같은 맥락을 반복해서 설명해야 하고, 산출물을 비교하기 어렵고, 최종 코드가 원래 의도를 만족했는지도 확인하기 어렵습니다.
 
-`jj`는 이 반복 비용을 줄이기 위한 local-first CLI입니다. 사용자가 한 번 작성한 `docs/PLAN.md`를 시작점으로 삼고, 이후에는 `.jj/documents.sqlite3`에 현재 workspace의 실행 가능한 SPEC/task 상태를 유지하면서 Codex 실행, deterministic validation, 증거 기록까지 하나의 재현 가능한 흐름으로 묶습니다.
+`jj`는 이 반복 비용을 줄이기 위한 local-first CLI입니다. 사용자가 한 번 작성한 `docs/PLAN.md`를 시작점으로 삼고, 이후에는 `data/documents.sqlite3`에 현재 workspace의 실행 가능한 SPEC/task 상태를 유지하면서 Codex 실행, deterministic validation, 증거 기록까지 하나의 재현 가능한 흐름으로 묶습니다.
 
 ## 문서와 상태의 역할
 
 - `README.md`, `docs/PLAN.md`, `docs/PRD.md`, `docs/SPEC.md`, `docs/TASK.md`는 사람이 읽는 제품 경계와 개발 문서다.
-- `.jj/documents.sqlite3`는 bootstrap 이후 planning source of truth인 현재 SPEC과 run마다 append되는 workspace task proposal history를 저장한다.
+- `data/documents.sqlite3`는 bootstrap 이후 planning source of truth인 현재 SPEC과 run마다 append되는 workspace task proposal history를 저장한다.
 - `.jj/spec.json`과 `.jj/tasks.json`은 legacy import path이자 SQLite-backed virtual dashboard JSON view다.
 - `.jj/runs/<run-id>/`는 manifest, snapshots, logs, validation, summaries를 담는 local run evidence다.
 - 같은 SQLite DB는 redacted `.jj/` 문서를 모아 두는 local document history/search 저장소로도 쓰인다.

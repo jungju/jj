@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,8 @@ import (
 )
 
 const WorkspaceStateDBPath = artifact.DocumentsDBRel
+
+const legacyWorkspaceStateDBPath = ".jj/documents.sqlite3"
 
 var workspaceStateDBMu sync.Mutex
 
@@ -121,6 +124,14 @@ func loadSpecStateFromStore(cwd string) (SpecState, bool, error) {
 		ensureSpecDefaults(&state)
 		return state, ok, err
 	}
+	state, ok, err = readLegacySpecStateFromDB(cwd)
+	if err != nil || ok {
+		ensureSpecDefaults(&state)
+		if ok {
+			_ = writeSpecStateToDB(cwd, state)
+		}
+		return state, ok, err
+	}
 	ok, err = readLegacyWorkspaceJSON(cwd, DefaultSpecStatePath, &state)
 	if err != nil || !ok {
 		ensureSpecDefaults(&state)
@@ -135,6 +146,14 @@ func loadTaskStateFromStore(cwd string) (TaskState, bool, error) {
 	state, ok, err := readTaskStateFromDB(cwd)
 	if err != nil || ok {
 		ensureTaskDefaults(&state)
+		return state, ok, err
+	}
+	state, ok, err = readLegacyTaskStateFromDB(cwd)
+	if err != nil || ok {
+		ensureTaskDefaults(&state)
+		if ok {
+			_ = writeTaskStateToDB(cwd, state)
+		}
 		return state, ok, err
 	}
 	ok, err = readLegacyWorkspaceJSON(cwd, DefaultTasksStatePath, &state)
@@ -181,8 +200,16 @@ func writeWorkspaceStateDocument(cwd, rel string, value any) ([]byte, error) {
 }
 
 func readSpecStateFromDB(cwd string) (SpecState, bool, error) {
+	return readSpecStateFromDBRel(cwd, WorkspaceStateDBPath, false)
+}
+
+func readLegacySpecStateFromDB(cwd string) (SpecState, bool, error) {
+	return readSpecStateFromDBRel(cwd, legacyWorkspaceStateDBPath, false)
+}
+
+func readSpecStateFromDBRel(cwd, dbRel string, create bool) (SpecState, bool, error) {
 	var state SpecState
-	err := withWorkspaceStateDB(cwd, func(db *sql.DB) error {
+	err := withWorkspaceStateDBRel(cwd, dbRel, create, func(db *sql.DB) error {
 		var goals, nonGoals, requirements, acceptance, questions string
 		err := db.QueryRowContext(
 			context.Background(),
@@ -202,6 +229,9 @@ func readSpecStateFromDB(cwd string) (SpecState, bool, error) {
 			&state.UpdatedAt,
 		)
 		if errors.Is(err, sql.ErrNoRows) {
+			return errWorkspaceStateNotFound
+		}
+		if isMissingWorkspaceStateTableError(err) {
 			return errWorkspaceStateNotFound
 		}
 		if err != nil {
@@ -231,14 +261,25 @@ func readSpecStateFromDB(cwd string) (SpecState, bool, error) {
 }
 
 func readTaskStateFromDB(cwd string) (TaskState, bool, error) {
+	return readTaskStateFromDBRel(cwd, WorkspaceStateDBPath, false)
+}
+
+func readLegacyTaskStateFromDB(cwd string) (TaskState, bool, error) {
+	return readTaskStateFromDBRel(cwd, legacyWorkspaceStateDBPath, false)
+}
+
+func readTaskStateFromDBRel(cwd, dbRel string, create bool) (TaskState, bool, error) {
 	var state TaskState
-	err := withWorkspaceStateDB(cwd, func(db *sql.DB) error {
+	err := withWorkspaceStateDBRel(cwd, dbRel, create, func(db *sql.DB) error {
 		var active sql.NullString
 		err := db.QueryRowContext(
 			context.Background(),
 			`SELECT version, active_task_id FROM workspace_task_meta WHERE id = 1`,
 		).Scan(&state.Version, &active)
 		if errors.Is(err, sql.ErrNoRows) {
+			return errWorkspaceStateNotFound
+		}
+		if isMissingWorkspaceStateTableError(err) {
 			return errWorkspaceStateNotFound
 		}
 		if err != nil {
@@ -465,18 +506,35 @@ func writeTaskStateToDB(cwd string, state TaskState) error {
 var errWorkspaceStateNotFound = errors.New("workspace state not found")
 
 func withWorkspaceStateDB(cwd string, fn func(*sql.DB) error) error {
+	return withWorkspaceStateDBRel(cwd, WorkspaceStateDBPath, true, fn)
+}
+
+func withWorkspaceStateDBRel(cwd, dbRel string, create bool, fn func(*sql.DB) error) error {
 	if fn == nil {
 		return nil
 	}
-	dbPath, err := workspaceStateDBPath(cwd)
+	dbPath, err := workspaceStateDBPath(cwd, dbRel)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dbPath), artifact.PrivateDirMode); err != nil {
-		return err
-	}
-	if err := os.Chmod(filepath.Dir(dbPath), artifact.PrivateDirMode); err != nil {
-		return err
+	if create {
+		if err := os.MkdirAll(filepath.Dir(dbPath), artifact.PrivateDirMode); err != nil {
+			return err
+		}
+		if err := os.Chmod(filepath.Dir(dbPath), artifact.PrivateDirMode); err != nil {
+			return err
+		}
+	} else {
+		info, err := os.Lstat(dbPath)
+		if errors.Is(err, os.ErrNotExist) {
+			return errWorkspaceStateNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
+			return security.ErrSymlinkPath
+		}
 	}
 	workspaceStateDBMu.Lock()
 	defer workspaceStateDBMu.Unlock()
@@ -489,11 +547,16 @@ func withWorkspaceStateDB(cwd string, fn func(*sql.DB) error) error {
 	if _, err := db.ExecContext(context.Background(), `PRAGMA busy_timeout = 5000`); err != nil {
 		return err
 	}
-	if _, err := db.ExecContext(context.Background(), workspaceStateSchema); err != nil {
-		return err
+	if create {
+		if _, err := db.ExecContext(context.Background(), workspaceStateSchema); err != nil {
+			return err
+		}
 	}
 	if err := fn(db); err != nil {
 		return err
+	}
+	if !create {
+		return nil
 	}
 	if err := os.Chmod(dbPath, artifact.PrivateFileMode); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -501,8 +564,8 @@ func withWorkspaceStateDB(cwd string, fn func(*sql.DB) error) error {
 	return nil
 }
 
-func workspaceStateDBPath(cwd string) (string, error) {
-	return security.SafeJoinNoSymlinks(cwd, WorkspaceStateDBPath, security.PathPolicy{AllowHidden: true})
+func workspaceStateDBPath(cwd, dbRel string) (string, error) {
+	return security.SafeJoinNoSymlinks(cwd, dbRel, security.PathPolicy{AllowHidden: true})
 }
 
 func sqliteDSN(path string) string {
@@ -586,4 +649,8 @@ func nullStringFromPtr(value *string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: *value, Valid: true}
+}
+
+func isMissingWorkspaceStateTableError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no such table")
 }
