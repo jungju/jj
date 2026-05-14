@@ -33,7 +33,7 @@ func TestIndexShowsDocsAndRuns(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, body)
 	}
-	if !strings.Contains(body, "README.md") || !strings.Contains(body, "plan.md") || !strings.Contains(body, "docs/PRD.md") || !strings.Contains(body, "docs/SPEC.md") || !strings.Contains(body, "docs/TASK.md") || !strings.Contains(body, ".jj/spec.json") || !strings.Contains(body, ".jj/tasks.json") || strings.Contains(body, ".jj/eval.json") {
+	if !strings.Contains(body, "README.md") || !strings.Contains(body, "docs/PLAN.md") || !strings.Contains(body, "docs/PRD.md") || !strings.Contains(body, "docs/SPEC.md") || !strings.Contains(body, "docs/TASK.md") || !strings.Contains(body, ".jj/spec.json") || !strings.Contains(body, ".jj/tasks.json") || strings.Contains(body, ".jj/eval.json") {
 		t.Fatalf("index missing docs:\n%s", body)
 	}
 	for _, blocked := range []string{"docs/guide.md", "playground/plan.md"} {
@@ -83,7 +83,7 @@ func TestIndexShowsMissingReadiness(t *testing.T) {
 
 func TestDashboardRootPresentationPolishPreservesSectionsAndGuardedLinks(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "plan.md", "# Plan\n")
+	writeFile(t, dir, "docs/PLAN.md", "# Plan\n")
 	writeFile(t, dir, "README.md", "# README\n")
 	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n")
 	writeFile(t, dir, "docs/EVAL.md", "# Eval\n")
@@ -163,7 +163,7 @@ func TestDashboardRootPresentationPolishPreservesSectionsAndGuardedLinks(t *test
 func TestDashboardProjectDocsShortcutsPresentAndPreserveSummaries(t *testing.T) {
 	dir := t.TempDir()
 	secret := "sk-proj-projectdocs1234567890"
-	writeFile(t, dir, "plan.md", "# Plan\n\n"+secret+"\n")
+	writeFile(t, dir, "docs/PLAN.md", "# Plan\n\n"+secret+"\n")
 	writeFile(t, dir, "README.md", "# README\n\n"+secret+"\n")
 	writeFile(t, dir, "docs/PRD.md", "# PRD\n\n"+secret+"\n")
 	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n\n"+secret+"\n")
@@ -195,7 +195,7 @@ Authorization: Bearer `+secret+`
 
 	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
 	assertSubstringsInOrder(t, projectDocs, []string{
-		`href="` + docURL("plan.md") + `">plan.md</a> <span class="muted">available</span>`,
+		`href="` + docURL("docs/PLAN.md") + `">docs/PLAN.md</a> <span class="muted">available</span>`,
 		`href="` + docURL("docs/PRD.md") + `">docs/PRD.md</a> <span class="muted">available</span>`,
 		`href="` + docURL("docs/SPEC.md") + `">docs/SPEC.md</a> <span class="muted">available</span>`,
 		`href="` + docURL("docs/TASK.md") + `">docs/TASK.md</a> <span class="muted">available</span>`,
@@ -262,7 +262,7 @@ func TestDashboardProjectDocsShortcutsMissingUnavailableAndDeniedAreSafe(t *test
 	}
 	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
 	expectedProjectDocs := []string{
-		`<strong>plan.md</strong> <span class="muted">missing</span>`,
+		`<strong>docs/PLAN.md</strong> <span class="muted">missing</span>`,
 		`<strong>docs/PRD.md</strong> <span class="muted">missing</span>`,
 		`<strong>docs/SPEC.md</strong> <span class="muted">denied</span>`,
 		`<strong>docs/TASK.md</strong> <span class="muted">unavailable</span>`,
@@ -270,7 +270,7 @@ func TestDashboardProjectDocsShortcutsMissingUnavailableAndDeniedAreSafe(t *test
 		`href="` + docURL("README.md") + `">README.md</a> <span class="muted">available</span>`,
 	}
 	assertSubstringsInOrder(t, projectDocs, expectedProjectDocs)
-	for _, blockedURL := range []string{docURL("plan.md"), docURL("docs/PRD.md"), docURL("docs/SPEC.md"), docURL("docs/TASK.md"), docURL("docs/EVAL.md")} {
+	for _, blockedURL := range []string{docURL("docs/PLAN.md"), docURL("docs/PRD.md"), docURL("docs/SPEC.md"), docURL("docs/TASK.md"), docURL("docs/EVAL.md")} {
 		if strings.Contains(projectDocs, `href="`+blockedURL+`"`) {
 			t.Fatalf("project docs linked unavailable or denied shortcut %q:\n%s", blockedURL, projectDocs)
 		}
@@ -758,7 +758,7 @@ func TestLatestRunSelectionIsDeterministicForTimestampFallbacksAndTies(t *testin
 func TestDashboardRecentRunsSummaryListsLimitedGuardedRunsAndPreservesSections(t *testing.T) {
 	dir := t.TempDir()
 	secret := "sk-proj-recentruns1234567890"
-	writeFile(t, dir, "plan.md", "# Plan\n")
+	writeFile(t, dir, "docs/PLAN.md", "# Plan\n")
 	writeFile(t, dir, "README.md", "# README\n")
 	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n")
 	writeFile(t, dir, "docs/EVAL.md", "# Eval\n")
@@ -861,7 +861,7 @@ func TestDashboardRecentRunsSummaryListsLimitedGuardedRunsAndPreservesSections(t
 		}
 	}
 	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
-	for _, want := range []string{"plan.md", "docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md", "README.md"} {
+	for _, want := range []string{"docs/PLAN.md", "docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md", "README.md"} {
 		if !strings.Contains(projectDocs, want) {
 			t.Fatalf("project docs summary changed, missing %q:\n%s", want, projectDocs)
 		}
@@ -1176,7 +1176,7 @@ func TestDashboardActiveRunShowsSanitizedNonTerminalRunsAndPreservesSections(t *
 	dir := t.TempDir()
 	secret := "sk-proj-activerun1234567890"
 	t.Setenv("JJ_ACTIVE_RUN_SECRET", secret)
-	writeFile(t, dir, "plan.md", "# Plan\n")
+	writeFile(t, dir, "docs/PLAN.md", "# Plan\n")
 	writeFile(t, dir, "README.md", "# README\n")
 	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n")
 	writeFile(t, dir, "docs/EVAL.md", "# Eval\n")
@@ -1277,7 +1277,7 @@ func TestDashboardActiveRunShowsSanitizedNonTerminalRunsAndPreservesSections(t *
 		}
 	}
 	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
-	for _, want := range []string{"plan.md", "docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md", "README.md"} {
+	for _, want := range []string{"docs/PLAN.md", "docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md", "README.md"} {
 		if !strings.Contains(projectDocs, want) {
 			t.Fatalf("project docs summary changed, missing %q:\n%s", want, projectDocs)
 		}
@@ -1286,7 +1286,7 @@ func TestDashboardActiveRunShowsSanitizedNonTerminalRunsAndPreservesSections(t *
 
 func TestDashboardRootRunSummaryActionsUseGuardedLinks(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "plan.md", "# Plan\n")
+	writeFile(t, dir, "docs/PLAN.md", "# Plan\n")
 	writeFile(t, dir, "README.md", "# README\n")
 	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n")
 	writeFile(t, dir, "docs/EVAL.md", "# Eval\n")
@@ -1726,7 +1726,7 @@ func TestDashboardValidationStatusShowsSanitizedLatestCompletedRunAndPreservesSe
 	dir := t.TempDir()
 	secret := "sk-proj-validationstatus1234567890"
 	t.Setenv("JJ_VALIDATION_STATUS_SECRET", secret)
-	writeFile(t, dir, "plan.md", "# Plan\n")
+	writeFile(t, dir, "docs/PLAN.md", "# Plan\n")
 	writeFile(t, dir, "README.md", "# README\n")
 	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n")
 	writeFile(t, dir, "docs/EVAL.md", "# Eval\n")
@@ -1850,7 +1850,7 @@ func TestDashboardValidationStatusShowsSanitizedLatestCompletedRunAndPreservesSe
 		}
 	}
 	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
-	for _, want := range []string{"plan.md", "docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md", "README.md"} {
+	for _, want := range []string{"docs/PLAN.md", "docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md", "README.md"} {
 		if !strings.Contains(projectDocs, want) {
 			t.Fatalf("project docs summary changed, missing %q:\n%s", want, projectDocs)
 		}
@@ -2146,7 +2146,7 @@ func TestValidationStatusSelectionIsDeterministicForTimestampFallbacksAndTies(t 
 func TestDashboardEvaluationFindingsShowsLatestFindingsAndPreservesSections(t *testing.T) {
 	dir := t.TempDir()
 	secret := "sk-proj-evalfindings1234567890"
-	writeFile(t, dir, "plan.md", "# Plan\n")
+	writeFile(t, dir, "docs/PLAN.md", "# Plan\n")
 	writeFile(t, dir, "README.md", "# README\n")
 	writeFile(t, dir, "docs/SPEC.md", "# SPEC\n")
 	writeFile(t, dir, "docs/EVAL.md", "# Eval\n"+secret+"\n")
@@ -2231,7 +2231,7 @@ func TestDashboardEvaluationFindingsShowsLatestFindingsAndPreservesSections(t *t
 		}
 	}
 	projectDocs := htmlSection(body, "Project Docs", "Workspace Readiness")
-	for _, want := range []string{"plan.md", "docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md", "README.md"} {
+	for _, want := range []string{"docs/PLAN.md", "docs/SPEC.md", "docs/TASK.md", "docs/EVAL.md", "README.md"} {
 		if !strings.Contains(projectDocs, want) {
 			t.Fatalf("project docs summary changed, missing %q:\n%s", want, projectDocs)
 		}
@@ -3695,7 +3695,7 @@ func TestServeExposesRunMutationRoutes(t *testing.T) {
 			t.Fatalf("/run/new missing %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, `name="plan_path" value="plan.md" required`) {
+	if strings.Contains(body, `name="plan_path" value="docs/PLAN.md" required`) {
 		t.Fatalf("/run/new should not require plan_path when prompt input is available:\n%s", body)
 	}
 }
@@ -3805,10 +3805,10 @@ func TestIndexShowsWebRunWhenPlanMissing(t *testing.T) {
 		t.Fatalf("status = %d body=%s", rec.Code, body)
 	}
 	if !strings.Contains(body, `href="/run/new">Start Web Run</a>`) {
-		t.Fatalf("dashboard should expose Web Run without plan.md:\n%s", body)
+		t.Fatalf("dashboard should expose Web Run without docs/PLAN.md:\n%s", body)
 	}
 	if strings.Contains(body, "Open Plan") {
-		t.Fatalf("dashboard should not show Open Plan when plan.md is missing:\n%s", body)
+		t.Fatalf("dashboard should not show Open Plan when docs/PLAN.md is missing:\n%s", body)
 	}
 }
 
@@ -3842,7 +3842,7 @@ func TestProjectDocAllowlistServesOnlyDocumentedDocs(t *testing.T) {
 		want   string
 	}{
 		{"/doc?path=README.md", "<h1>Root</h1>"},
-		{"/doc?path=plan.md", "<h1>Product Plan</h1>"},
+		{"/doc?path=docs/PLAN.md", "<h1>Product Plan</h1>"},
 		{"/doc?path=docs/PRD.md", "<h1>PRD Doc</h1>"},
 		{"/doc?path=docs/SPEC.md", "<h1>Spec Doc</h1>"},
 		{"/doc?path=docs/TASK.md", "<h1>Task Doc</h1>"},
@@ -7349,7 +7349,7 @@ func writeFakeRunFile(runDir, rel, data string) error {
 }
 
 func runStartForm(runID string, dryRun, confirm, autoContinue bool, maxTurns int) string {
-	values := "plan_path=plan.md&cwd=&run_id=" + runID + "&planning_agents=1"
+	values := "plan_path=docs/PLAN.md&cwd=&run_id=" + runID + "&planning_agents=1"
 	if dryRun {
 		values += "&dry_run=true"
 	}
@@ -7414,7 +7414,7 @@ func newTestWorkspace(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	writeFile(t, dir, "README.md", "# Root\n")
-	writeFile(t, dir, "plan.md", "# Product Plan\n")
+	writeFile(t, dir, "docs/PLAN.md", "# Product Plan\n")
 	writeFile(t, dir, "docs/PRD.md", "# PRD Doc\n")
 	writeFile(t, dir, "docs/SPEC.md", "# Spec Doc\n")
 	writeFile(t, dir, "docs/TASK.md", "# Task Doc\n")

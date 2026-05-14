@@ -1,10 +1,10 @@
 # jj Product Requirements Document
 
-Last updated: 2026-05-10
+Last updated: 2026-05-14
 
 ## 1. Summary
 
-`jj` is a local, document-first AI coding workflow CLI. It turns a product seed such as `plan.md` into canonical JSON product state, implementation-ready tasks, Codex execution, deterministic validation, and auditable run artifacts.
+`jj` is a local, document-first AI coding workflow CLI. It turns a product seed such as `docs/PLAN.md` into canonical JSON product state, implementation-ready tasks, Codex execution, deterministic validation, and auditable run artifacts.
 
 The product promise is simple: a developer should be able to state intent once, let `jj` plan and execute one bounded task, then inspect exactly what happened through local files and a dashboard without exposing secrets or unsafe workspace paths.
 
@@ -31,7 +31,7 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 
 - Provide a single CLI flow from product intent to planned task, implementation, validation, and evidence capture.
 - Treat `.jj/spec.json`, `.jj/tasks.json`, and `.jj/runs/<run-id>/` as canonical runtime state.
-- Keep `plan.md` as the initial product seed and later background vision once `.jj/spec.json` exists.
+- Keep `docs/PLAN.md` as the initial product seed and later background vision once `.jj/spec.json` exists.
 - Select one bounded runnable task per full run and preserve append-only task history.
 - Update `.jj/spec.json` only after validation succeeds.
 - Store redacted, reviewable run evidence under `.jj/runs/<run-id>/`.
@@ -62,11 +62,11 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 
 ## 7. Core Workflow
 
-1. User writes or updates `plan.md` with product intent.
-2. User runs `jj run plan.md --dry-run` to preview planning artifacts without mutating workspace state.
-3. User runs `jj run plan.md` for a full turn.
+1. User writes or updates `docs/PLAN.md` with product intent.
+2. User runs `jj run docs/PLAN.md --dry-run` to preview planning artifacts without mutating workspace state.
+3. User runs `jj run docs/PLAN.md` for a full turn.
 4. `jj` resolves the workspace, validates the plan path, redacts inputs, and captures baseline git evidence.
-5. Planner reads current `.jj/spec.json` when present, task history, recent run evidence, next-turn intent, and `plan.md` background.
+5. Planner reads current `.jj/spec.json` when present, task history, recent run evidence, next-turn intent, and `docs/PLAN.md` background.
 6. Planner appends a fresh task batch to `.jj/tasks.json`.
 7. Full run selects the first newly proposed runnable task and invokes the implementation provider, Codex CLI by default.
 8. `jj` captures Codex evidence, git evidence, validation results, events, and manifest metadata under `.jj/runs/<run-id>/`.
@@ -78,7 +78,7 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 
 ### 8.1 CLI Run
 
-- `jj run <plan.md>` must read a non-empty Markdown plan inside the resolved workspace boundary.
+- `jj run <plan-file.md>` must read a non-empty Markdown plan inside the resolved workspace boundary.
 - Relative plan paths must continue to resolve from the invocation directory, then be validated inside `--cwd`.
 - `--dry-run` must write planning artifacts and state snapshots only under `.jj/runs/<run-id>/`.
 - Full runs must append `.jj/tasks.json` during planning, run implementation, execute validation, then reconcile `.jj/spec.json` only on validation success.
@@ -155,8 +155,8 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 
 - A first-time user should understand the local workflow from `README.md` and run:
   - `go build -o jj ./cmd/jj`
-  - `./jj run plan.md --dry-run`
-  - `./jj run plan.md`
+  - `./jj run docs/PLAN.md --dry-run`
+  - `./jj run docs/PLAN.md`
   - `./jj serve --cwd .`
 - CLI summaries should make the next action clear after each run.
 - Dashboard root should make current project state, development flow, GitHub token status, latest run, validation status, and recent failures easy to scan.

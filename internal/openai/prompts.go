@@ -21,7 +21,7 @@ Agent focus: %s
 Planning context:
 %s
 
-When a current .jj/spec.json state is present, treat it as the source of truth. Treat plan.md as product vision/background only. Do not propose tasks already completed unless fixing a regression.
+When a current .jj/spec.json state is present, treat it as the source of truth. Treat docs/PLAN.md as product vision/background only. Do not propose tasks already completed unless fixing a regression.
 
 Return a concrete summary, spec_markdown, task_markdown, risks, assumptions, acceptance_criteria, and test_plan. The spec/task draft fields may contain compact JSON-oriented content rather than Markdown; keep the draft implementation-ready.`, handoffString(req.Agent.Name), handoffString(req.Agent.Focus), taskProposalPromptBlock(req.TaskProposalMode, req.ResolvedTaskProposalMode, req.TaskProposalInstruction), handoffString(req.Plan))
 }
@@ -73,7 +73,7 @@ Return the "task" field as a JSON string containing only the next proposed task 
 
 This task JSON is append-only proposal input, not a full replacement for .jj/tasks.json. Do not include existing tasks from context. jj will assign fresh task IDs, append every proposed task to existing history, and select the first proposed task for the current full run.
 
-When a current .jj/spec.json state is present in the planning context, it is the source of truth. plan.md is product vision/background only. Do not propose tasks already completed unless fixing a regression.
+When a current .jj/spec.json state is present in the planning context, it is the source of truth. docs/PLAN.md is product vision/background only. Do not propose tasks already completed unless fixing a regression.
 
 Use task statuses queued, active, in_progress, done, blocked, failed, skipped, or superseded. The first proposed task must be small enough for one implementation turn and must include mode metadata. Existing terminal tasks from continuation context are history: do not reset done, failed, skipped, or superseded tasks back to queued/in_progress, and do not reuse their task IDs. Propose the next subplan/task after completed work. Merge important acceptance criteria, remove duplicates, and put unresolved ambiguity under assumptions, risks, or open questions.`)
 	return b.String()

@@ -30,6 +30,8 @@ const DefaultAddr = DefaultHost + ":7331"
 
 const displayWorkspace = "[workspace]"
 
+const workspacePlanMarkdownPath = "docs/PLAN.md"
+
 const workspaceEvalMarkdownPath = "docs/EVAL.md"
 
 const workspacePRDMarkdownPath = "docs/PRD.md"
@@ -42,7 +44,7 @@ const dashboardEvaluationFindingsLimit = 3
 
 var allowedProjectDocPaths = []string{
 	"README.md",
-	"plan.md",
+	workspacePlanMarkdownPath,
 	workspacePRDMarkdownPath,
 	"docs/SPEC.md",
 	"docs/TASK.md",
@@ -51,7 +53,7 @@ var allowedProjectDocPaths = []string{
 }
 
 var projectDocShortcutSpecs = []projectDocShortcutSpec{
-	{Label: "plan.md", Path: "plan.md"},
+	{Label: "docs/PLAN.md", Path: workspacePlanMarkdownPath},
 	{Label: "docs/PRD.md", Path: workspacePRDMarkdownPath},
 	{Label: "docs/SPEC.md", Path: "docs/SPEC.md"},
 	{Label: "docs/TASK.md", Path: workspaceTaskMarkdownPath},
@@ -1283,7 +1285,7 @@ func developmentFlowSteps() []flowStep {
 		{
 			Number:    "1",
 			Title:     "Product intent",
-			Body:      "Start from plan.md, docs/PRD.md, docs/SPEC.md, and docs/TASK.md. Once .jj/spec.json exists, that JSON SPEC is the planning source of truth.",
+			Body:      "Start from docs/PLAN.md, docs/PRD.md, docs/SPEC.md, and docs/TASK.md. Once .jj/spec.json exists, that JSON SPEC is the planning source of truth.",
 			URL:       docURL(workspacePRDMarkdownPath),
 			URLLabel:  "Open PRD",
 			Secondary: "PRD and SPEC explain what the project is; TASK describes the work queue.",
@@ -2777,7 +2779,7 @@ func (s *Server) validateAutoTurnWorkspace(ctx context.Context, allowNoGit bool)
 
 func (s *Server) workspaceReadiness() []readinessItem {
 	items := []readinessItem{
-		{Label: "Plan", Path: "plan.md"},
+		{Label: "Plan", Path: workspacePlanMarkdownPath},
 		{Label: "README", Path: "README.md"},
 		{Label: "PRD", Path: workspacePRDMarkdownPath},
 		{Label: "SPEC", Path: runpkg.DefaultSpecStatePath},
@@ -7797,7 +7799,7 @@ func cleanAllowedProjectPath(rel string) (string, error) {
 
 func isProjectDocPath(rel string) bool {
 	switch rel {
-	case "README.md", "plan.md", workspacePRDMarkdownPath, "docs/SPEC.md", "docs/TASK.md", workspaceEvalMarkdownPath, runpkg.DefaultSpecStatePath, runpkg.DefaultTasksStatePath:
+	case "README.md", workspacePlanMarkdownPath, workspacePRDMarkdownPath, "docs/SPEC.md", "docs/TASK.md", workspaceEvalMarkdownPath, runpkg.DefaultSpecStatePath, runpkg.DefaultTasksStatePath:
 		return true
 	default:
 		return false
@@ -8271,7 +8273,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
           <textarea name="plan_prompt" placeholder="Paste a one-off jj plan prompt here.">{{.RunForm.PlanPrompt}}</textarea>
         </label>
         <label>plan path
-          <input name="plan_path" value="{{.RunForm.PlanPath}}" placeholder="plan.md">
+          <input name="plan_path" value="{{.RunForm.PlanPath}}" placeholder="docs/PLAN.md">
         </label>
         <label>cwd
           <input name="cwd" value="{{.RunForm.CWD}}" placeholder="[workspace]">

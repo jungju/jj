@@ -125,7 +125,7 @@ func newRunCommand(exec executor, stdout, stderr io.Writer) *cobra.Command {
 	maxTurns := 10
 
 	cmd := &cobra.Command{
-		Use:   "run <plan.md>",
+		Use:   "run <plan-file.md>",
 		Short: "Create jj JSON state, run Codex, and validate the result",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

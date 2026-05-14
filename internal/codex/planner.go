@@ -189,7 +189,7 @@ Agent focus: %s
 Planning context:
 %s
 
-When a current .jj/spec.json state is present, treat it as the source of truth. Treat plan.md as product vision/background only. Do not propose tasks already completed unless fixing a regression.
+When a current .jj/spec.json state is present, treat it as the source of truth. Treat docs/PLAN.md as product vision/background only. Do not propose tasks already completed unless fixing a regression.
 
 Produce an implementation-ready planning draft.`, handoffString(req.Agent.Name), handoffString(req.Agent.Focus), taskProposalPromptBlock(req.TaskProposalMode, req.ResolvedTaskProposalMode, req.TaskProposalInstruction), handoffString(req.Plan))
 }
@@ -216,7 +216,7 @@ Task proposal context:
 
 The spec JSON must include version, title, summary, goals, non_goals, requirements, acceptance_criteria, open_questions, created_at, and updated_at.
 
-When a current .jj/spec.json state is present in the planning context, it is the source of truth. plan.md is product vision/background only. Do not propose tasks already completed unless fixing a regression.
+When a current .jj/spec.json state is present in the planning context, it is the source of truth. docs/PLAN.md is product vision/background only. Do not propose tasks already completed unless fixing a regression.
 
 The task JSON must include version, active_task_id, and tasks. Treat this as append-only proposal input, not a full replacement for .jj/tasks.json or existing history. Do not include existing tasks from context. jj will assign fresh task IDs, append every proposed task, and select the first proposed task for the current full run. Each task must include id, title, mode, priority, status, reason, acceptance_criteria, and validation_command. Supported statuses are queued, active, in_progress, done, blocked, failed, skipped, and superseded. Do not reset done, failed, skipped, or superseded tasks from continuation context back to queued/in_progress, and do not reuse their task IDs. Propose the next subplan/task after completed work. Auto or balanced task proposal mode must resolve to a concrete task category such as feature, security, hardening, quality, bugfix, or docs.
 

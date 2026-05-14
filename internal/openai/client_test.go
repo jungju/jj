@@ -61,7 +61,7 @@ func TestMergePromptRequestsCanonicalTaskQueue(t *testing.T) {
 		"Do not include existing tasks from context.",
 		"jj will assign fresh task IDs, append every proposed task to existing history",
 		"current .jj/spec.json state is present in the planning context, it is the source of truth",
-		"plan.md is product vision/background only",
+		"docs/PLAN.md is product vision/background only",
 		"Use task statuses queued, active, in_progress, done, blocked, failed, skipped, or superseded.",
 	} {
 		if !strings.Contains(prompt, want) {

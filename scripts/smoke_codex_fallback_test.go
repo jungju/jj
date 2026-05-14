@@ -419,7 +419,7 @@ func codexAutopilotCommandWithMaxTurns(t *testing.T, repoRoot, baseRunID, fakeKi
 	if err := os.WriteFile(fakeGo, []byte(fakeGoScript()), 0o755); err != nil {
 		t.Fatalf("write fake go: %v", err)
 	}
-	cmd := exec.Command("bash", filepath.Join(repoRoot, "scripts", "codex-autopilot.sh"), "plan.md")
+	cmd := exec.Command("bash", filepath.Join(repoRoot, "scripts", "codex-autopilot.sh"), "docs/PLAN.md")
 	cmd.Dir = repoRoot
 	env := append(os.Environ(),
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),

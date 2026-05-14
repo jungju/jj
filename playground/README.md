@@ -4,7 +4,7 @@
 
 실제 OpenAI/Codex 호출은 아래 명령을 직접 실행할 때만 발생합니다. `OPENAI_API_KEY`가 있으면 OpenAI API로 기획/평가하고, 없으면 Codex CLI가 기획/병합도 수행합니다.
 
-루트 `plan.md`는 jj 자체의 제품 기획서입니다. 이 폴더의 `playground/plan.md`는 샘플 Go workspace에 작은 변경을 적용해보는 실행 예제입니다.
+루트 제품 기획서는 `docs/PLAN.md`입니다. 이 폴더의 `playground/plan.md`는 샘플 Go workspace에 작은 변경을 적용해보는 실행 예제입니다.
 
 ## 준비
 

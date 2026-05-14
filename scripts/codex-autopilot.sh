@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
 	cat >&2 <<'USAGE'
-Usage: scripts/codex-autopilot.sh [plan.md]
+Usage: scripts/codex-autopilot.sh [docs/PLAN.md]
 
 Runs one jj turn at a time through the latest local source:
   OPENAI_API_KEY= go run ./cmd/jj run <plan> --run-id <turn-id>
@@ -22,9 +22,9 @@ a bounded debugging run.
 
 Examples:
   scripts/codex-autopilot.sh
-  MAX_TURNS=5 TASK_PROPOSAL_MODE=security scripts/codex-autopilot.sh plan.md
+  MAX_TURNS=5 TASK_PROPOSAL_MODE=security scripts/codex-autopilot.sh docs/PLAN.md
   printf 'feature\n' > .jj/task-proposal-mode
-  JJ_RUN_ARGS="--allow-no-git" scripts/codex-autopilot.sh plan.md
+  JJ_RUN_ARGS="--allow-no-git" scripts/codex-autopilot.sh docs/PLAN.md
 USAGE
 }
 
@@ -61,7 +61,7 @@ if [ -n "$max_turns" ]; then
 fi
 
 if [ "$#" -eq 0 ]; then
-	plan="${repo_root}/plan.md"
+	plan="${repo_root}/docs/PLAN.md"
 else
 	plan="$1"
 	if [[ "$plan" != /* ]]; then

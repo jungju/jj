@@ -356,7 +356,7 @@ func TestBuildPlanningContextUsesExistingSpecBeforePlanSeed(t *testing.T) {
 	context := buildPlanningContext("Old plan seed.", spec, TaskState{Version: 1}, "Recent validation passed.", "")
 
 	specIndex := strings.Index(context, "# Current SPEC State (source of truth)")
-	planIndex := strings.Index(context, "# plan.md Seed (background product vision only)")
+	planIndex := strings.Index(context, "# docs/PLAN.md Seed (background product vision only)")
 	if specIndex < 0 || planIndex < 0 || specIndex > planIndex {
 		t.Fatalf("SPEC should be labeled source of truth before plan seed:\n%s", context)
 	}
@@ -370,7 +370,7 @@ func TestBuildPlanningContextBootstrapsFromPlanWithoutSpec(t *testing.T) {
 
 	for _, want := range []string{
 		"No existing .jj/spec.json was found",
-		"# plan.md Seed (initial source of truth)",
+		"# docs/PLAN.md Seed (initial source of truth)",
 		"Initial product vision.",
 	} {
 		if !strings.Contains(context, want) {

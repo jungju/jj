@@ -164,7 +164,7 @@ func buildPlanningContext(plan string, spec SpecState, tasks TaskState, continua
 		b.WriteString("\n\n")
 	} else {
 		b.WriteString("# Current SPEC State\n\n")
-		b.WriteString("No existing .jj/spec.json was found. Bootstrap the first SPEC from the plan.md seed.\n\n")
+		b.WriteString("No existing .jj/spec.json was found. Bootstrap the first SPEC from the docs/PLAN.md seed.\n\n")
 	}
 	b.WriteString("# Current Task State Summary\n\n")
 	b.WriteString(taskStateSummary(tasks, true))
@@ -175,9 +175,9 @@ func buildPlanningContext(plan string, spec SpecState, tasks TaskState, continua
 		b.WriteString("\n\n")
 	}
 	if specHasContent(spec) {
-		b.WriteString("# plan.md Seed (background product vision only)\n\n")
+		b.WriteString("# docs/PLAN.md Seed (background product vision only)\n\n")
 	} else {
-		b.WriteString("# plan.md Seed (initial source of truth)\n\n")
+		b.WriteString("# docs/PLAN.md Seed (initial source of truth)\n\n")
 	}
 	b.WriteString(truncateString(sanitizeHandoffText(plan), 16000))
 	b.WriteString("\n")
@@ -209,7 +209,7 @@ func buildTaskProposalEvidence(spec SpecState, tasks TaskState, continuation str
 			}
 		}
 	} else {
-		b.WriteString("No current SPEC exists; bootstrap from plan.md seed.\n")
+		b.WriteString("No current SPEC exists; bootstrap from docs/PLAN.md seed.\n")
 	}
 	b.WriteString("\nNon-terminal task state:\n")
 	for _, task := range tasks.Tasks {
