@@ -403,7 +403,7 @@ func phaseFromLog(line string) string {
 		return "merge"
 	case strings.Contains(lower, "dry run complete"):
 		return "dry_run_complete"
-	case strings.Contains(lower, "wrote .jj/spec.json") || strings.Contains(lower, "wrote .jj/tasks.json"):
+	case strings.Contains(lower, "wrote sqlite workspace") || strings.Contains(lower, "wrote .jj/spec.json") || strings.Contains(lower, "wrote .jj/tasks.json"):
 		return "write_outputs"
 	case strings.Contains(lower, "running codex exec"):
 		return "codex"

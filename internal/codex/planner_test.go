@@ -94,17 +94,17 @@ func TestMergePromptRequestsCanonicalTaskQueue(t *testing.T) {
 		}},
 	})
 	for _, want := range []string{
-		`.jj/spec.json`,
-		`.jj/tasks.json`,
+		`SQLite workspace SPEC`,
+		`SQLite task history`,
 		`\"version\":1`,
 		`\"active_task_id\":null`,
 		`\"mode\":\"feature\"`,
 		`\"status\":\"queued\"`,
 		`\"validation_command\":\"./scripts/validate.sh\"`,
-		"append-only proposal input, not a full replacement for .jj/tasks.json",
+		"append-only proposal input, not a full replacement for existing SQLite task history",
 		"Do not include existing tasks from context.",
 		"jj will assign fresh task IDs, append every proposed task",
-		"current .jj/spec.json state is present in the planning context, it is the source of truth",
+		"current SQLite workspace SPEC state is present in the planning context, it is the source of truth",
 		"docs/PLAN.md is product vision/background only",
 		"Supported statuses are queued, active, in_progress, done, blocked, failed, skipped, and superseded.",
 	} {
@@ -129,7 +129,7 @@ func TestReconcileSpecPromptRequestsResultBasedSchema(t *testing.T) {
 
 	for _, want := range []string{
 		`"spec": "{\"version\":1`,
-		"Preserve the existing .jj/spec.json schema; do not add top-level fields.",
+		"Preserve the existing SPEC JSON compatibility schema; do not add top-level fields.",
 		"The previous SPEC is the source of truth.",
 		"Incorporate only behavior supported by the selected task, Codex summary, git diff summary, and passed validation evidence.",
 		"Validation summary:",

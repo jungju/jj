@@ -935,7 +935,7 @@ func Execute(ctx context.Context, cfg Config) (*Result, error) {
 	manifest.Workspace.TaskWritten = true
 
 	currentStage = StatusImplementing
-	fmt.Fprintf(cfg.Stdout, "jj: wrote %s and planned %s\n", taskRel, specRel)
+	fmt.Fprintf(cfg.Stdout, "jj: wrote SQLite workspace task state and planned SQLite SPEC state\n")
 	writeManifest(StatusImplementing, false)
 
 	runner := cfg.CodexRunner

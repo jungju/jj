@@ -4,7 +4,7 @@ Last updated: 2026-05-14
 
 ## 1. Summary
 
-`jj` is a local, document-first AI coding workflow CLI. It turns a product seed such as `docs/PLAN.md` into canonical JSON product state, implementation-ready tasks, Codex execution, deterministic validation, and auditable run artifacts.
+`jj` is a local, document-first AI coding workflow CLI. It turns a product seed such as `docs/PLAN.md` into canonical local SQLite product state, implementation-ready tasks, Codex execution, deterministic validation, and auditable run artifacts.
 
 The product promise is simple: a developer should be able to state intent once, let `jj` plan and execute one bounded task, then inspect exactly what happened through local files and a dashboard without exposing secrets or unsafe workspace paths.
 
@@ -30,12 +30,12 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 ## 4. Goals
 
 - Provide a single CLI flow from product intent to planned task, implementation, validation, and evidence capture.
-- Treat `.jj/spec.json`, `.jj/tasks.json`, and `.jj/runs/<run-id>/` as canonical runtime state.
-- Keep `docs/PLAN.md` as the initial product seed and later background vision once `.jj/spec.json` exists.
+- Treat `.jj/documents.sqlite3` and `.jj/runs/<run-id>/` as local runtime state, with `.jj/spec.json`/`.jj/tasks.json` kept as legacy import and virtual JSON view paths.
+- Keep `docs/PLAN.md` as the initial product seed and later background vision once SQLite workspace SPEC exists.
 - Select one bounded runnable task per full run and preserve append-only task history.
-- Update `.jj/spec.json` only after validation succeeds.
+- Update SQLite workspace SPEC only after validation succeeds.
 - Store redacted, reviewable run evidence under `.jj/runs/<run-id>/`.
-- Mirror redacted `.jj/` documents into `.jj/documents.sqlite3` for local document history without replacing the canonical JSON state files.
+- Store current SPEC/task state and redacted `.jj/` document history in `.jj/documents.sqlite3`.
 - Provide a local dashboard-first `jj serve` experience for SPEC, tasks, validation, runs, risks, failures, and artifacts.
 - Apply shared redaction and workspace boundary guardrails before persistence, model handoff, CLI output, or dashboard rendering.
 - Keep validation deterministic and independent of live model output.
@@ -49,7 +49,7 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 - `jj` does not guarantee AI output correctness.
 - `jj` does not serve arbitrary workspace files through the dashboard.
 - `jj` does not treat `docs/` Markdown files as canonical runtime state.
-- `jj` does not use `.jj/documents.sqlite3` as the planning source of truth.
+- `jj` does not require committing local SQLite workspace state.
 
 ## 6. Product Principles
 
@@ -66,12 +66,12 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 2. User runs `jj run docs/PLAN.md --dry-run` to preview planning artifacts without mutating workspace state.
 3. User runs `jj run docs/PLAN.md` for a full turn.
 4. `jj` resolves the workspace, validates the plan path, redacts inputs, and captures baseline git evidence.
-5. Planner reads current `.jj/spec.json` when present, task history, recent run evidence, next-turn intent, and `docs/PLAN.md` background.
-6. Planner appends a fresh task batch to `.jj/tasks.json`.
+5. Planner reads current SQLite workspace SPEC when present, task history, recent run evidence, next-turn intent, and `docs/PLAN.md` background.
+6. Planner appends a fresh task batch to SQLite workspace task state.
 7. Full run selects the first newly proposed runnable task and invokes the implementation provider, Codex CLI by default.
 8. `jj` captures Codex evidence, git evidence, validation results, events, and manifest metadata under `.jj/runs/<run-id>/`.
-9. If validation passes, `jj` marks the selected task done and reconciles `.jj/spec.json`.
-10. If validation fails, is skipped, or is missing, prior `.jj/spec.json` remains unchanged.
+9. If validation passes, `jj` marks the selected task done and reconciles SQLite workspace SPEC.
+10. If validation fails, is skipped, or is missing, prior SQLite workspace SPEC remains unchanged.
 11. User opens `jj serve --cwd .` to inspect current state, recent runs, validation status, risks, failures, and guarded artifacts.
 
 ## 8. Functional Requirements
@@ -81,15 +81,15 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 - `jj run <plan-file.md>` must read a non-empty Markdown plan inside the resolved workspace boundary.
 - Relative plan paths must continue to resolve from the invocation directory, then be validated inside `--cwd`.
 - `--dry-run` must write planning artifacts and state snapshots only under `.jj/runs/<run-id>/`.
-- Full runs must append `.jj/tasks.json` during planning, run implementation, execute validation, then reconcile `.jj/spec.json` only on validation success.
-- When the workspace starts clean and validation passes, `jj` should create a local commit containing source changes plus `.jj/spec.json` and `.jj/tasks.json`.
+- Full runs must append SQLite workspace task state during planning, run implementation, execute validation, then reconcile SQLite workspace SPEC only on validation success.
+- When the workspace starts clean and validation passes, `jj` should create a local commit containing validated source/doc changes while leaving `.jj/documents.sqlite3` and `.jj/runs/` local.
 - When the workspace starts dirty, `jj` should skip auto-commit and leave changes reviewable.
 
 ### 8.2 Planning And Task Selection
 
 - Planner input must prioritize `.jj/next-intent.md` when it is non-empty.
-- When `.jj/spec.json` exists, it must be the planning source of truth.
-- `.jj/tasks.json` must remain append-only task proposal history.
+- When SQLite workspace SPEC exists, it must be the planning source of truth.
+- SQLite task state must remain append-only task proposal history.
 - Each run must append new task IDs rather than replacing prior task records.
 - Full runs must select one newly proposed runnable task.
 - Previous `active` or `in_progress` tasks must return to `queued` when a new full-run task is selected.
@@ -111,12 +111,11 @@ AI-assisted coding sessions often scatter context across prompts, terminal outpu
 
 ### 8.5 State And Artifacts
 
-- Canonical runtime state must be JSON-only:
-  - `.jj/spec.json`
-  - `.jj/tasks.json`
+- Canonical runtime state must be local and explicit:
+  - `.jj/documents.sqlite3` for current SPEC, append-only task records, and redacted document history/search metadata
   - `.jj/runs/<run-id>/`
+- Legacy `.jj/spec.json` and `.jj/tasks.json` files must be imported when present and exposed as SQLite-backed virtual JSON routes, but current runs must not write them as canonical files.
 - Run artifacts must include manifest, events, input snapshot, SPEC/TASK snapshots, git evidence, validation evidence, and command/provider summaries where applicable.
-- `.jj/documents.sqlite3` must mirror redacted `.jj/` documents for local document history, but it must remain a derived local mirror rather than the authoritative workspace state.
 - Raw `.jj/runs/<run-id>/` artifacts must remain local and uncommitted by default.
 
 ### 8.6 Dashboard

@@ -131,7 +131,7 @@ func (m TaskProposalMode) PromptInstruction() string {
 	case TaskProposalModeBugfix:
 		return "Propose the next task that fixes the most important known failure, regression, broken test, or blocker. Use evidence from validation results, test logs, git evidence, manifest, event log, dashboard errors, and provider failures. Do not propose new features until the blocker is resolved."
 	case TaskProposalModeDocs:
-		return "Propose the next task that improves alignment between documentation, JSON state, and actual behavior. Prioritize README alignment, .jj/spec.json alignment, .jj/tasks.json cleanup, canonical JSON templates, provider model documentation, configuration documentation, and acceptance criteria updates."
+		return "Propose the next task that improves alignment between documentation, SQLite workspace state, and actual behavior. Prioritize README alignment, SPEC state alignment, task state cleanup, compatibility JSON templates, provider model documentation, configuration documentation, and acceptance criteria updates."
 	default:
 		return ""
 	}

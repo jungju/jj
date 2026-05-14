@@ -91,14 +91,14 @@ func TestSecurityRegressionDryRunAndFullRunRedactPersistedSurfaces(t *testing.T)
 			assertTreeContains(t, result.RunDir, security.RedactionMarker)
 
 			for _, rel := range []string{DefaultSpecStatePath, DefaultTasksStatePath} {
-				path := filepath.Join(dir, filepath.FromSlash(rel))
-				if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
+				data, available, stateErr := ReadWorkspaceStateDocument(dir, rel)
+				if stateErr != nil || !available {
 					if tc.dryRun {
 						continue
 					}
 					t.Fatalf("expected full-run workspace state %s to exist", rel)
 				}
-				assertFileCleanOfSecurityLeaks(t, path, forbidden)
+				assertBytesCleanOfSecurityLeaks(t, rel, data, forbidden)
 			}
 
 			manifest := readManifest(t, filepath.Join(result.RunDir, "manifest.json"))
@@ -970,10 +970,15 @@ func assertFileCleanOfSecurityLeaks(t *testing.T, path string, forbidden []strin
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
+	assertBytesCleanOfSecurityLeaks(t, path, data, forbidden)
+}
+
+func assertBytesCleanOfSecurityLeaks(t *testing.T, label string, data []byte, forbidden []string) {
+	t.Helper()
 	text := string(data)
 	for _, needle := range forbidden {
 		if strings.Contains(text, needle) {
-			t.Fatalf("%s leaked forbidden material %q:\n%s", path, needle, text)
+			t.Fatalf("%s leaked forbidden material %q:\n%s", label, needle, text)
 		}
 	}
 }

@@ -592,13 +592,13 @@ func TestExecuteDryRunRecordsAlternateDocumentPathsWithoutWorkspaceWrites(t *tes
 	}
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "dry-run-alt-docs", "manifest.json"))
 	if manifest.Config.SpecPath != ".jj/spec.json" || manifest.Config.TaskPath != ".jj/tasks.json" {
-		t.Fatalf("expected canonical JSON paths in manifest config, got %#v", manifest.Config)
+		t.Fatalf("expected compatibility JSON paths in manifest config, got %#v", manifest.Config)
 	}
 	if manifest.Workspace.SpecPath != ".jj/spec.json" || manifest.Workspace.TaskPath != ".jj/tasks.json" {
-		t.Fatalf("expected canonical JSON workspace paths in manifest, got %#v", manifest.Workspace)
+		t.Fatalf("expected compatibility JSON workspace paths in manifest, got %#v", manifest.Workspace)
 	}
 	if manifest.Workspace.SpecWritten || manifest.Workspace.TaskWritten {
-		t.Fatalf("dry-run should not write workspace JSON state, got %#v", manifest.Workspace)
+		t.Fatalf("dry-run should not write workspace state, got %#v", manifest.Workspace)
 	}
 	assertNoFile(t, filepath.Join(dir, "docs", "ALT_SPEC.md"))
 	assertNoFile(t, filepath.Join(dir, "docs", "ALT_TASK.md"))
@@ -816,7 +816,7 @@ func TestExecuteEndToEndWithFakes(t *testing.T) {
 	}
 	taskData := readFile(t, filepath.Join(dir, ".jj", "tasks.json"))
 	if !strings.Contains(taskData, `"status": "done"`) || !strings.Contains(taskData, `"mode": "feature"`) {
-		t.Fatalf("workspace task should use canonical JSON state:\n%s", taskData)
+		t.Fatalf("workspace task should use SQLite-backed compatibility state:\n%s", taskData)
 	}
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "full", "manifest.json"))
 	if manifest.SchemaVersion != "1" || manifest.Status != StatusCompleted || manifest.Validation.Status != validationStatusPassed {
@@ -1462,9 +1462,14 @@ func TestExecuteNonDryRunCommitsCleanGitWorkspace(t *testing.T) {
 		t.Fatalf("unexpected commit subject: %q", subject)
 	}
 	committedFiles := runGitOutput(t, dir, "show", "--name-only", "--pretty=format:", "HEAD")
-	for _, want := range []string{"fake.go", ".jj/spec.json", ".jj/tasks.json"} {
+	for _, want := range []string{"fake.go"} {
 		if !strings.Contains(committedFiles, want) {
 			t.Fatalf("commit should include %s, files:\n%s", want, committedFiles)
+		}
+	}
+	for _, unwanted := range []string{".jj/spec.json", ".jj/tasks.json", ".jj/documents.sqlite3"} {
+		if strings.Contains(committedFiles, unwanted) {
+			t.Fatalf("commit should not include local SQLite state %s, files:\n%s", unwanted, committedFiles)
 		}
 	}
 	if strings.Contains(committedFiles, ".jj/runs/") {
@@ -1738,7 +1743,7 @@ func TestExecutePathModeStillWritesCanonicalJSONState(t *testing.T) {
 	assertNoFile(t, filepath.Join(dir, "docs", "SPEC.md"))
 	manifest := readManifest(t, filepath.Join(dir, ".jj", "runs", "root-docs", "manifest.json"))
 	if manifest.Workspace.SpecPath != ".jj/spec.json" || manifest.Workspace.TaskPath != ".jj/tasks.json" {
-		t.Fatalf("expected canonical JSON workspace paths in manifest: %#v", manifest)
+		t.Fatalf("expected compatibility JSON workspace paths in manifest: %#v", manifest)
 	}
 }
 
@@ -1872,7 +1877,7 @@ func TestExecuteDryRunWithoutOpenAIKeyUsesCodexPlanner(t *testing.T) {
 	assertFileExists(t, filepath.Join(dir, ".jj", "runs", "codex-planner-dry-run", "planning", "merge.last-message.txt"))
 	taskData := readFile(t, filepath.Join(runDir, "snapshots", "tasks.after.json"))
 	if !strings.Contains(taskData, `"status": "queued"`) {
-		t.Fatalf("codex planner dry-run task should use canonical JSON queue state:\n%s", taskData)
+		t.Fatalf("codex planner dry-run task should use compatibility queue state:\n%s", taskData)
 	}
 	assertManifestDoesNotContain(t, manifestPath, "super-secret-value")
 }
@@ -1943,7 +1948,7 @@ printf '{"type":"done","stage":"%s"}\n' "$stage"
 	assertFileExists(t, filepath.Join(runDir, "planning", "merge.last-message.txt"))
 	taskData := readFile(t, filepath.Join(runDir, "snapshots", "tasks.after.json"))
 	if !strings.Contains(taskData, `"status": "queued"`) {
-		t.Fatalf("fake codex executable task should use canonical JSON state:\n%s", taskData)
+		t.Fatalf("fake codex executable task should use SQLite-backed compatibility state:\n%s", taskData)
 	}
 }
 
@@ -1982,7 +1987,7 @@ func TestExecuteFullRunWithoutOpenAIKeyUsesCodexPlanner(t *testing.T) {
 	assertNoFile(t, filepath.Join(dir, ".jj", "runs", "codex-planner-full", "planning", "eval.events.jsonl"))
 	taskData := readFile(t, filepath.Join(dir, ".jj", "tasks.json"))
 	if !strings.Contains(taskData, `"status": "done"`) {
-		t.Fatalf("codex planner full-run task should use canonical JSON state:\n%s", taskData)
+		t.Fatalf("codex planner full-run task should use SQLite-backed compatibility state:\n%s", taskData)
 	}
 }
 
@@ -2889,12 +2894,22 @@ func prepareCommittedWorkspace(t *testing.T, dir string) {
 func assertFileExists(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); err != nil {
+		if cwd, rel, ok := workspaceStatePathForTest(path); ok && errors.Is(err, os.ErrNotExist) {
+			if _, available, stateErr := ReadWorkspaceStateDocument(cwd, rel); stateErr == nil && available {
+				return
+			}
+		}
 		t.Fatalf("expected file %s: %v", path, err)
 	}
 }
 
 func assertNoFile(t *testing.T, path string) {
 	t.Helper()
+	if cwd, rel, ok := workspaceStatePathForTest(path); ok {
+		if _, available, err := ReadWorkspaceStateDocument(cwd, rel); err == nil && available {
+			t.Fatalf("expected no workspace state %s", path)
+		}
+	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected no file %s, got err %v", path, err)
 	}
@@ -2917,9 +2932,26 @@ func readFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if cwd, rel, ok := workspaceStatePathForTest(path); ok && errors.Is(err, os.ErrNotExist) {
+			data, available, stateErr := ReadWorkspaceStateDocument(cwd, rel)
+			if stateErr == nil && available {
+				return string(data)
+			}
+		}
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(data)
+}
+
+func workspaceStatePathForTest(path string) (string, string, bool) {
+	clean := filepath.ToSlash(filepath.Clean(path))
+	for _, rel := range []string{DefaultSpecStatePath, DefaultTasksStatePath} {
+		suffix := "/" + rel
+		if strings.HasSuffix(clean, suffix) {
+			return filepath.FromSlash(strings.TrimSuffix(clean, suffix)), rel, true
+		}
+	}
+	return "", "", false
 }
 
 func readPlanning(t *testing.T, path string) normalizedPlanningResult {
@@ -2937,10 +2969,7 @@ func readPlanning(t *testing.T, path string) normalizedPlanningResult {
 
 func readTaskState(t *testing.T, path string) TaskState {
 	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read task state: %v", err)
-	}
+	data := []byte(readFile(t, path))
 	var state TaskState
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatalf("decode task state: %v", err)

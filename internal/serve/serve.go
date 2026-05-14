@@ -1285,7 +1285,7 @@ func developmentFlowSteps() []flowStep {
 		{
 			Number:    "1",
 			Title:     "Product intent",
-			Body:      "Start from docs/PLAN.md, docs/PRD.md, docs/SPEC.md, and docs/TASK.md. Once .jj/spec.json exists, that JSON SPEC is the planning source of truth.",
+			Body:      "Start from docs/PLAN.md, docs/PRD.md, docs/SPEC.md, and docs/TASK.md. Once SQLite workspace SPEC state exists, it is the planning source of truth.",
 			URL:       docURL(workspacePRDMarkdownPath),
 			URLLabel:  "Open PRD",
 			Secondary: "PRD and SPEC explain what the project is; TASK describes the work queue.",
@@ -1293,7 +1293,7 @@ func developmentFlowSteps() []flowStep {
 		{
 			Number:    "2",
 			Title:     "Bounded task selection",
-			Body:      "A jj run appends proposed work to .jj/tasks.json, selects one runnable task, and keeps the rest reviewable for later turns.",
+			Body:      "A jj run appends proposed work to SQLite task state, selects one runnable task, and keeps the rest reviewable for later turns.",
 			URL:       docURL(runpkg.DefaultTasksStatePath),
 			URLLabel:  "Open tasks state",
 			Secondary: "Dashboard task summaries are deliberately compact so the next action is easy to scan.",
@@ -1309,7 +1309,7 @@ func developmentFlowSteps() []flowStep {
 		{
 			Number:    "4",
 			Title:     "Validation gate",
-			Body:      "jj records validation output and reconciles .jj/spec.json only when validation succeeds. Failed validation leaves prior SPEC state intact.",
+			Body:      "jj records validation output and reconciles SQLite SPEC state only when validation succeeds. Failed validation leaves prior SPEC state intact.",
 			URL:       "/runs",
 			URLLabel:  "Open run history",
 			Secondary: "The documented release gate remains ./scripts/validate.sh.",
@@ -1750,9 +1750,21 @@ func (s *Server) loadDocPage(rel string) (pageData, int, error) {
 	if err != nil {
 		return pageData{}, status, err
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return pageData{}, http.StatusNotFound, errors.New("state file unavailable")
+	var data []byte
+	if runpkg.IsWorkspaceStatePath(clean) {
+		var ok bool
+		data, ok, err = runpkg.ReadWorkspaceStateDocument(s.cwd, clean)
+		if err != nil {
+			return pageData{}, http.StatusInternalServerError, errors.New("state file unavailable")
+		}
+		if !ok {
+			return pageData{}, http.StatusNotFound, errors.New("state file unavailable")
+		}
+	} else {
+		data, err = os.ReadFile(path)
+		if err != nil {
+			return pageData{}, http.StatusNotFound, errors.New("state file unavailable")
+		}
 	}
 	content, rendered := presentContent(clean, data, security.CommandPathRoot{Path: s.cwd, Label: displayWorkspace})
 	return pageData{
@@ -2546,15 +2558,8 @@ func (s *Server) runCompareDocs(manifest dashboardManifest, runDir, runID string
 		if !ok {
 			return
 		}
-		path, err := safeJoinProject(s.cwd, clean)
-		available := false
-		status := "missing"
-		if err == nil {
-			if info, statErr := os.Stat(path); statErr == nil && !info.IsDir() {
-				available = true
-				status = "available"
-			}
-		}
+		status := s.projectDocState(clean)
+		available := status == "available"
 		link := runDetailLink{Label: label, Path: display, Available: available, Status: status}
 		if available {
 			link.URL = docURL(clean)
@@ -2786,12 +2791,7 @@ func (s *Server) workspaceReadiness() []readinessItem {
 		{Label: "TASK", Path: runpkg.DefaultTasksStatePath},
 	}
 	for i := range items {
-		path, err := safeJoinProject(s.cwd, items[i].Path)
-		if err != nil {
-			continue
-		}
-		info, err := os.Stat(path)
-		items[i].Ready = err == nil && !info.IsDir()
+		items[i].Ready = s.projectDocState(items[i].Path) == "available"
 	}
 	return items
 }
@@ -2820,11 +2820,11 @@ func (s *Server) projectDocShortcutState(rel string) (string, string) {
 }
 
 func (s *Server) projectDocShortcutAvailability(rel string) projectDocShortcutAvailability {
-	clean, path, status, err := s.resolveProjectDocRoutePath(rel)
+	clean, _, status, err := s.resolveProjectDocRoutePath(rel)
 	if err != nil {
 		return projectDocShortcutAvailability{State: projectDocRouteErrorState(status)}
 	}
-	state := projectDocFileState(path)
+	state := s.projectDocState(clean)
 	if state != "available" {
 		return projectDocShortcutAvailability{State: state}
 	}
@@ -2860,6 +2860,24 @@ func projectDocRouteErrorState(status int) string {
 		return "denied"
 	}
 	return "unknown"
+}
+
+func (s *Server) projectDocState(rel string) string {
+	clean, path, status, err := s.resolveProjectDocRoutePath(rel)
+	if err != nil {
+		return projectDocRouteErrorState(status)
+	}
+	if runpkg.IsWorkspaceStatePath(clean) {
+		ok, err := runpkg.WorkspaceStateDocumentAvailable(s.cwd, clean)
+		if err != nil {
+			return "unavailable"
+		}
+		if !ok {
+			return "missing"
+		}
+		return "available"
+	}
+	return projectDocFileState(path)
 }
 
 func projectDocFileState(path string) string {
@@ -3013,12 +3031,7 @@ func (s *Server) validatePlanPath(rel string) (string, error) {
 func (s *Server) discoverDocs() ([]docLink, error) {
 	docs := make([]docLink, 0, len(allowedProjectDocPaths))
 	for _, rel := range allowedProjectDocPaths {
-		path, err := safeJoinProject(s.cwd, rel)
-		if err != nil {
-			continue
-		}
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
+		if s.projectDocState(rel) != "available" {
 			continue
 		}
 		docs = append(docs, docLink{Path: rel})
@@ -6939,15 +6952,8 @@ func (s *Server) runDetailDocs(manifest dashboardManifest, runDir, runID string,
 		if !ok {
 			return
 		}
-		path, err := safeJoinProject(s.cwd, clean)
-		available := false
-		status := "missing"
-		if err == nil {
-			if info, statErr := os.Stat(path); statErr == nil && !info.IsDir() {
-				available = true
-				status = "available"
-			}
-		}
+		status := s.projectDocState(clean)
+		available := status == "available"
 		link := runDetailLink{Label: label, Path: display, Available: available, Status: status}
 		if available {
 			link.URL = docURL(clean)
@@ -8315,7 +8321,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
         <label>Codex model
           <input name="codex_model" value="{{.RunForm.CodexModel}}" placeholder="Codex CLI default">
         </label>
-	        <p class="muted">Full runs write .jj/spec.json and .jj/tasks.json. Dry-runs keep planned state snapshots under .jj/runs.</p>
+	        <p class="muted">Full runs write SQLite workspace state. Dry-runs keep planned state snapshots under .jj/runs.</p>
         <label class="check"><input type="checkbox" name="dry_run" value="true" {{if .RunForm.DryRun}}checked{{end}}> dry-run</label>
         <label class="check"><input type="checkbox" name="auto_continue" value="true" {{if .RunForm.AutoContinue}}checked{{end}}> auto continue turns</label>
         <label>max turns
@@ -8677,7 +8683,7 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
           <h2>Workspace / Run Scope</h2>
           <p><strong>Workspace</strong> is the product repository selected by <code>--cwd</code>. If <code>--cwd</code> points at the jj repo, workspace tasks are tasks for building jj itself.</p>
           <ul class="scope-list">
-            <li><strong>Workspace tasks</strong><span class="muted"><code>.jj/tasks.json</code> and <code>docs/TASK.md</code> describe product work jj planned for this workspace.</span></li>
+            <li><strong>Workspace tasks</strong><span class="muted">SQLite task state and <code>docs/TASK.md</code> describe product work jj planned for this workspace.</span></li>
             <li><strong>Run evidence</strong><span class="muted"><code>.jj/runs/&lt;run-id&gt;</code> contains artifacts, validation, summaries, and logs from one jj execution.</span></li>
             <li><strong>Self-hosting read</strong><span class="muted">When jj uses jj to build jj, read a task as product work and a run log as evidence from the tool doing that work.</span></li>
           </ul>

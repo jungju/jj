@@ -166,7 +166,7 @@ func main() {
 	require(m.PlannerProvider == "codex", "planner_provider = %q, want codex", m.PlannerProvider)
 	require(m.Planner.Provider == "codex", "planner.provider = %q, want codex", m.Planner.Provider)
 	require(!m.Config.OpenAIKeySet, "manifest reports OpenAI API key present")
-	require(!m.Workspace.SpecWritten && !m.Workspace.TaskWritten, "dry-run recorded workspace JSON state writes: %+v", m.Workspace)
+	require(!m.Workspace.SpecWritten && !m.Workspace.TaskWritten, "dry-run recorded workspace state writes: %+v", m.Workspace)
 	require(!m.Codex.Ran && m.Codex.Skipped && m.Codex.Status == "skipped", "implementation Codex was not skipped: %+v", m.Codex)
 	require(m.Artifacts["snapshot_spec_after"] == "snapshots/spec.after.json", "spec snapshot path = %q", m.Artifacts["snapshot_spec_after"])
 	require(m.Artifacts["snapshot_tasks_after"] == "snapshots/tasks.after.json", "task snapshot path = %q", m.Artifacts["snapshot_tasks_after"])

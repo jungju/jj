@@ -234,8 +234,7 @@ func TestReleaseValidationWorkflowUsesSanitizedValidateGate(t *testing.T) {
 		`- "scripts/**"`,
 		`- "docs/**"`,
 		`- "README.md"`,
-		`- ".jj/spec.json"`,
-		`- ".jj/tasks.json"`,
+		`- ".jjrc"`,
 		"persist-credentials: false",
 		"cache: false",
 	} {

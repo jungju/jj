@@ -2,39 +2,40 @@
 
 ## Overview
 
-`jj` is a local CLI that turns a Markdown plan or web prompt into canonical JSON state, implementation instructions, Codex execution, validation evidence, and auditable run artifacts. `docs/PLAN.md` is the initial product seed; once `.jj/spec.json` exists, that SPEC is the planning source of truth and `docs/PLAN.md` becomes background product vision.
+`jj` is a local CLI that turns a Markdown plan or web prompt into canonical local SQLite state, implementation instructions, Codex execution, validation evidence, and auditable run artifacts. `docs/PLAN.md` is the initial product seed; once SQLite workspace SPEC exists, that SPEC is the planning source of truth and `docs/PLAN.md` becomes background product vision.
 
 Canonical runtime state is:
 
-- `.jj/spec.json`
-- `.jj/tasks.json`
+- `.jj/documents.sqlite3` for current SPEC, append-only task records, and redacted document history/search metadata
 - `.jj/runs/<run-id>/`
 
-The workspace maintains `.jj/documents.sqlite3` and mirrors redacted `.jj/` documents into it, including run artifacts, autopilot logs, next-intent input, SPEC/TASK snapshots, rule or policy artifacts, validation summaries, manifest updates, and workspace `.jj/spec.json` or `.jj/tasks.json` writes. File artifacts remain for dashboard compatibility and guarded review. The SQLite file is a derived local mirror, not the authoritative planning input and not a replacement for `.jj/spec.json` or `.jj/tasks.json`.
+Legacy `.jj/spec.json` and `.jj/tasks.json` files are compatibility inputs: jj imports them when present, then current runs write SPEC/task state to SQLite instead of rewriting those files. The dashboard still serves `.jj/spec.json` and `.jj/tasks.json` as SQLite-backed virtual JSON views for compatibility with existing routes and manifests.
+
+The workspace SQLite database also mirrors redacted `.jj/` documents into it, including run artifacts, autopilot logs, next-intent input, SPEC/TASK snapshots, rule or policy artifacts, validation summaries, and manifest updates. File artifacts remain for dashboard compatibility and guarded review.
 
 Terminology is intentionally scoped for self-hosted development:
 
 - Workspace means the product repository selected by `--cwd`.
-- Workspace task state means `.jj/tasks.json`; this is the product work history planned for that workspace. `docs/TASK.md` is a human-maintained product-boundary document, not the runtime task source.
+- Workspace task state means SQLite task records exposed through the virtual `.jj/tasks.json` route; this is the product work history planned for that workspace. `docs/TASK.md` is a human-maintained product-boundary document, not the runtime task source.
 - Run evidence means `.jj/runs/<run-id>/`; these are artifacts, validation, summaries, and logs from one jj execution.
 
 When jj is used to build jj itself, workspace tasks are tasks for the jj product and run logs/artifacts are evidence produced by the jj execution that planned or implemented those tasks.
 
-Dry-runs write planning artifacts and state snapshots only under `.jj/runs/<run-id>/`; they do not update `.jj/spec.json`, `.jj/tasks.json`, or workspace documentation. Dry-run `snapshots/spec.after.json` remains the proposed preview for compatibility.
+Dry-runs write planning artifacts and state snapshots only under `.jj/runs/<run-id>/`; they do not update SQLite workspace state or workspace documentation. Dry-run `snapshots/spec.after.json` remains the proposed preview for compatibility.
 
-Full runs append `.jj/tasks.json` during planning, but do not write workspace `.jj/spec.json` before implementation. When validation passes, jj reconciles the previous SPEC, planned SPEC, selected task, Codex summary, git diff summary, and validation summary into the final `.jj/spec.json`. If validation fails, is missing, or is skipped, the previous workspace SPEC remains unchanged and `snapshots/spec.after.json` records that unchanged state.
+Full runs append SQLite task state during planning, but do not finalize workspace SPEC before implementation. When validation passes, jj reconciles the previous SPEC, planned SPEC, selected task, Codex summary, git diff summary, and validation summary into final SQLite SPEC state. If validation fails, is missing, or is skipped, the previous workspace SPEC remains unchanged and `snapshots/spec.after.json` records that unchanged state.
 
-When the target workspace is a clean git repository, a successful full run creates a local commit containing source changes plus `.jj/spec.json` and `.jj/tasks.json`. `.jj/runs/<run-id>/` remains uncommitted local artifact history. If the workspace was dirty before the run, jj skips the commit to avoid mixing pre-existing user changes with generated changes.
+When the target workspace is a clean git repository, a successful full run creates a local commit containing validated source/doc changes. `.jj/documents.sqlite3` and `.jj/runs/<run-id>/` remain uncommitted local state and artifact history. If the workspace was dirty before the run, jj skips the commit to avoid mixing pre-existing user changes with generated changes.
 
-`.jj/tasks.json` is append-only task proposal history. Each run appends newly proposed tasks with fresh IDs, selects the first new runnable task for full-run implementation, and updates only that selected task after validation. Existing `active` or `in_progress` tasks are returned to `queued` when a new full-run task is selected.
+SQLite task state is append-only task proposal history. Each run appends newly proposed tasks with fresh IDs, selects the first new runnable task for full-run implementation, and updates only that selected task after validation. Existing `active` or `in_progress` tasks are returned to `queued` when a new full-run task is selected.
 
-`docs/PRD.md`, `docs/SPEC.md`, and `docs/TASK.md` are repository documentation for the current product boundary. The dashboard exposes those docs, `.jj/spec.json`, `.jj/tasks.json`, `README.md`, `docs/PLAN.md`, and manifest-listed run artifacts through explicit allowlisted routes only.
+`docs/PRD.md`, `docs/SPEC.md`, and `docs/TASK.md` are repository documentation for the current product boundary. The dashboard exposes those docs, SQLite-backed `.jj/spec.json`/`.jj/tasks.json` virtual views, `README.md`, `docs/PLAN.md`, and manifest-listed run artifacts through explicit allowlisted routes only.
 
 ## Security Goals
 
 - Redact secrets before data is persisted, rendered, logged, or sent to model/provider prompts.
 - Keep all run artifacts under `.jj/runs/<run-id>/`.
-- Store redacted generated documents in the workspace SQLite document mirror as well as the existing guarded file artifacts.
+- Store redacted generated documents in the workspace SQLite database as well as the existing guarded file artifacts.
 - Keep workspace state writes under the resolved workspace root.
 - Preserve dry-run as an artifact-only planning mode with no workspace state or docs writes.
 - Prevent traversal, hidden artifact paths, Windows drive prefixes, encoded path escapes, and symlink escapes.
@@ -78,7 +79,7 @@ Codex event and summary outputs are resolved under `.jj/runs/<run-id>/` before l
 
 The dashboard:
 
-- Serves only `README.md`, `docs/PLAN.md`, `docs/PRD.md`, `docs/SPEC.md`, `docs/TASK.md`, `.jj/spec.json`, `.jj/tasks.json`, and manifest-listed run artifacts.
+- Serves only `README.md`, `docs/PLAN.md`, `docs/PRD.md`, `docs/SPEC.md`, `docs/TASK.md`, SQLite-backed `.jj/spec.json`/`.jj/tasks.json` virtual views, and manifest-listed run artifacts.
 - Provides `/flow` for the development loop, `/github` for token-environment login status, `/projects` for repository-as-project grouping, and `/projects/<id>` for product docs, task state, and run logs for a selected project.
 - Rejects traversal, encoded traversal, dotfile browsing, malformed run IDs, and symlink escapes.
 - Redacts and HTML-escapes rendered metadata and artifact content.

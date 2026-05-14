@@ -369,7 +369,7 @@ func TestBuildPlanningContextBootstrapsFromPlanWithoutSpec(t *testing.T) {
 	context := buildPlanningContext("Initial product vision.", SpecState{Version: 1}, TaskState{Version: 1}, "", "")
 
 	for _, want := range []string{
-		"No existing .jj/spec.json was found",
+		"No existing SQLite workspace SPEC state was found",
 		"# docs/PLAN.md Seed (initial source of truth)",
 		"Initial product vision.",
 	} {

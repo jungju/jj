@@ -3,8 +3,6 @@ package run
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -74,49 +72,20 @@ func loadStateSnapshot(cwd string) stateSnapshot {
 }
 
 func loadSpecState(cwd string) SpecState {
-	var state SpecState
-	_ = readWorkspaceJSON(cwd, DefaultSpecStatePath, &state)
-	if state.Version == 0 {
-		state.Version = 1
-	}
+	state, _, _ := loadSpecStateFromStore(cwd)
+	ensureSpecDefaults(&state)
 	return state
 }
 
 func loadTaskState(cwd string) TaskState {
-	var state TaskState
-	_ = readWorkspaceJSON(cwd, DefaultTasksStatePath, &state)
-	if state.Version == 0 {
-		state.Version = 1
-	}
+	state, _, _ := loadTaskStateFromStore(cwd)
+	ensureTaskDefaults(&state)
 	return state
 }
 
-func readWorkspaceJSON(cwd, rel string, target any) error {
-	path, err := security.SafeJoinNoSymlinks(cwd, rel, security.PathPolicy{AllowHidden: true})
-	if err != nil {
-		return err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, target)
-}
-
-func writeWorkspaceJSON(cwd, rel string, value any) error {
-	data, err := marshalWorkspaceJSON(value)
-	if err != nil {
-		return err
-	}
-	return writeWorkspaceJSONData(cwd, rel, data)
-}
-
 func writeWorkspaceJSONAndStore(cwd, rel string, value any, store artifact.Store) error {
-	data, err := marshalWorkspaceJSON(value)
+	data, err := writeWorkspaceStateDocument(cwd, rel, value)
 	if err != nil {
-		return err
-	}
-	if err := writeWorkspaceJSONData(cwd, rel, data); err != nil {
 		return err
 	}
 	return store.SaveDocument(rel, data)
@@ -129,21 +98,6 @@ func marshalWorkspaceJSON(value any) ([]byte, error) {
 		return nil, err
 	}
 	return append([]byte(redactSecrets(string(data))), '\n'), nil
-}
-
-func writeWorkspaceJSONData(cwd, rel string, data []byte) error {
-	path, err := security.SafeJoinNoSymlinks(cwd, rel, security.PathPolicy{AllowHidden: true})
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), artifact.PrivateDirMode); err != nil {
-		return err
-	}
-	path, err = security.SafeJoinNoSymlinks(cwd, rel, security.PathPolicy{AllowHidden: true})
-	if err != nil {
-		return err
-	}
-	return artifact.AtomicWriteFile(path, data, artifact.PrivateFileMode)
 }
 
 func writeSnapshotJSON(store artifact.Store, rel string, value any) (string, error) {
@@ -164,7 +118,7 @@ func buildPlanningContext(plan string, spec SpecState, tasks TaskState, continua
 		b.WriteString("\n\n")
 	} else {
 		b.WriteString("# Current SPEC State\n\n")
-		b.WriteString("No existing .jj/spec.json was found. Bootstrap the first SPEC from the docs/PLAN.md seed.\n\n")
+		b.WriteString("No existing SQLite workspace SPEC state was found. Bootstrap the first SPEC from the docs/PLAN.md seed.\n\n")
 	}
 	b.WriteString("# Current Task State Summary\n\n")
 	b.WriteString(taskStateSummary(tasks, true))
@@ -877,7 +831,7 @@ Task Proposal Mode:
 Requirements:
 - Work in this repository only.
 - Keep changes focused on the selected task and its acceptance criteria.
-- Do not rewrite .jj/spec.json, .jj/tasks.json, or .jj/runs; jj owns those state files.
+- Do not rewrite jj workspace state (.jj/documents.sqlite3 or legacy .jj/spec.json/.jj/tasks.json), or .jj/runs; jj owns those state files.
 - Choose and run relevant tests yourself.
 - In your final response, include changed files, tests run with results, and remaining risks.
 `, specSummary, taskJSON, proposal.Selected, proposal.Resolved))

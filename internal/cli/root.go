@@ -126,7 +126,7 @@ func newRunCommand(exec executor, stdout, stderr io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "run <plan-file.md>",
-		Short: "Create jj JSON state, run Codex, and validate the result",
+		Short: "Create jj SQLite state, run Codex, and validate the result",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.PlanPath = args[0]

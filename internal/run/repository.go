@@ -497,18 +497,6 @@ func stageCommitChanges(ctx context.Context, repoDir string) error {
 			return err
 		}
 	}
-	for _, rel := range []string{DefaultSpecStatePath, DefaultTasksStatePath} {
-		path := filepath.Join(repoDir, filepath.FromSlash(rel))
-		if _, err := os.Stat(path); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			return err
-		}
-		if _, err := runGitCommand(ctx, repoDir, nil, "add", "--force", "--", rel); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 

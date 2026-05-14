@@ -125,7 +125,7 @@ func BuildContinuationContextFromRunDir(cwd, previousRunDir, previousRunID strin
 	}
 	var b strings.Builder
 	b.WriteString("This is an automatic continuation turn for jj.\n")
-	b.WriteString("Use the current .jj/spec.json as the source of truth when present. Treat the original plan as product vision/background, then use this evidence to decide the next smallest useful change.\n\n")
+	b.WriteString("Use the current SQLite workspace SPEC state as the source of truth when present. Treat the original plan as product vision/background, then use this evidence to decide the next smallest useful change.\n\n")
 	b.WriteString("Previous run id: ")
 	b.WriteString(previousRunID)
 	b.WriteString("\n\n")
@@ -171,11 +171,26 @@ func trustedContinuationRunDir(cwd, reportedRunDir, runID string) (string, error
 }
 
 func appendContinuationRel(b *strings.Builder, title, root, rel string) {
+	if IsWorkspaceStatePath(rel) {
+		data, ok, err := ReadWorkspaceStateDocument(root, rel)
+		if err == nil && ok {
+			appendContinuationData(b, title, data)
+			return
+		}
+	}
 	path, err := security.SafeJoinNoSymlinks(root, rel, security.PathPolicy{AllowHidden: strings.HasPrefix(rel, ".")})
 	if err != nil {
 		return
 	}
 	appendContinuationFile(b, title, path)
+}
+
+func appendContinuationData(b *strings.Builder, title string, data []byte) {
+	b.WriteString("## ")
+	b.WriteString(title)
+	b.WriteString("\n\n")
+	b.WriteString(truncateContinuation(sanitizeHandoffText(string(data)), 12000))
+	b.WriteString("\n\n")
 }
 
 func appendContinuationFile(b *strings.Builder, title, path string) {
